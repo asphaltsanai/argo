@@ -201,10 +201,10 @@ test('C13. 러너 아래 셸에서 표지를 지워도 CLI가 조상 표지를 �
   };
   const agent = chain(true);
   assert.equal(agent.code, 1, agent.out);
-  assert.match(agent.out, /에이전트 턴 안입니다/);
+  assert.match(agent.out, /에이전트 턴 안입니다|Inside an Argo agent turn/); // 자식 CLI 언어는 실행 환경 로캘을 따른다(CI 러너는 영어)
   const human = chain(false);
   assert.equal(human.code, 2, human.out); // 로그인 필요 — 판정은 통과했다(명령줄의 표지 글자는 표지가 아니다)
-  assert.match(human.out, /로그인/);
+  assert.doesNotMatch(human.out, /에이전트 턴|agent turn/i);
 });
 
 // 이유(분리 검수 H2·M3·L2·M1): 판정 실패는 거절하되 이유를 따로 말하고(샌드박스 셸의 사람), MCP는 실패를 담아 두지 않으며, 예전 하위 명령(tasks·hold·report)도 같은 판정을 받는다
