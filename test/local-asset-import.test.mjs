@@ -239,7 +239,23 @@ test('reaper treats a lock being deleted on Windows (EPERM/EACCES) as gone, neve
     assert.doesNotMatch(body, /await json\(lock/);
     assert.match(body, /await link\(claim, lock\); break; \} catch \(e\) \{ if \(e\.code !== 'EEXIST' && !lockBusy\(e\)\) throw e; \}/, 'link 경합도 다음 바퀴로');
     assert.match(body, /unlink\(lock\)\.catch\(e => \{ if \(e\.code !== 'ENOENT' && !lockBusy\(e\)\) throw e; \}\)/, '수거자 unlink 경합도 다음 바퀴로');
+    assert.match(body, /if \(await claimReaper\(reaper\)\) \{/, '수거 차례는 claimReaper로만 잡는다');
+    assert.doesNotMatch(body, /mkdir\(reaper/, 'reaper mkdir을 claimReaper 밖에서 직접 부르지 않는다');
   });
+});
+
+test('reaper mkdir racing a reaper being deleted on Windows (EPERM/EACCES) waits its turn, never kills the importer', async () => {
+  // Windows CI(2026-10-11 #942): 다른 수거자가 rm으로 지우는 중인 reaper에 mkdir → EPERM으로 가져오기 프로세스가 죽었다.
+  const rejectWith = code => async () => { throw Object.assign(new Error(code), { code }); };
+  for (const code of ['EPERM', 'EACCES']) {
+    assert.equal(await api.claimReaper('x', 'win32', rejectWith(code)), false, `win32 ${code}: 차례가 아님`);
+    await assert.rejects(api.claimReaper('x', 'darwin', rejectWith(code)), { code }, `POSIX ${code}은 권한 문제라 숨기지 않는다`);
+  }
+  for (const platform of ['win32', 'darwin']) assert.equal(await api.claimReaper('x', platform, rejectWith('EEXIST')), false);
+  await assert.rejects(api.claimReaper('x', 'win32', rejectWith('ENOENT')), { code: 'ENOENT' }, '상위 폴더 없음은 숨기지 않는다');
+  const dir = await mkdtemp(join(temp, 'reaper-'));
+  assert.equal(await api.claimReaper(join(dir, 'reaper')), true, '비어 있으면 차례를 잡는다');
+  assert.equal(await api.claimReaper(join(dir, 'reaper')), false, '이미 있으면 다음 바퀴로');
 });
 
 test('old lock timestamp never evicts a live importer', async () => {

@@ -62,6 +62,12 @@ async function lockOwner(lock) {
   try { raw = await readFile(lock, 'utf8'); } catch (e) { if (transientLockRead(e)) return null; throw fail('state-invalid'); }
   try { return JSON.parse(raw); } catch { throw fail('state-invalid'); }
 }
+// 수거 차례 잡기. Windows는 다른 수거자가 막 지운(delete pending) reaper 이름에 mkdir하면 EEXIST 대신 EPERM을 준다
+// (winpc 실측: 16프로세스 30초 잠금 경합에서 3건, Windows CI #942에서 가져오기 프로세스가 죽음) — 차례가 아닐 뿐이니 다음 바퀴로.
+// 지우는 쪽(rm)은 같은 경합에서 실패하지 않았다(winpc 실측 13,505회 0건).
+export async function claimReaper(reaper, platform = process.platform, make = mkdir) {
+  try { await make(reaper, { mode: 0o700 }); return true; } catch (e) { if (e.code === 'EEXIST' || lockBusy(e, platform)) return false; throw e; }
+}
 
 // A live process is never displaced by elapsed time. Fully-written hard-link claims avoid an
 // empty-owner crash window. Reaping is serialized; an interrupted reaper fails closed (bounded wait).
@@ -73,9 +79,7 @@ async function locked(dir, fn) {
   try {
     for (;;) {
       try { await link(claim, lock); break; } catch (e) { if (e.code !== 'EEXIST' && !lockBusy(e)) throw e; }
-      let acquired = false;
-      try { await mkdir(reaper, { mode: 0o700 }); acquired = true; } catch (e) { if (e.code !== 'EEXIST') throw e; }
-      if (acquired) {
+      if (await claimReaper(reaper)) {
         try {
           const owner = await lockOwner(lock);
           if (owner?.pid) {
