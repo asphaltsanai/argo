@@ -25,3 +25,67 @@ export async function readSwapNames(db, crewIds) {
     return error ? [] : [...new Set((data ?? []).map((r) => r.victim_name).filter(Boolean))];
   } catch { return []; }
 }
+
+/* ───────── 멈춘 에이전트의 이름·얼굴(2026-10-11 '?' 제보) ─────────
+ * #941 뒤 무료 계정 에이전트 행은 status='paused'로 남는다. 메신저가 active·available만 읽어 그 에이전트와의 1:1 방 이름이 'dm:?',
+ * 방 머리가 '?', 글쓴이가 '에이전트'로 보였다. 표시(이름·얼굴·글쓴이)에는 paused 행도 쓰고, 연결 판단(목록·숫자·멘션·초대·결재 대상·턴)은 지금처럼 active만 쓴다.
+ * 개인 공간: msgr_personal_room_crews가 원래 paused 행을 준다(버리지 않을 뿐 — 요청 그대로).
+ * 조직 공간: 목록 조회(loadOrg — 열기·복귀·재연결·새로고침마다)는 active·available 그대로 둔다(전송량, #950 분리 검수). 이름이 필요한 모르는 id만
+ *   readPausedCrewNames로 따로 한 번 읽어 세션 동안 기억한다(crewNameAsker — 사람 이름 askName → flushNames와 같은 방식, 계산 열 없음). */
+export const SPACE_CREW_STATUSES = ['active', 'available', 'paused']; // 나누기 기준(조직 목록 조회에는 쓰지 않는다)
+
+/** 공간 크루 행 나누기 — connected: 연결(active) · available: 내가 꺼 둔(파견 해제) 것 · paused: 멈춘 것 · shown: 이름 찾기용(셋 다, 입력 순서) */
+export function splitSpaceCrews(rows, uid) {
+  const list = Array.isArray(rows) ? rows : [];
+  return {
+    connected: list.filter((r) => r?.status === 'active'),
+    available: list.filter((r) => r?.status === 'available' && r.owner_user_id === uid),
+    paused: list.filter((r) => r?.status === 'paused'),
+    shown: list.filter((r) => SPACE_CREW_STATUSES.includes(r?.status)),
+  };
+}
+
+/** 표시용 찾기 — 연결 판단용 찾기(crewOf)가 모르면 멈춘 행에서. 이름·얼굴·글쓴이·소유자(누가 주인인가) 자리에만 쓴다 */
+export function withPaused(crewOf, paused, onMiss = null) {
+  return (id) => { const c = crewOf(id) ?? (paused ?? []).find((x) => x.id === id); if (!c && id && onMiss) onMiss(id); return c; };
+}
+
+/** 이름 조회 열 — 계산 열(접속 시각 msgr_crew_seen)·명령 목록 없이 표시에 필요한 것만 */
+export const CREW_NAME_COLS = 'id, owner_user_id, display_name, role_text, status, face, avatar_url';
+/** 모르는 크루 id의 표시용 행 — 멈춘(paused) 행만 돌려준다(빠진 detached 등은 종전대로 대체 문구). 옛 서버(face 열 없음)면 face 없이 한 번 더. 오류·던짐이면 [] */
+/** 한 요청에 싣는 id 수 — uuid 100개 ≈ URL 4KB(서버 URL 한도 8~16KB 안쪽) */
+export const CREW_NAME_CHUNK = 100;
+export async function readPausedCrewNames(db, ids) {
+  const out = [];
+  for (let i = 0; i < (ids?.length ?? 0); i += CREW_NAME_CHUNK) {
+    const part = ids.slice(i, i + CREW_NAME_CHUNK);
+    try {
+      let r = await db.from('msgr_crews').select(CREW_NAME_COLS).in('id', part);
+      if (r.error && /face/i.test(r.error.message ?? '')) r = await db.from('msgr_crews').select(CREW_NAME_COLS.replace(', face', '')).in('id', part);
+      if (!r.error) out.push(...(r.data ?? []).filter((c) => c?.status === 'paused'));
+    } catch { /* 이 묶음만 건너뛴다 */ }
+  }
+  return out;
+}
+/** 모르는 크루 id를 모아 한 번에 묻는다 — 같은 id는 세션 동안 다시 묻지 않는다(답이 비거나 실패해도). schedule은 다음 틱에 flush를 부른다 */
+export function crewNameAsker(read, onRows, schedule = (f) => setTimeout(f, 0)) {
+  const asked = new Set(); let wanted = new Set(); let timer = false;
+  const flush = () => {
+    timer = false;
+    const ids = [...wanted].filter((id) => !asked.has(id)); wanted = new Set(); if (!ids.length) return;
+    ids.forEach((id) => asked.add(id));
+    Promise.resolve().then(() => read(ids)).then((rows) => { if (rows?.length) onRows(rows); }, () => {});
+  };
+  return {
+    ask(id) { if (!id || asked.has(id) || wanted.has(id)) return; wanted.add(id); if (!timer) { timer = true; schedule(flush); } },
+    asked,
+  };
+}
+
+/** 1:1 방 머리의 '멈춤' 표시 — 방에 든 에이전트가 한 명이고, 그 에이전트가 연결돼 있지 않고 멈춰 있을 때 그 행. 아니면 null */
+export function pausedRoomCrew(channel, roomMembers, { connected = [], paused = [] } = {}) {
+  if (channel?.kind !== 'dm') return null;
+  const ids = (roomMembers ?? []).filter((m) => m.member_kind === 'crew').map((m) => m.member_id);
+  if (ids.length !== 1 || connected.some((c) => c.id === ids[0])) return null;
+  return paused.find((c) => c.id === ids[0]) ?? null;
+}
