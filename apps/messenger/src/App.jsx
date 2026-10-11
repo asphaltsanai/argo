@@ -69,13 +69,14 @@ import { writeScreenSnapshot, consumeScreenSnapshot } from './phone-screen-snaps
 import { mentionCandidates, mentionsFromBody, ambiguousMentions, ALL_RE, outsideCrewMentions, canInstructCrew, crewOrder, withoutCopies, outsideAddDone, outsideRowView } from './mention-candidates.mjs';
 import { OutsideRow } from './outside-row.mjs';
 import { dmMentionCrews, mentionPopupCrews, setDmRecipient, dmDeliveryMentions, dmUnavailableRecipients, relayCaptionKey, relayToLabel, relayToNames, relayNoticeView } from './dm-delivery.mjs';
-import { acceptFiles, withoutFile } from './attach-files.mjs';
+import { acceptFiles, withoutFile, chipSize } from './attach-files.mjs';
 import { MediaAttachments, LinkCard, linkify, onLinkClick } from './media.jsx'; // 첨부 말풍선·크게 보기·링크 카드(2026-10-02)
 import { slashView, readSlashCommands, slashInsert, rolePickCandidates, ROLE_PICK_RE } from './slash-commands.mjs';
 import { getComposerSession, bindComposerSession, clearComposerSessions, composerTransport, setDeliveryReporter } from './composer-delivery.mjs';
 import { fetchSearchRows } from './search-rows.mjs';
 import { memberRows, memberPerms, MEMBER_CHIPS } from './phone-members.mjs';
 import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
+import { planOf, purchaseChannel, proCheckoutUrl, planView, recheckFlow, isProUpsell, proRequiredFor, iosKey, LS_BILLING } from './pro-checkout.mjs'; // Pro 결제 — 본체·랜딩과 같은 결제·같은 판정(2026-10-11)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
 import { friendlyErr, toastError } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
@@ -199,7 +200,7 @@ const fmtDay = (iso, lang) => { const d = new Date(iso); return lang === 'en'
   : [d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' }), d.toLocaleDateString('ko-KR', { weekday: 'long' })]; };
 
 /** 메신저 사전 t — 언어 상태는 Argo LanguageProvider(cmd+/ 전환·localStorage argo-lang)를 그대로 쓴다. */
-function useT() { const { lang, setLang, t: ta } = useLang(); return { lang, setLang, ta, t: (k, vars) => tm(k, lang, vars) }; }
+function useT() { const { lang, setLang, t: ta } = useLang(); return { lang, setLang, ta, t: (k, vars) => tm(iosKey(k, isIos), lang, vars) }; } // iOS는 권유 문구를 사실만 있는 키로(pro-checkout.mjs IOS_COPY)
 
 /** 아바타 — 사람은 원, 크루는 둥근 사각 타일 + 옐로 별(시안 v2 모티프 ②). */
 const SafetyCtx = createContext({ blocked: new Set(), block: null, mutedCrewIds: new Set(), muteCrew: null, hiddenUserIds: null, hideUser: null, unhideUser: null, profanityFilterOn: true, aiConsented: false, aiConsentAt: null, setAiConsent: null, onNote: () => {} }); // UGC 신고·차단(App Store 1.2, 2026-09-21) — 차단한 사람의 글은 대화·답글 인용·알림함·검색·DM 미리보기에서 가리고, 푸시는 서버(msgr_push_recipients)가 막는다
@@ -1254,6 +1255,7 @@ function Shell({ session }) {
   // 조직 기본값으로 바뀌었다). 잠금 정책이면 서버 게이트(msgr_crew_policy_gate)와 잠글 때의 일괄 맞춤이 기본값을 보장한다.
   const dispatchCrew = useCallback(async (crew, channelId = null) => {
     const up = await supabase.from('msgr_crews').update({ status: 'active' }).eq('id', crew.id).select('id');
+    if (up.error) up.error.message = proRequiredFor(up.error.message, { ownerId: crew.owner_user_id, uid, t }); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2) — 다음 줄(종전 그대로)이 던진다
     if (up.error) throw new Error(up.error.message);
     // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자면 바로·아니면 요청.
     let joined = null;
@@ -2224,7 +2226,10 @@ function Shell({ session }) {
   const runInSpace = (space, run, tag = null) => { if (orgId === space && loadedOrg.current === space) { run(latestOpen.current); return; } afterSpace.current = { space, run, tag }; setOrgId(space); };
   useEffect(() => { const a = afterSpace.current; if (!a || a.space !== orgId || loadedOrg.current !== orgId) return; afterSpace.current = null; a.run(latestOpen.current); }, [orgId, channels, crews]); // eslint-disable-line react-hooks/exhaustive-deps
   // 토스트를 누르면 — 언제나 바로 닫는다. 공간 전환 안내가 떠 있으면 직전 조직으로 돌아간다(공간 전환 = runInSpace, 떠날 때 남긴 공간 저장본이 그 조직의 목록·보던 채널을 바로 연다)
+  // Pro로 풀리는 안내(에이전트 연결·대화방 4명 한도 — 판정 목록은 pro-checkout.mjs PRO_UPSELL 한 곳)는 누르면 내 플랜 카드로. iOS는 구매 경로가 없어 잇지 않는다(App Store 3.1.1)
+  const proUpsell = !!err && purchaseChannel({ ios: isIos, customServer }) === 'web' && isProUpsell(err, t);
   const tapToast = () => { const back = !err && moveNote?.text === note ? spaceMoveBack(moveNote, orgs) : null; clearToast(); if (back) runInSpace(back.space, () => { if (back.ch) setChId(back.ch); setPage('chat'); setRail(false); }); };
+  const openPlanCard = () => { if (isPhone) setPage('set-plan'); else { setSettingsTab('me'); setPage('settings'); } setRail(false); }; // 토스트 클릭의 캡처 단계에서 먼저 — 닫기는 tapToast가 그대로 한다
   // 그룹 대화 만들기(유건 2026-09-15): 사람·크루를 여럿 골라 dm 채널 하나로. 서버 msgr_create_channel은 others 여러 명을 받는다(크루는 소유자 동반 규칙 그대로).
   const createGroupDm = async (picks) => { // picks: [{ kind: 'user'|'crew', id }]
     setDmGroup(false); // 시트는 어느 경로든 닫는다(검수 HIGH-1: 한 명 경로에서 대화 위를 덮었다)
@@ -3037,7 +3042,7 @@ function Shell({ session }) {
         {orgLocked && <div className="msgr-notice locked"><span>{t(isAdmin ? 'org.locked.admin' : 'org.locked')}</span></div>}
         {pushCard && createPortal(<button type="button" className="msgr-pushcard" onClick={() => { if (pushCard.channel_id) requestNav(pushCard.channel_id, 'card'); setPushCard(null); }}><span className="t">{pushCard.title}</span><span className="b">{pushCard.body}</span></button>, document.body)}
         {(err || note) && createPortal( /* 토스트 — 상단 바는 레이아웃을 밀었다(유건 2026-09-09). 자동 소멸(안내 4초·오류 8초), 클릭하면 즉시 */
-          <button type="button" ref={toastRef} className={`msgr-toast${err ? ' err' : ''}`} onClick={tapToast} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${toastError(err, { t, phone: isPhone })}`) : note}</button>,
+          <button type="button" ref={toastRef} className={`msgr-toast${err ? ' err' : ''}`} onClickCapture={proUpsell ? openPlanCard : undefined} onClick={tapToast} role="status" aria-live="polite">{err ? (/msgr_session_refreshing/.test(err) || err === t('err.sessionRefreshing') ? t('err.sessionRefreshing') : `${t('ui.error')}: ${toastError(err, { t, phone: isPhone })}${proUpsell ? ` · ${t('plan.toast.cta')}` : ''}`) : note}</button>,
           document.body,
         )}
         <PageBoundary key={`${page}:${chId ?? ''}`} title={t('ui.pageError')} retry={t('ui.pageError.retry')} onReset={() => setPage('chat')}>
@@ -3224,7 +3229,7 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
     setBusy(true); setConfirmRecall(false);
     const res = await supabase.from('msgr_crews').update({ status: next ? 'active' : 'available' }).eq('id', crew.id).select('id'); // 다시 파견은 복귀 — 허용 범위 유지(D31, dispatchCrew 주석)
     setBusy(false);
-    if (res.error) return onError(res.error.message);
+    if (res.error) return onError(proRequiredFor(res.error.message, { ownerId: crew.owner_user_id, uid, t })); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2)
     if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) }));
     onNote(t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
   };
@@ -3677,6 +3682,76 @@ function writeInboxSeen(v) { try { localStorage.setItem(INBOX_SEEN_KEY, JSON.str
 /* ─── 프로필(계정 단위): 아이디·표시 이름·찾기 허용 스위치 — msgr_profiles(본인만 쓰기). 친구 찾기의 기준. ─── */
 // 앱 안 계정 삭제(App Store 5.1.1(v)) — 깃헙식 확인(단어 입력) 뒤 서버 함수 msgr_delete_me 한 번. 소유 조직에 다른 멤버가 있으면
 // 서버가 조직명을 돌려주며 거부 → 소유권 이전 안내. 성공하면 세션은 이미 서버에서 무효라 로컬 로그아웃만 한다.
+/* 내 플랜(2026-10-11 유건: "프로는 아르고 앱 프로 결제랑 통합, 메신저에서도 결제 가능하게. 모바일에서도").
+   판정은 서버 my_plan(본체와 같은 함수), 결제는 본체·랜딩과 같은 LS 상품·같은 주소 조립(pro-checkout.mjs). 가격 문구는 본체 사전(ta)을 그대로 쓴다.
+   iOS는 구매 경로 없음(App Store 3.1.1, 인앱 결제는 만들지 않기로 확정) — 버튼·구독 관리·외부 결제 안내 없이 "Pro면 자동 적용"만.
+   읽기: 카드를 열 때 my_plan 1회 + 본인 entitlements 행 1회. 업그레이드를 누른 뒤 15분 안에 앱으로 돌아오면 최대 5회(0·3·5·10·20초) 다시 읽는다. */
+function PlanCard({ uid, email }) {
+  const { t, ta, lang } = useT();
+  const channel = purchaseChannel({ ios: isIos, customServer }); // 회사 서버도 구매 경로 없음(분리 검수 #944 MEDIUM-1)
+  const [st, setSt] = useState({ loading: true, plan: null, row: null });
+  const [checking, setChecking] = useState(false); const [notYet, setNotYet] = useState(false);
+  const live = useRef(true); const flow = useRef(null); const latest = useRef({});
+  const readPlan = useCallback(async () => planOf(await q(supabase.rpc('my_plan'))), []);
+  const load = useCallback(async () => {
+    const [plan, row] = await Promise.all([
+      readPlan().catch(() => null),
+      planRow(uid),
+    ]);
+    if (live.current) setSt({ loading: false, plan, row });
+    return plan;
+  }, [readPlan, uid]);
+  latest.current = { load };
+  if (!flow.current) flow.current = recheckFlow({ readPlan, alive: () => live.current, onChecking: setChecking, onNotYet: setNotYet, onPro: () => latest.current.load() }); // 복귀 재확인 — 누른 뒤 한 라운드만(#944 LOW-3), 관문·라운드·타이머는 한 덩어리(pro-checkout.mjs recheckFlow)
+  useEffect(() => { live.current = true; load(); return () => { flow.current.dispose(); live.current = false; }; }, [load]); // 화면을 떠나면 돌던 라운드의 쉬는 타이머까지 정리
+  const recheck = useCallback((once = false) => flow.current.recheck(once), []); // 복귀 = 한 라운드(최대 5회, 시작할 때 무장 해제), '다시 확인' 버튼 = 1회
+  useEffect(() => { // 결제하고 앱으로 돌아왔을 때(데스크톱 포커스·폰 화면 복귀) — 업그레이드를 누른 뒤 15분 안일 때만
+    const back = () => { if (document.visibilityState === 'hidden') return; recheck(); }; // 무장·겹침 판정은 관문이 한다
+    window.addEventListener('focus', back); document.addEventListener('visibilitychange', back);
+    return () => { window.removeEventListener('focus', back); document.removeEventListener('visibilitychange', back); };
+  }, [recheck]);
+  const view = planView({ plan: st.plan, row: st.row, channel, loading: st.loading });
+  const upgrade = (cadence) => { const url = proCheckoutUrl({ plan: st.plan, user: { id: uid, email }, cadence }); if (!url) return; flow.current.upgraded(); openExternal(url); }; // 미확인 뒤 결제창을 닫고 다른 주기로 다시 누를 수 있다 — 돌던 라운드·타이머를 정리하고 새로 무장(확인 중에는 버튼을 막아 웹훅이 늦는 구간의 이중 구독을 막는다)
+  const portal = async () => { // 클릭할 때 발급(24시간 서명 링크라 저장하지 않는다) — ls-portal이 못 주면(CORS 반영 전 배포본·네트워크) 가게 고객 포털(이메일 로그인)
+    const { data } = await supabase.functions.invoke('ls-portal', { method: 'POST' }).catch(() => ({ data: null }));
+    openExternal(typeof data?.url === 'string' && /^https:\/\//.test(data.url) ? data.url : LS_BILLING); // 열기는 openExternal 한 곳(Tauri 오프너·브라우저 분기)
+  };
+  const day = (iso) => new Date(iso).toLocaleDateString(lang === 'ko' ? 'ko-KR' : 'en-US');
+  const isPro = view.kind.startsWith('pro-');
+  return (
+    <section className="msgr-setcard msgr-plancard" data-plan={view.kind}>
+      <h2>{t('plan.title')}</h2>
+      <div className="row">
+        <span className="msgr-klabel">{t('plan.current')}</span>
+        {view.kind === 'loading' ? <span className="sub">{t('ui.loading')}</span>
+          : view.kind === 'unavailable' ? <><span className="sub">{t('plan.unavailable')}</span><button type="button" className="btn sm" onClick={() => { setSt((x) => ({ ...x, loading: true })); load(); }}>{t('plan.retry')}</button></>
+          : <span className={`msgr-tag${isPro ? ' on' : ''}`}>{isPro ? ta('billing.plan.pro') : view.kind === 'trial' ? ta('billing.plan.trial') : t('plan.badge.free')}</span>}
+      </div>
+      {view.kind === 'pro-sub' && <p className="note">{t('plan.sub')}</p>}
+      {view.kind === 'pro-cancelled' && <p className="note">{ta('billing.cancelledUntil', { date: day(view.endsAt) })}</p>}
+      {view.kind === 'pro-pastdue' && <p className="note" style={{ color: 'var(--danger)' }}>{t(view.portal ? 'plan.pastDue' : 'plan.pastDue.short')}</p>}{/* iOS는 구독 관리 안내 없이 */}
+      {view.kind === 'pro-granted' && <p className="note">{view.endsAt ? t('plan.grantedUntil', { date: day(view.endsAt) }) : t('plan.granted')}</p>}
+      {view.portal && <div className="row"><button type="button" className="btn sm" onClick={portal}><I name="openext" size={13} />{ta('billing.managePortal')}</button></div>}
+      {view.buy && <p className="note">{t('plan.benefits')}</p>}{/* iOS(구매 경로 없음)는 혜택 안내도 없이 아래 한 줄만 */}
+      {view.buy && (<>
+        <div className="row msgr-planbuy">
+          <button type="button" className="btn btn-primary sm" disabled={checking} onClick={() => upgrade('monthly')}>{ta('billing.upgradeMonthly')}</button>
+          <button type="button" className="btn sm" disabled={checking} onClick={() => upgrade('yearly')}>{ta('billing.upgradeYearly')}</button>
+        </div>
+        <p className="note">{t('plan.sameAccount')}</p>
+        {(checking || notYet) && <div className="row" role="status"><span className="sub">{checking ? t('plan.checking') : t('plan.notYet')}</span>{!checking && <button type="button" className="btn sm" onClick={() => recheck(true)}>{t('plan.recheck')}</button>}</div>}
+      </>)}
+      {channel === 'none' && isIos && !isPro && view.kind !== 'loading' && view.kind !== 'unavailable' && <p className="note">{t('plan.ios.note')}</p>}
+    </section>
+  );
+}
+/** 본인 entitlements 행(RLS entitlements_own_select) — 구독 상태·해지 예약일. 못 읽으면 null(판정은 my_plan이 한다) */
+async function planRow(uid) {
+  if (!uid) return null;
+  const { data, error } = await supabase.from('entitlements').select('plan, ls_status, ls_subscription_id, ends_at').eq('user_id', uid).maybeSingle();
+  return error ? null : data ?? null;
+}
+
 function AccountDeleteCard({ session, onDeleted }) {
   const isPhone = useIsPhone(); // 진단 경로 안내(2차 검수 L-h)
   const { t } = useT();
@@ -4181,7 +4256,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
     const orow = settingsOrgRows(orgs); // 조직이 몇 개든 네 가지는 각각 한 줄 — 조직은 들어간 화면의 '조직 이름 ▾'로 고른다(4차 피드백)
     const group = (key, title, children) => (<section className="ph-setsec" data-group={key}><h3 className="ph-setgh">{title}</h3><div className="ph-setgroup">{children}</div></section>);
     if (!sub) return body(t('ui.settings'), (<div className="ph-setlist">
-      {group('me', t('phone.set.g.me'), <button type="button" className="ph-setme" onClick={() => onSub?.('profile')}><Av name={myName} size="lg" userId={uid} /><span className="ph-kbody"><span className="name">{myName}</span><span className="snip">{t('phone.set.profile')} · {session.user.email}</span></span>{chev}</button>)}
+      {group('me', t('phone.set.g.me'), <><button type="button" className="ph-setme" onClick={() => onSub?.('profile')}><Av name={myName} size="lg" userId={uid} /><span className="ph-kbody"><span className="name">{myName}</span><span className="snip">{t('phone.set.profile')} · {session.user.email}</span></span>{chev}</button>{row('plan', ic('star'), t('phone.set.plan'), () => onSub?.('plan'), t('phone.set.plan.sub'))}</>)}
       {group('orgs', t('phone.set.g.orgs'), orow.org ? row('org', ic('person'), t('phone.set.orgRow'), () => onOrgSub?.('org'), t('phone.set.orgRow.sub')) : <p className="ph-setnote">{t('phone.set.noOrg')}</p>)}
       {group('agents', t('phone.set.g.agents'), <>
         {row('mine', ic('memory'), t('phone.set.myAgents'), () => onSub?.('agents'), t('phone.set.myAgents.sub'))}
@@ -4204,6 +4279,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
           <section className="msgr-setcard"><h2>{t('phone.set.notify')}</h2><div className="row"><NotifyRow /><SoundRow /></div><p className="note">{t('phone.set.notify.scope')}</p></section>
           <ProfileCard part="quiet" uid={uid} onNote={onNote} onError={onError} />
         </div>)}
+        {sub === 'plan' && <div className="msgr-setbody"><PlanCard uid={uid} email={session.user.email} /></div>}
         {sub === 'display' && <div className="msgr-setbody">{themeCard}{langCard}</div>}
         {sub === 'friends' && <PhoneFriendsManage uid={uid} friends={friends} onChanged={onFriendsChanged} onPersonalDm={onPersonalDm} onNote={onNote} onError={onError} />}
         {sub === 'privacy' && (<div className="msgr-setbody">
@@ -4251,6 +4327,7 @@ function Settings({ session, me, uid, invitesTick = 0, org, orgs = [], isAdmin, 
             <LegalLinks t={t} className="in-card" />
             <p className="msgr-klabel msgr-version">{t('set.version', { v: APP_VERSION })}</p>{/* 지금 앱 버전(UXM-26) — 문의·업데이트 확인 때 */}
           </section>
+          <PlanCard uid={uid} email={session.user.email} />
           <section className="msgr-setcard">
             <h2>{t('set.profanityFilter')}</h2><p>{t('set.profanityFilter.desc')}</p>
             <ProfanityFilterRow />
@@ -6879,7 +6956,7 @@ function Composer({ broadcast = null, onCrewJoined = null, outsideDmPersonal = n
     if (e.key === 'Enter' && !e.shiftKey && !isMobilePlatform) { e.preventDefault(); send(); }
   };
   // 첨부 칩 — 폰은 알약 위 자기 줄(흐름 안, 멘션 후보창과 같은 쌓임)로, 데스크톱은 기존처럼 툴바 줄 안에(유건 2026-09-27 재검수)
-  const fileChipsNode = files.length > 0 && <span className="msgr-filechips">{files.map((f) => <span key={`${f.name}:${f.size}`} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} /><span className="filechip-name">{f.name}</span><span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : `${Math.max(1, Math.round(f.size / 1024))}KB`}</span>
+  const fileChipsNode = files.length > 0 && <span className="msgr-filechips">{files.map((f) => <span key={`${f.name}:${f.size}`} className={`filechip${uploading === f.name ? ' busy' : ''}`}><I name="doc" size={12} /><span className="filechip-name">{f.name}</span><span className="msgr-klabel">{uploading === f.name ? t('att.uploading') : chipSize(f)}</span>
     {uploading !== f.name && <button type="button" className="x" onMouseDown={(e) => e.preventDefault()} onClick={() => setFiles((cur) => withoutFile(cur, f))} disabled={busy} aria-label={t('att.remove', { name: f.name })} title={t('att.remove', { name: f.name })}>×</button>}</span>)}</span>;
   const card = job ? deliveryCardView({ busy, job, isDm }) : null; // 카드 제목·오류 줄 선택은 delivery-card.mjs(행동 테스트가 잠근다)
   return (
