@@ -1230,6 +1230,18 @@ export const DICT = {
   'err.proRequired.ios': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner."], // iOS — 결제 권유 없이 사실만(App Store 3.1.1, pro-checkout.mjs IOS_COPY)
   'err.proRequired.owner': ['이 에이전트는 주인의 Argo Pro가 있어야 메신저에 연결됩니다. 에이전트 주인에게 알려 주세요.', "This agent needs its owner's Argo Pro to connect to Messenger. Let the owner know."],
   'err.proRequired': ['에이전트를 메신저에 연결하려면 에이전트 주인의 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', "Connecting an agent to Messenger needs Argo Pro for the agent's owner. Paused agents reconnect as soon as the owner upgrades to Pro."],
+  // 무료 계정도 최신 앱이면 에이전트 4명까지(2026-10-11, 서버 관문 20261011120000) — 서버 오류의 앞 코드(뒤의 msgr_pro_required는 옛 메신저용)
+  'err.freeAgentLimit': ['무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있는데, 대신 멈출 에이전트가 없어 연결하지 못했습니다. Pro면 제한이 없습니다.', 'Free accounts can connect up to 4 agents to Messenger, and there was no agent to pause in its place. Pro has no limit.'],
+  'agents.swap': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요. Pro면 제한이 없어요.', 'Free accounts can use up to 4 agents, so {names} is now paused. Pro has no limit.'], // 교체 안내(검수 #945 MEDIUM-1)
+  // iOS 빌드 — 결제를 권하지 않고 사실만(App Store 3.1.1, #944와 같은 원칙). 고르는 곳: agent-pause.mjs(isIos)·error-toast.mjs(setIosCopy)
+  'agents.swap.ios': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요.', 'Free accounts can use up to 4 agents, so {names} is now paused.'],
+  'agents.pause.limit.ios': ['무료 계정은 에이전트 {limit}명까지 연결돼요. 나머지 {n}명은 멈춰 있어요.', 'Free accounts connect up to {limit} agents, so {n} more are paused.'],
+  'err.freeAgentLimit.ios': ['무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있는데, 대신 멈출 에이전트가 없어 연결하지 못했습니다.', 'Free accounts can connect up to 4 agents to Messenger, and there was no agent to pause in its place.'],
+  'err.appUpdateRequired': ['무료 계정의 에이전트는 최신 실행기(argo)가 켜져 있을 때 메신저에 연결됩니다. 실행기를 최신 버전으로 업데이트하면 에이전트가 다시 연결됩니다.', 'On a free account, agents connect to Messenger while an up-to-date runner (argo) is on. Update the runner and your agents reconnect.'],
+  // 멈춘 에이전트 안내(에이전트 목록 위 — agent-pause.mjs). 메신저는 다른 앱 설치를 전제하지 않는다(runner-sheet.test.mjs, 2026-10-02) — 'Argo 앱' 대신 실행기(argo)
+  'agents.pause.app': ['에이전트 {n}명이 멈춰 있어요. 실행기(argo)를 최신 버전으로 업데이트하면 에이전트가 다시 연결됩니다. 무료 계정은 최신 실행기가 켜져 있는 동안 {limit}명까지 쓸 수 있어요.', 'Paused agents: {n}. Update your runner (argo) and your agents reconnect. On a free account, up to {limit} agents work while an up-to-date runner is on.'],
+  'agents.pause.off': ['실행기가 꺼져 있어 에이전트 {n}명이 멈춰 있어요. 실행기를 다시 켜면 연결됩니다(무료 계정).', 'Paused agents: {n}, because your runner is off. Turn the runner back on and they reconnect (free account).'],
+  'agents.pause.limit': ['무료 계정은 에이전트 {limit}명까지 연결돼요. 나머지 {n}명은 멈춰 있어요. Pro로 바꾸면 모두 연결됩니다.', 'Free accounts connect up to {limit} agents, so {n} more are paused. Upgrade to Pro to connect them all.'],
   'ui.dm': ['1:1 대화', 'Direct message'],
   'ui.dm.personal': ['개인 1:1 대화', 'Personal 1:1'],
   'dm.legacy.note': ['이 에이전트와의 1:1은 개인 공간에서 이어집니다', 'Your 1:1 with this agent continues in your personal space'], // 옛 조직 1:1 위 안내 띠(유건 2026-10-05)

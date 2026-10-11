@@ -79,7 +79,7 @@ import { Seg } from './seg.mjs'; // 세그먼트 토글 하나(5차 피드백 3)
 import { planOf, purchaseChannel, proCheckoutUrl, planView, recheckFlow, isProUpsell, proRequiredFor, iosKey, LS_BILLING } from './pro-checkout.mjs'; // Pro 결제 — 본체·랜딩과 같은 결제·같은 판정(2026-10-11)
 import { searchView } from './search-view.mjs';
 import { deliveryCardView } from './delivery-card.mjs';
-import { friendlyErr, toastError } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
+import { friendlyErr, toastError, setIosCopy } from './error-toast.mjs'; // 아는 서버 코드 → 문구, 토스트는 원문을 거른다(UXM-05)
 import { messageShape } from './attach-only.mjs';
 import { createLateAttach, mergeAttachments } from './late-attach.mjs'; // 놓친 'attach' 방송 되찾기(C-a 인접 경로)
 import { appBackStack, rootBackAction } from './back-stack.mjs'; import { useBackClose } from './use-back-close.js'; // Android 뒤로 — 열린 시트·팝업부터 닫기(MSG-10) // 첨부만 보낸 글 — 올리는 중 자리표시·거둔 글 숨김(MSG-06)
@@ -88,6 +88,7 @@ import { selfMember, personalSelfName } from './self-member.mjs';
 import { crewRowMenuKeys, crewOpeners, creatorTagVisible } from './crew-row-menu.mjs';
 import { crewAwayNotice } from './crew-dm-notice.mjs';
 import { crewListEmptyKey } from './crews-empty.mjs';
+import { readAgentPause, agentPauseNote, readSwapNames } from './agent-pause.mjs'; // 무료 계정 에이전트가 멈춘 이유(2026-10-11)
 import { runnerOptions, RUNNER_INSTALL } from './runner-sheet.mjs';
 import { seenWithin, stampFetched, markSeen } from './presence-clock.mjs'; import { readWithSeen } from './crew-seen.mjs'; // 접속 판정 = 받아 온 때 기준(기능 점검 D2) // '실행기 연결' 시트(아르고 패밀리 구조, 2026-10-02)
 import { shortcutLabel } from './shortcut.mjs';
@@ -101,6 +102,7 @@ import { startPresence } from './presence.mjs';
 import { observeMobileResume } from './mobile-lifecycle.mjs';
 import { registerPush, activatePush, deactivatePush, detachPush, mountPush } from './push.js';
 import { pushDiag, readDiag, clearDiag } from './diag.jsx';
+setIosCopy(isIos); // iOS 빌드는 무료 한도 오류에서 결제 권유를 뺀다(App Store 3.1.1 — error-toast.mjs)
 setDeliveryReporter((kind, message) => pushDiag(kind, message)); // 전송 실패의 영어 원문은 카드에 보이지 않고 진단 기록(설정 > 진단)으로만 간다(검수 E, 2026-10-01)
 import { docSlug, insertWithFreePath, isPathTaken } from './doc-path.mjs';
 import { authErrorText } from './auth-errors.mjs';
@@ -1257,6 +1259,7 @@ function Shell({ session }) {
     const up = await supabase.from('msgr_crews').update({ status: 'active' }).eq('id', crew.id).select('id');
     if (up.error) up.error.message = proRequiredFor(up.error.message, { ownerId: crew.owner_user_id, uid, t }); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2) — 다음 줄(종전 그대로)이 던진다
     if (up.error) throw new Error(up.error.message);
+    readSwapNames(supabase, [crew.id]).then((names) => { if (names.length) { setNote(t(isIos ? 'agents.swap.ios' : 'agents.swap', { names: names.join(', ') })); readAgentPause(supabase).then(setAgentPause); } }); // 무료 4명 교체 안내(검수 #945)
     // 채널에 넣는 것은 서버 규칙 한 곳(msgr_crew_join)으로 — 방장이면 바로, 참여자는 채널 정책대로(바로/방장 승인), 채팅은 결재자면 바로·아니면 요청.
     let joined = null;
     if (channelId) {
@@ -1461,6 +1464,11 @@ function Shell({ session }) {
     if (looksFilled.current) return; looksFilled.current = true;
     fillAgentLooks(supabase, own.rows).then((done) => { if (done.length) setOwnCrews((cur) => (cur ? { ...cur, rows: cur.rows.map((x) => done.reduce((r, d) => (d.ids.includes(r.id) ? { ...r, ...d.patch } : r), x)) } : cur)); });
   }).catch(() => {}); return () => { live = false; }; }, [uid, syncEpoch, readOwnCrews]); // eslint-disable-line react-hooks/exhaustive-deps -- newerOwn은 순수
+  // 무료 계정 에이전트가 멈춘 이유(2026-10-11, agent-pause.mjs) — 로그인·재연결 때 1건, 폰 에이전트 탭에 들어갈 때 1건(아래 effect). 멈춘 에이전트가 없으면 안내 없음
+  const [agentPause, setAgentPause] = useState(null);
+  useEffect(() => { if (!uid) { setAgentPause(null); return undefined; } let live = true; readAgentPause(supabase).then((v) => { if (live) setAgentPause(v); }); return () => { live = false; }; }, [uid, syncEpoch]);
+  const pauseNote = agentPauseNote(agentPause, { ios: isIos });
+  const pauseNoteEl = pauseNote && <div className="msgr-rail-empty msgr-pausenote" role="status">{t(pauseNote.key, pauseNote.vars)}{pauseNote.key !== 'agents.pause.limit' && <div><RunnerButton /></div>}</div>; // 데스크톱 레일 — 무료 계정 에이전트가 멈춘 이유
   const approvalsTimer = useRef(null);
   // 넣기 요청 카드의 이름(기능 점검 D6) — 에이전트 이름: 조직 에이전트는 조직 행, 개인 에이전트는 160000의 대기 에이전트 이름(msgr_personal_room_crews).
   // 방 이름: 채널·이름 붙은 그룹방은 그 이름, 대화방은 나를 뺀 사람 이름(조직 표시명 → 프로필). 요청이 있을 때만 부른다.
@@ -2215,6 +2223,7 @@ function Shell({ session }) {
     try { await prefQueue.current.enqueue(() => q(supabase.from('msgr_target_prefs').upsert(ch.server.map((p) => ({ ...p, user_id: uid }))))); if (ch.server.some((p) => p.org_id === orgId)) bumpPrefs(); }
     catch (e) { setErr(friendlyErr(e.message, t)); loadMyAgents({ favs: true }).catch(() => {}); }
   };
+  useEffect(() => { if (uid && isPhone && page === 'agents') readAgentPause(supabase).then(setAgentPause); }, [isPhone, page, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps -- 탭에 들어갈 때만(멈춘 이유)
   useEffect(() => { if (isPhone && page === 'agents') { loadMyAgents({ favs: true }).catch(() => {}); loadApprovals().catch(() => {}); } if (isPhone && page === 'set-agents') loadMyAgents().catch(() => {}); if (isPhone && page === 'approvals') loadApprovals().catch(() => {}); }, [isPhone, page, resumeEpoch]); // eslint-disable-line react-hooks/exhaustive-deps
   // 버튼 이름(개인 1:1 대화) 판정 재료 — 폰 에이전트 탭을 아직 안 열었거나 데스크톱(myAgents를 읽지 않는다)이면, 조직 화면에 내 에이전트가 보일 때 세션에 한 번만 읽는다
   // (요청 2건, 주기 호출 없음 — 실패해도 다시 묻지 않고 지금 문구). 그 뒤 폰은 종전대로 에이전트 탭에서 새로 읽는다.
@@ -2883,6 +2892,7 @@ function Shell({ session }) {
               {approvalItems.length > 3 && <span className="ph-apmore">{t('phone.agents.approvals.more', { n: approvalItems.length - 3 })}</span>}
             </button>
           </div>}
+          {pauseNote && !tabQText.trim() && <div className="msgr-hint ph-pausenote" role="status">{t(pauseNote.key, pauseNote.vars)}{pauseNote.key !== 'agents.pause.limit' && <div className="ph-emptyacts"><RunnerButton /></div>}</div>}{/* 무료 계정 — 목록이 비거나 줄어든 이유(2026-10-11) */}
           {agentGroups.length > 0 && <div className="ph-chiprow">
             <div className="ph-chips" role="radiogroup" aria-label={t('phone.agents.filter')}>{AGENT_FILTERS.map((k) => <button key={k} type="button" role="radio" aria-checked={agentFilter === k} className={agentFilter === k ? 'active' : ''} onClick={() => setAgentFilter(k)}>{k === 'all' ? t('phone.chip.all') : t(`phone.agents.chip.${k}`)}</button>)}</div>
           </div>}
@@ -2992,8 +3002,10 @@ function Shell({ session }) {
               </button>))}
           </div>
         </RailSection>)}
+        {!isPhone && pauseNote && !(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && pauseNoteEl}{/* 무료 계정 — 내 에이전트 구역이 숨을 때(개인 공간에 연결된 에이전트 0)만 구역 밖에. 구역이 있으면 그 안 맨 위(검수 #945 LOW-4) */}
         {(isPersonal ? railVisible.length > 0 : !orgBlocked && org) && (<RailSection id="mine" label={`${t('rail.agents')} · ${railVisible.length}`} right={<span className="right">{railVisible.length > 0 && <span className="msgr-sortwrap msgr-railsort"><button type="button" className={`msgr-sortbtn${sortMenu ? ' on' : ''}`} onClick={() => setSortMenu((v) => !v)} title={t('rail.sort')} aria-label={t('rail.sort')} aria-haspopup="menu" aria-expanded={sortMenu}><I name="sort" size={14} /></button>{sortMenu && <div className="msgr-rowmenu" role="menu" onMouseLeave={() => setSortMenu(false)}>{['name', 'added', 'custom'].map((v) => <button key={v} type="button" role="menuitemradio" aria-checked={railSort === v} onClick={() => { pickSort(v); setSortMenu(false); }}>{railSort === v ? <I name="check" size={13} /> : <span className="mi" style={{ width: 13 }} />}{t(`rail.sort.${v}`)}</button>)}</div>}</span>}{myAvailable.length > 0 && <span className="msgr-klabel">{myCrews.length}/{myCrews.length + myAvailable.length}</span>}</span>}>
           <div className="msgr-list mine">
+            {!isPhone && pauseNote && pauseNoteEl}
             {!isPersonal && !myAvailable.length && !railVisible.length && <p className="msgr-rail-empty">{t('phone.agents.none')} <RunnerButton /></p>}{/* 비어도 구역과 연결 단추를 둔다 — 통째로 사라져 에이전트를 붙일 곳이 안 보였다(UXM-08) */}
             {/* 묶음마다 접었다 편다(유건 2026-09-16) — 조직의 다른 에이전트는 한 절에서(유건 제보 2026-09-12: 절이 둘로 중복) */}
             {[['mine.argo', 'rail.agents.mine', railArgo], ['mine.ext', 'rail.src.custom', railExt], ['mine.company', 'rail.agents.company', railCompany]]
@@ -3231,7 +3243,8 @@ function CrewSheet({ crew, org, uid, me, members, policy, channelId, channelName
     setBusy(false);
     if (res.error) return onError(proRequiredFor(res.error.message, { ownerId: crew.owner_user_id, uid, t })); // 남의 에이전트면 내 Pro로 풀리지 않는다(#944 LOW-2)
     if (!res.data?.length) return onError(t('crew.allow.readonly', { name: nameOfUser(crew.owner_user_id) }));
-    onNote(t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
+    const swapped = next ? await readSwapNames(supabase, [crew.id]) : []; // 무료 4명 교체 안내(검수 #945)
+    onNote(swapped.length ? t(isIos ? 'agents.swap.ios' : 'agents.swap', { names: swapped.join(', ') }) : t(next ? 'crew.dispatch.done' : 'crew.recall.done', { name: crew.display_name })); onChanged();
   };
   const [confirmOut, setConfirmOut] = useState(false);
   const leaveHere = async () => { // 규칙 14: 데려온 것이 동의라면 빼는 것은 동의 철회 — 주인은 방장 동의 없이 이 방에서만 뺄 수 있다
