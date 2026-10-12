@@ -11,7 +11,14 @@ const clip = (v) => { const s = String(v ?? '').replace(/\s+/g, ' ').trim(); ret
 /** 기록기 → 화면용 단계 목록 [{ stage, detail }] (최근 n개). 기록기가 없거나 단계가 없으면 [] */
 export function panelSteps(trace, n = LIVE_STEPS) {
   if (!trace || typeof trace.compact !== 'function') return [];
-  return trace.compact(n).map((s) => ({ stage: String(s.stage ?? 'work'), detail: clip(s.detail) }));
+  // 대상 없는 '작업' 단계(TodoWrite·계획 목록·Task 같은 내부 정리)는 사람이 볼 일이 없어 뺀다(검수 L6)
+  return trace.compact(n * 2).map((s) => ({ stage: String(s.stage ?? 'work'), detail: clip(s.detail) })).filter((s) => s.stage !== 'work' || s.detail).slice(-n);
+}
+
+/** 진행 방송용 — { list, n(전체 도구 단계 수), rev(기록 수정 번호 — 바뀐 때만 목록을 다시 보낸다) } | null */
+export function liveSteps(trace) {
+  if (!trace || typeof trace.compact !== 'function') return null;
+  return { list: panelSteps(trace, LIVE_STEPS), n: trace.toolCount ?? 0, rev: trace.rev ?? 0 };
 }
 
 /** 답 글 meta에 실을 단계 요약 — 도구 단계가 없으면 싣지 않는다 */

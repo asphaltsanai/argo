@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-panel-steps-')); // import보다 먼저(레포 관례)
-const { panelSteps, stepsMeta, LIVE_STEPS, KEPT_STEPS } = await import('../src/gateway/office-steps.mjs');
+const { panelSteps, stepsMeta, liveSteps, LIVE_STEPS, KEPT_STEPS } = await import('../src/gateway/office-steps.mjs');
 const { createTrace } = await import('../src/turn-trace.mjs');
 const { chat } = await import('../src/chat.mjs');
 const { createCompany } = await import('../src/workspace.mjs');
@@ -41,4 +41,14 @@ test('chat()은 이 턴의 기록기를 onTrace로 알린다(러너가 없어 �
   let seen = null;
   await chat('steps-ws', 'nobody', 'x', null, { onTrace: (t) => { seen = t; } }).catch(() => {});
   assert.ok(seen && typeof seen.compact === 'function', '기록기를 받았다');
+});
+
+test('대상 없는 작업 단계(TodoWrite·Task)는 빼고, 진행 방송용은 전체 수·수정 번호를 같이', () => {
+  const tr = createTrace({ source: 'messenger' });
+  tr.toolStart({ id: 'a', name: 'TodoWrite', input: { todos: [] } });
+  tr.toolStart({ id: 'b', name: 'Read', input: { file_path: '/w/a.md' } });
+  assert.deepEqual(panelSteps(tr), [{ stage: 'memory', detail: 'a.md' }]);
+  const live = liveSteps(tr);
+  assert.deepEqual(live.list, [{ stage: 'memory', detail: 'a.md' }]); assert.equal(live.n, 2); assert.ok(live.rev > 0);
+  assert.equal(liveSteps(null), null);
 });

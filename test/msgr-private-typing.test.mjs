@@ -73,12 +73,14 @@ test('progress: steps 함수를 받은 턴만 그 단계 목록을 싣는다(상
   await mkdir(paths('ws').chats, { recursive: true });
   await setTurnStatus('ws', 'pepper', 'shell', 'cat ~/secret', 'OWNER-PRIVATE-PARTIAL', 'messenger', 'OWNER-PRIVATE-THOUGHT', [{ stage: 'shell', detail: 'cat ~/secret' }]);
   const f = fakeClient(); rt.set('ws:O', f.org);
-  const stop = startTyping('ws', 'O', 'C-x', 'crew-1', 'pepper', { full: false, sourceMsgId: 910, steps: () => [{ stage: 'memory', detail: '견적.md' }] });
-  await new Promise((r) => setTimeout(r, 1700));
+  const stop = startTyping('ws', 'O', 'C-x', 'crew-1', 'pepper', { full: false, sourceMsgId: 910, steps: () => ({ list: [{ stage: 'memory', detail: '견적.md' }], n: 30, rev: 7 }) });
+  await new Promise((r) => setTimeout(r, 6600)); // 첫 방송(1.5초 폴) + 4초 간격 뒤 다음 폴(6초)에 한 번 더
   stop();
   const prog = f.sent.filter((m) => m.event === 'progress');
-  assert.ok(prog.length >= 1);
+  assert.ok(prog.length >= 2, JSON.stringify(prog.length));
   assert.deepEqual(prog[0].payload.steps, [{ stage: 'memory', detail: '견적.md' }]);
+  assert.equal(prog[0].payload.steps_n, 30, '전체 단계 수(화면 머리글)');
+  assert.equal(prog[1].payload.steps, undefined, '단계가 그대로면(rev 같음) 다시 싣지 않는다 — 화면은 같은 턴의 목록을 유지');
   assert.ok(!JSON.stringify(f.sent).includes('OWNER-PRIVATE') && !JSON.stringify(f.sent).includes('secret'));
   rt.delete('ws:O');
 });
