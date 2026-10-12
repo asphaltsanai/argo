@@ -27,21 +27,8 @@ export const AREAS = { work: 'office_work', deals: 'office_deals', calendar: 'ca
 export const BLOCKED = { calendar: ['delete'] };
 /** 조직 없이(개인 공간) 쓰는 도구 — 나머지는 조직이 있어야 한다 */
 export const PERSONAL = new Set(['calendar', 'office_mail', 'office_briefing']);
-/** 되돌리기 어려운 동작 — 바깥(CLI·MCP)에서는 사람이 승인한 뒤에만 실행한다(유건 10/11 "승인 받고 진행").
-    CLI는 터미널 확인 질문, MCP는 붙은 클라이언트의 확인 창(elicitation). 둘 다 못 하면 실행하지 않는다. 아르고 본체 에이전트는 이 규칙 밖(자기 결재 흐름).
-    반환: 무엇을 바꾸는지 한 문장 | null(확인 없이 실행) */
-export function confirmNeeded(name, a = {}, lang = 'ko') {
-  const say = (ko, en) => (lang === 'en' ? en : ko);
-  const id = a.id ? ` (id ${a.id})` : '';
-  if (name === 'office_deals' && a.action === 'deal_next' && a.to === 'contract') return say(`거래를 계약 확정으로 넘깁니다${id}.`, `Moves the deal to a confirmed contract${id}.`);
-  if (name === 'office_deals' && a.action === 'deal_next' && a.to === 'cancel') return say(`거래를 취소합니다${id}.`, `Cancels the deal${id}.`);
-  if (name === 'office' && a.action === 'eval_add') return say(`평가를 기록합니다(대상: ${a.subject_name || a.subject_user || '?'}).`, `Records an evaluation (subject: ${a.subject_name || a.subject_user || '?'}).`);
-  if (name === 'office_briefing' && a.action === 'brief_add' && a.recipient === 'org') return say('조직 전체에 브리핑을 보냅니다.', 'Sends a briefing to the whole organization.');
-  if (name === 'office_work' && a.action === 'page_edit' && a.mode === 'replace') return say(`페이지 본문을 통째로 바꿉니다${id}.`, `Replaces the whole page body${id}.`);
-  if (name === 'office_work' && a.action === 'task_set' && a.note_mode === 'replace' && a.note != null) return say(`할 일 메모를 통째로 바꿉니다${id}.`, `Replaces the whole task note${id}.`);
-  if (name === 'office_files' && a.action === 'drive_export') return say(`문서함 파일을 구글 드라이브로 내보냅니다${id}.`, `Exports the Office file to Google Drive${id}.`);
-  return null;
-}
+export { confirmNeeded } from './office-confirm.mjs'; // 되돌리기 어려운 동작 판정 — 오피스 패널 확인 카드(gateway/office-proposals.mjs)와 같이 쓴다
+import { confirmNeeded } from './office-confirm.mjs';
 /** 터미널 확인 — 표준 입력이 터미널일 때만 묻는다. 반환 true(예) | false(아니오) | null(물을 수 없음: 파이프·에이전트 셸) */
 export async function ttyConfirm(question, lang = 'ko', { input = process.stdin, output = process.stderr } = {}) {
   if (!input.isTTY) return null;

@@ -1,6 +1,7 @@
 import { selfPostsSection } from './self-posts.mjs';
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, settingsDirectTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
 import { officeToolSpecs } from './gateway/office-tools.mjs'; // 오피스 도구 7종 정의(일정·회사·문서함·할 일·페이지·거래·메일·브리핑) — CLI·MCP와 같은 한 곳
+import { panelWriteGate, panelLaterNo } from './gateway/office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드 관문 · 예약·긴 작업 거절 문구
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -1038,6 +1039,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
     async ({ title, prompt, type, time, date, dows, everyMinutes, agentSlug, maxRuns, maxUsd }) => {
       if (guest) return guestNo(lang === 'en' ? 'Scheduling a task' : '예약 만들기');
+      if (mirrorCtx?.officePanel === true) return text(panelLaterNo(lang)); // 오피스 패널 턴 — 나중 턴은 패널 카드가 없어 오피스 쓰기를 못 한다(office-proposals.mjs, 검수 M-a)
       // 목표 하트비트 회차 안에서는 예약을 새로 걸지 않는다(폭주 방지 — 회차가 회차를 낳지 않게). 필요하면 결과에 적어 주인이 정한다
       if (goalTurn) return text(goalTurnNo(lang === 'en' ? 'Creating schedules' : '예약 만들기'));
       try {
@@ -1121,6 +1123,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     },
     async ({ title, prompt, agentSlug }) => {
       if (guest) return guestNo(lang === 'en' ? 'Starting a long task' : '장기 작업 시작');
+      if (mirrorCtx?.officePanel === true) return text(panelLaterNo(lang)); // 오피스 패널 턴 — 위 예약과 같은 이유(검수 M-a)
       if (goalTurn) return text(goalTurnNo(lang === 'en' ? 'Starting a long task' : '장기 작업 걸기'));
       try {
         const { enqueueLongJob } = await import('./gateway.mjs'); // 동적 — gateway가 chat을 import하므로 순환 회피
@@ -1138,6 +1141,8 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   // 손님 턴은 읽기까지 막는다. 세션 없음·RPC 오류·방 판정은 처리기가 한 줄로 돌려준다. 어떤 턴에 싣는지는 아래 tools 배열이 정한다
   const officeTool = (spec) => tool(spec.name, spec.description, spec.shape, async (args) => {
     if (guest) return guestNo(lang === 'en' ? spec.guest.en : spec.guest.ko);
+    const staged = panelWriteGate(mirrorCtx, spec.name, args, lang); // 오피스 패널 턴의 쓰기는 실행하지 않고 확인 카드로 모은다(office-proposals.mjs, 2단계 PR1)
+    if (staged) return text(staged);
     const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
     return text(await spec.run(args, { ctx: mirrorCtx, crew: fromSlug, crewName: fromName, lang, ownerId }));
   });

@@ -89,3 +89,61 @@ test('전송 통로 — 글에 meta·reply_to를 싣고, 응답을 잃으면 같
   assert.equal(preps, 1); assert.ok(retry.calls.filter((c) => c.op === 'insert').every((c) => c.row.reply_to === 10));
 });
 
+
+// 쓰기 확인 카드(2단계 PR1) — 카드 목록·상태·확인 글 쓰기
+import { proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm } from '../src/core/agent-chat.js';
+import { AGENT_DICT } from '../src/ui/agent-panel-i18n.js';
+import { officeToolSpecs } from '../../../src/gateway/office-tools.mjs';
+
+test('카드 목록은 에이전트 글의 검증된 제안만', () => {
+  const p = { pid: 'p1', tool: 'office_work', args: {}, summary: '할 일 추가: a' };
+  assert.deepEqual(proposalsOf({ author_kind: 'crew', meta: { office_proposals: [p, { pid: 'x', summary: 'b' }, null, { pid: 'p2' }] } }), [p]);
+  assert.deepEqual(proposalsOf({ author_kind: 'user', meta: { office_proposals: [p] } }), [], '사람 글의 제안은 카드가 아니다');
+  assert.deepEqual(proposalsOf({ author_kind: 'crew', meta: {} }), []);
+});
+
+test('카드 상태 — 열림 → 실행 요청함(확인 글) → 실행함(결과 표지)', () => {
+  const thread = [bot(42, 10)];
+  assert.equal(proposalState(thread, 42, 'p1'), 'open');
+  thread.push({ ...me(43, '실행: 할 일 추가'), meta: { source: PANEL_SOURCE, office_confirm: { reply: 42, pid: 'p1' } } });
+  assert.equal(proposalState(thread, 42, 'p1'), 'sent');
+  assert.equal(proposalState(thread, 42, 'p2'), 'open', '다른 카드는 그대로');
+  thread.push({ ...bot(44, 10), meta: { office_result: { reply: 42, pid: 'p1' } } });
+  assert.equal(proposalState(thread, 42, 'p1'), 'done', 'status 없는 표지 = 처리함');
+  for (const [status, want] of [['ran', 'done'], ['error', 'failed'], ['not_found', 'failed'], ['unknown', 'unknown']])
+    assert.equal(proposalState([bot(42, 10), { ...bot(45, 10), meta: { office_result: { reply: 42, pid: 'p1', status } } }], 42, 'p1'), want, status);
+});
+
+test('카드 자세히 — action 빼고 칸 이름·값, 긴 값은 자른다', () => {
+  const f = proposalFields({ args: { action: 'customer_set', id: 'c1', account: '국민 123', notes: '가'.repeat(400), empty: '', lines: [{ item: 'A', unit_price: 1 }] } });
+  assert.deepEqual(f.map((x) => x.key), ['id', 'account', 'notes', 'lines']);
+  assert.equal(f[2].value.length, 301);
+  assert.equal(f[3].value, '[{"item":"A","unit_price":1}]');
+});
+
+test('확인 글 — 대화 뿌리에 붙이고 같은 카드는 한 건(client_msg_id 고정)', async () => {
+  const inserted = [];
+  const sb = { from: () => ({
+    insert: (row) => { inserted.push(row); return { select: () => ({ single: async () => (inserted.length === 1 ? { data: { id: 50 } } : { error: { code: '23505', message: 'dup' } }) }) }; },
+    select: () => ({ eq() { return this; }, maybeSingle: async () => ({ data: { id: 50 } }) }),
+  }) };
+  const args = { channel: 'ch', uid: 'u1', root: 10, replyId: 42, pid: 'p1', body: '실행: 할 일 추가' };
+  assert.equal(await sendConfirm(sb, args), 50);
+  assert.equal(await sendConfirm(sb, args), 50, '두 번째는 이미 있는 글 번호');
+  assert.deepEqual(inserted[0], { channel_id: 'ch', author_kind: 'user', author_user_id: 'u1', body: '실행: 할 일 추가', client_msg_id: 'oc:42:p1', meta: { source: PANEL_SOURCE, office_confirm: { reply: 42, pid: 'p1' } }, reply_to: 10, thread_root: 10 });
+});
+
+// 다국어 상시 규칙 — 카드 '자세히'의 칸 이름이 한국어 모드에서 영어 키로 보이지 않게, 쓰기 도구의 모든 칸이 사전에 있어야 한다(검수 L-b)
+test('카드 칸 이름 — 오피스 도구의 모든 인자 칸에 ko·en 이름, 뜻이 다른 칸은 도구 이름이 먼저', () => {
+  const has = (k) => !!AGENT_DICT[k];
+  const missing = [];
+  for (const spec of officeToolSpecs('ko')) for (const key of Object.keys(spec.shape)) {
+    if (key === 'action') continue;
+    const k = fieldLabelKey({ tool: spec.name, key }, has);
+    if (!has(k) || !AGENT_DICT[k][0] || !AGENT_DICT[k][1]) missing.push(`${spec.name}.${key}`);
+  }
+  assert.deepEqual(missing, []);
+  assert.equal(fieldLabelKey({ tool: 'office_mail', key: 'account' }, has), 'agent.field.office_mail.account');
+  assert.equal(AGENT_DICT['agent.field.office_mail.account'][0], '메일 계정');
+  assert.equal(fieldLabelKey({ tool: 'office_work', key: 'title' }, has), 'agent.field.title');
+});

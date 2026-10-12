@@ -98,3 +98,44 @@ export function panelTransport(sb, { orgId, channel, uid, personal }, prepare) {
   };
 }
 
+
+/* ── 쓰기 확인 카드(2단계 PR1) — 게이트웨이가 패널 턴의 오피스 쓰기를 실행하지 않고 답 글 meta.office_proposals로 올린다(src/gateway/office-proposals.mjs).
+   [실행]은 같은 대화에 확인 글(meta.office_confirm)을 넣고, 게이트웨이가 그 답 글의 제안을 다시 읽어 인자 그대로 실행한 뒤 답에 meta.office_result를 단다.
+   취소는 이 기기에만 남긴다(서버 쓰기 없음). */
+export const proposalsOf = (row) => (row?.author_kind === 'crew' && Array.isArray(row.meta?.office_proposals)
+  ? row.meta.office_proposals.filter((p) => p && /^p[1-9]$/.test(p.pid) && typeof p.summary === 'string') : []);
+
+/** 카드 상태 — 'done'(처리기가 돌았다 — 성공·거절은 답 글이 알린다) | 'failed'(오류·제안을 못 찾음) | 'unknown'(실행 중 끊겨 모름) | 'sent'(확인 글을 보냈다) | 'open'.
+    결과 표지의 status가 없으면(이 표지를 처음 단 게이트웨이) 'done'으로 본다. thread = 이 대화의 글 */
+export function proposalState(thread, replyId, pid) {
+  const same = (c) => c && Number(c.reply) === replyId && c.pid === pid;
+  const res = thread.find((r) => r.author_kind === 'crew' && same(r.meta?.office_result))?.meta.office_result;
+  if (res) return res.status === 'error' || res.status === 'not_found' ? 'failed' : res.status === 'unknown' ? 'unknown' : 'done';
+  if (thread.some((r) => r.author_kind === 'user' && same(r.meta?.office_confirm))) return 'sent';
+  return 'open';
+}
+
+/** 카드 '자세히' — 실행될 인자를 칸 이름과 값 한 줄씩(action 제외). 값은 글자로, 길면 자른다. 무엇이 바뀌는지 보고 누르게(검수 M2) */
+export function proposalFields(p, max = 300) {
+  const a = p?.args && typeof p.args === 'object' ? p.args : {};
+  const text = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
+  return Object.entries(a).filter(([k, v]) => k !== 'action' && v != null && v !== '')
+    .map(([k, v]) => { const s = text(v); return { key: k, tool: p.tool, value: s.length > max ? `${s.slice(0, max)}…` : s }; });
+}
+/** 칸 이름 사전 키 — 도구마다 뜻이 다른 칸(메일 account = 메일 계정, 거래 account = 계좌)은 도구 키가 먼저 */
+export function fieldLabelKey(f, has) {
+  const own = `agent.field.${f.tool}.${f.key}`;
+  return has(own) ? own : `agent.field.${f.key}`;
+}
+
+/** 확인 글 쓰기 — 같은 카드를 두 번 눌러도 한 건(client_msg_id 고정, 이미 있으면 그 글 번호) */
+export async function sendConfirm(sb, { channel, uid, root, replyId, pid, body }) {
+  const clientId = `oc:${replyId}:${pid}`;
+  const row = { channel_id: channel, author_kind: 'user', author_user_id: uid, body, client_msg_id: clientId,
+    meta: { source: PANEL_SOURCE, office_confirm: { reply: replyId, pid } }, reply_to: root, thread_root: root };
+  const { data, error } = await sb.from('msgr_messages').insert(row).select('id').single();
+  if (!error) return data.id;
+  const found = await sb.from('msgr_messages').select('id').eq('channel_id', channel).eq('author_user_id', uid).eq('client_msg_id', clientId).maybeSingle();
+  if (!found.error && found.data) return found.data.id;
+  throw Object.assign(new Error(error.message), { code: error.code });
+}
