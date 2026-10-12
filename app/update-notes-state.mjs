@@ -30,6 +30,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.103': Object.freeze(['updates.note.agentConnect', 'updates.note.versionStamp']),
   // 0.1.104 — keepAgents: 무료 계정 유지할 에이전트 고르기(#958·#966·#969) · proFiles: Pro 첨부 500MB·20GB(#956), 연결 도구 플랜별 상한(#968), 유료 조직 손님 첨부(#959) · officePanel: 오피스 에이전트 패널 확인 카드·단계 보기·동료에게 맡기기(#962·#964·#965)
   '0.1.104': Object.freeze(['updates.note.keepAgents', 'updates.note.proFiles', 'updates.note.officePanel']),
+  // 0.1.105 — msgrDiagnose: 메신저 연결 진단 카드(#979) · runnerAuthExpired: 실행기 로그인 만료 안내·재로그인 시 해제(#980·#984) · codexKorean: codex 답 한글 깨짐(#982) · codexChatgpt: ChatGPT 계정 codex 작업 실패(#975)
+  '0.1.105': Object.freeze(['updates.note.msgrDiagnose', 'updates.note.runnerAuthExpired', 'updates.note.codexKorean', 'updates.note.codexChatgpt']),
 });
 
 export function stableVersion(value) {
