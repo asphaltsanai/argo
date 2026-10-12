@@ -35,7 +35,7 @@ test('마이그레이션 버전 중복 없음', () => {
 });
 
 // DB 위생 1·전송량 5 — 기억 데이터는 지우지 않고, Storage 객체는 SQL로 지우지 않는다(Storage API로).
-// 2026-10-12 이후 새 마이그레이션부터 적용한다(그 전 계정 삭제 함수 msgr_delete_me·msgr_purge_orgs는 정책 판단 대기).
+// 2026-10-12 이후 새 마이그레이션부터 적용한다(그 전 계정 삭제 함수 msgr_delete_me·msgr_purge_orgs도 대상 — 2026-10-12 유건 승인, Storage API(msgr-storage-sweep)로 바꾸는 수정이 따로 진행 중).
 // 유건 승인을 받은 예외는 그 문장 안에 `-- rule-ok: <이유·승인 날짜>` 주석을 단다.
 // ponytail: 문장 단위 정규식 — 동적 SQL(execute format)로 이름을 조립하면 못 잡는다. 그런 마이그레이션은 검수에서 본다.
 const CUTOFF = '20261012140000';
