@@ -61,7 +61,7 @@ class Cdp {
   send(method, params = {}, sessionId) {
     const id = ++this.id;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Browser command timed out (${method})`)); }, 30_000); // 명령 이름 — 어느 단계가 멈췄는지 실패 기록만으로 보이게(10/9 #916 CI) timer.unref?.();
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Browser command timed out (${method})`)); }, 30_000); timer.unref?.(); // 명령 이름 — 어느 단계가 멈췄는지 실패 기록만으로 보이게(10/9 #916 CI)
       const res = (value) => { clearTimeout(timer); resolve(value); }; const rej = (error) => { clearTimeout(timer); reject(error); };
       this.pending.set(id, { res, rej, sessionId });
       try { this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); } catch (e) { this.pending.delete(id); rej(e); }
@@ -112,6 +112,7 @@ const children = new Set(); // 살아 있는 크롬 자식 전수 — 프로세�
 process.on('exit', () => { for (const c of children) { try { c.kill('SIGKILL'); } catch { /* */ } } });
 /** 테스트 전용 — 세션 map(축출 가드 핀). */
 export const _sessionsForTest = () => sessions;
+export const _CdpForTest = Cdp;
 export const BROWSER_LOGIN_ERRORS = Object.freeze({
   BROWSER_LOGIN_PAUSED: 'Browser login handed off to the user. Further automation in this run is disabled; continue in a new work run after sign-in.',
   BROWSER_LOGIN_PENDING: 'This agent already has a login tab waiting for the user. Complete sign-in and close that tab first.',
