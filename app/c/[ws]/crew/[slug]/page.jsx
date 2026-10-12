@@ -1313,7 +1313,7 @@ export default function CrewChat({ params, embedded = false, onClose }) {
             position: 'absolute', bottom: 'calc(100% + 8px)', left: slashClamp.shift, zIndex: 40,
             minWidth: slashClamp.maxW ? Math.min(320, slashClamp.maxW) : 320,
             maxWidth: slashClamp.maxW ? Math.min(slashClamp.maxW, 480) : undefined, maxHeight: 320, overflowY: 'auto', padding: 6,
-            boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+            boxShadow: 'var(--shadow-float)',
           }}>
             <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('chat.commands')}</div>
             {slashMatches.map((c, i) => (
@@ -1628,7 +1628,7 @@ function SideOpenMenu({ crews, onPick }) {
         <Icon name="split" size={12} /> {t('split.open')} <span aria-hidden style={{ fontSize: 9 }}>▾</span>
       </button>
       {open && (
-        <div ref={panelRef} className="card card-float" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: clamp.shift, zIndex: 40, minWidth: 200, maxWidth: clamp.maxW || undefined, maxHeight: 320, overflowY: 'auto', padding: 6, boxShadow: '0 8px 28px rgba(0,0,0,.14)' }}>
+        <div ref={panelRef} className="card card-float" role="menu" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: clamp.shift, zIndex: 40, minWidth: 200, maxWidth: clamp.maxW || undefined, maxHeight: 320, overflowY: 'auto', padding: 6, boxShadow: 'var(--shadow-float)' }}>
           {crews.length === 0 && <div style={{ padding: '6px 8px', fontSize: 12, color: 'var(--fg-3)' }}>{t('split.noCrew')}</div>}
           {crews.map((c) => (
             <button key={c.slug} type="button" role="menuitem" onClick={() => { setOpen(false); onPick(c.slug); }}
@@ -1685,7 +1685,7 @@ function LimitGauge({ limit }) {
       {open && (
         <div id={tipId} role="tooltip" className="card card-float" style={{
           position: 'absolute', bottom: 'calc(100% + 6px)', right: 0, zIndex: 40, minWidth: 200, padding: '8px 10px',
-          boxShadow: '0 8px 28px rgba(0,0,0,.14)', display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>
+          boxShadow: 'var(--shadow-float)', display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>
           <span style={{ fontWeight: 650, color: 'var(--fg)' }}>{name} {t('deck.limit.title')}</span>
           {limit.windows.map((w) => (
             <span key={w.mins} className="mono">
@@ -1735,7 +1735,7 @@ function ModelMenu({ ws, runners, sel, onChange, disabled }) {
         <div className="card card-float" role="menu" style={{
           position: 'absolute', bottom: 'calc(100% + 6px)', right: 0, zIndex: 40,
           minWidth: 230, maxHeight: 320, overflowY: 'auto', padding: 6,
-          boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+          boxShadow: 'var(--shadow-float)',
           transformOrigin: 'bottom right',
           transform: entered ? 'scale(1) translateY(0)' : 'scale(0.97) translateY(4px)',
           opacity: entered ? 1 : 0,
@@ -2138,7 +2138,7 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
                 config.toml로 실제 MCP를 받는다. kind==='cli'로 두면 바로 위 범위 지정 UI 밑에
                 "어차피 안 돈다"는 거짓이 함께 뜬다(분리 검수 2026-08-19 MED-C). */}
             {profile.mcp.length > 0 && (runners ?? []).some((r) => r.id === (sel.runner || autoRunnerId) && r.kind === 'cli' && !r.mcp) && (
-              <span className="microlabel" style={{ color: 'var(--warn, #b5893a)', lineHeight: 1.5 }}>{t('chat.card.mcpCliWarn')}</span>
+              <span className="microlabel" style={{ color: 'var(--warn)', lineHeight: 1.5 }}>{t('chat.card.mcpCliWarn')}</span>
             )}
           </div>)}
 

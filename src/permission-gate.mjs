@@ -683,6 +683,10 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 승인된 같은 명령(이 크루·이 채널)은 한 번 허용한다. 대기 중이면 새 카드를 만들지 않고 그 결재를 가리킨다.
       if (opts.msgr) {
         const hit = classifyShell(cmd, lang);
+        // 오피스 패널 조율자가 동기로 맡긴 동료 턴(chat.mjs delegateRulesCtx) — 결재를 올려도 이어 실행할 길이 없어 거절하고 조율자에게 돌려준다
+        if (hit && opts.msgr.deny === true) return { behavior: 'deny', message: lang === 'en'
+          ? `This command is high risk (${hit.label}). In a task handed over from the Office agent panel it is not run here — do not work around it; report back to the colleague who asked, so they can file it for approval.`
+          : `이 명령은 고위험(${hit.label})이다. 오피스 에이전트 창에서 맡긴 일에서는 여기서 실행하지 않는다 — 우회하지 말고, 맡긴 동료에게 돌려줘라(그 동료가 결재를 올린다).` };
         if (hit) {
           const shell = normalizeShell(cmd); const channelId = opts.msgr.channelId ?? null;
           if (toolUseID && shellGranted.has(toolUseID)) { shellGranted.delete(toolUseID); return allow; } // 같은 호출의 두 번째 판정

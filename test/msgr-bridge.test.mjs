@@ -67,7 +67,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCre
     async memberName(orgId, uid) { rec('memberName', orgId, uid); return names[uid] ?? '민수'; },
     // 크루 작업 중단(유건 확정 2026-09-26) — msgr_executions.stop_requested_by 조회 흉내.
     async executionStopInfo(crewId, sourceId) { rec('executionStopInfo', crewId, sourceId); return stopRequestedBy ? { stop_requested_by: stopRequestedBy, stop_requested_at: new Date().toISOString() } : null; },
-    async contextOf(ch, before, n, after = []) { rec('contextOf', ch, before, n, after); return context.filter((r) => r.id < before || (r.reply_to === before && after.includes(r.crew_id))).sort((a, b) => a.id - b.id).slice(-n); },
+    async contextOf(ch, before, n, after = [], opts = {}) { rec('contextOf', ch, before, n, after, opts); return context.filter((r) => opts.threadRoot == null || r.id === opts.threadRoot || r.thread_root === opts.threadRoot).filter((r) => r.id < before || (r.reply_to === before && after.includes(r.crew_id))).sort((a, b) => a.id - b.id).slice(-n); },
     async orgCrews(org) { rec('orgCrews', org); return (peers ?? crews).map((c) => ({ id: c.id, slug: c.slug, display_name: c.display_name, owner_user_id: c.owner_user_id ?? OWNER, ws_id: c.ws_id ?? WS })); },
     async settled(crewId, msgId, channelId, beforeId = null) { rec('settled', crewId, msgId, channelId, beforeId); if (!channelId) throw new Error('settled: channelId 필수(인덱스 선두열)'); return settledFn(crewId, msgId, beforeId); },
     async autoTurnsIn(rootId, channelId) { rec('autoTurnsIn', rootId, channelId); if (!channelId) throw new Error('autoTurnsIn: channelId 필수'); return autoTurns; },
@@ -624,9 +624,14 @@ test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK
   const chatSrc = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
   assert.match(chatSrc, /const orgRules = mirrorCtx\?\.orgMemory \? orgMemoryPrompt\(mirrorCtx\.orgMemory, \{ org: mirrorCtx\.orgSlug \?\? '', channelName: mirrorCtx\.channelName \?\? ''[^\n]*\n\s*: mirrorCtx\?\.orgSlug \? await loadOrgRules\(wsId, mirrorCtx\.orgSlug, \{ channelName: mirrorCtx\.channelName \?\? ''/, '규칙 로드 — 서버 기억 우선, 옛 서버면 미러');
   assert.match(chatSrc, /\$\{systemPromptFor\(md, p\.root, skills, meta, lang, \{ hasTools: cliTools, connectors: cliConnectors, userName: turnUser \}\)\}\$\{orgRules\}/, 'CLI 프롬프트 주입'); // K94: 도구 여부는 크루 다리 유무
-  assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(mirrorCtx\?\.kind === 'msgr' \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값');
+  assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(mirrorCtx\?\.kind === 'msgr' && mirrorCtx\.officePanelSolo !== true \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값(오피스 패널 턴은 동기 위임 명단 — 2단계 PR3)');
   assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang, \{ userName: turnUser \}\) \+ sysTail/, 'SDK 프롬프트가 꼬리를 붙인다');
-  assert.match(chatSrc, /const rulesCtx = \(mirrorCtx\?\.kind === 'msgr' \|\| mirrorCtx\?\.kind === 'msgr-rules' \|\| mirrorCtx\?\.orgSlug\) \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? ''[^\n]*\} : null;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const childCtx = rulesCtx \?\? [^\n]*\n\s*const r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: childCtx \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만)');
+  assert.match(chatSrc, /const rulesCtx = \(mirrorCtx\?\.kind === 'msgr' \|\| mirrorCtx\?\.kind === 'msgr-rules' \|\| mirrorCtx\?\.orgSlug\) \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? ''[^\n]*\} : null;[^\n]*\n[\s\S]{0,800}?const childCtx = rulesCtx \? delegateRulesCtx\(rulesCtx, mirrorCtx\) : [^\n]*\n[\s\S]{0,600}?r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: childCtx, abortTag: childTag \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만) — 오피스 패널 동료 턴은 delegateRulesCtx가 셸 결재 목적지만 더한다(2단계 PR3 검수 H1)');
+  { const seg = chatSrc.slice(chatSrc.indexOf('const rulesCtx = (mirrorCtx?.kind'), chatSrc.indexOf('mirrorCtx: childCtx, abortTag: childTag'));
+    assert.ok(seg.length > 0);
+    assert.equal((seg.match(/\bchildCtx\s*=[^=]/g) ?? []).length, 1, 'childCtx 대입은 선언 한 번뿐(재검수 LOW — 느슨한 구간 정규식 보완)');
+    assert.equal((seg.match(/\brulesCtx\s*=[^=]/g) ?? []).length, 1, 'rulesCtx 대입은 선언 한 번뿐');
+    assert.ok(!/\b(childCtx|rulesCtx)\.[A-Za-z]+\s*=[^=]/.test(seg), '선언과 위임 호출 사이에 규칙 문맥 속성을 고치지 않는다'); }
 });
 
 test('G-4 조직 문서 제안: 브리지 미러가 kind org_doc·payload를 싣고 카드 본문이 제안 안내, 위험 high; chat()은 propose_org_doc 도구를 메신저 턴에만 등록; 후속 문구는 "서버가 반영"', async () => {
@@ -1153,7 +1158,7 @@ test('순수: mentionsIn — 대소문자 무시("@edna" = Edna, 끝말잇기 �
 test('handler 프롬프트: 간결 규칙(요청한 것만·차례 작업은 자기 차례만) — 넘김 안내가 없어도 붙는다', () => {
   const src = readFileSync(new URL('../src/gateway/msgr.mjs', import.meta.url), 'utf8');
   assert.match(src, /const brief = pick\(' 요청한 것만 군더더기 없이 답하라/);
-  assert.match(src, /const hint = brief \+ together \+ \(others\.length \? pick\(/);
+  assert.match(src, /const hint = brief \+ together \+ \(others\.length && job\.panel !== true \? pick\(/); // 오피스 패널 턴은 @넘김 안내 없음(2단계 PR3 검수 M1)
 });
 
 test('team work: real drain/handler chain keeps objective across remote ownership and only lead ends work', async () => {
@@ -1787,6 +1792,154 @@ test('오피스 출처: 드레인이 잡에 표지를 싣고, 실행 맥락·답
   const origin = { orgId: ORG, channelId: CH, crewId: f.remote.id, threadRoot: 100, sourceMsgId: 101, uid: 'remote-owner', wsId: WS, origin: OWNER, hop: 1, office: true };
   await M.runMessengerContinuation(WS, 'feynman', origin, '후속', null, { session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async (_ws, _slug, _t, _sid, opts) => { cont.push(opts.mirrorCtx); return { reply: 'ok\nMSGR: done', sessionId: null }; } });
   assert.equal(cont[0].office, true, '저장된 오피스 표지는 후속 실행에서 사라지지 않는다');
+});
+
+// 오피스 패널 쓰기 확인 카드(2단계 PR1) — 패널 글만 표지를 싣고, 패널 턴의 오피스 쓰기는 답 글 meta.office_proposals로 모이며, 확인 글은 그 제안을 실행한 결과를 턴에 넘긴다
+test('오피스 패널: 잡 표지 → 실행 맥락 → 답 글 제안 → 확인 글의 실행 결과', async () => {
+  const { panelWriteGate } = await import('../src/gateway/office-proposals.mjs');
+  M._autoLogForTest.clear();
+  const drainJobs = async (messages) => { const db = fakeDb({ messages }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq); };
+  const [p] = await drainJobs([msg(300, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { source: 'office_panel', office_auto: true } })]);
+  assert.equal(p.panel, true); assert.equal(p.officeAuto, true); assert.equal(p.office, true, '패널 글도 오피스 글(풀 오토 끔)');
+  const [mail] = await drainJobs([msg(301, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { source: 'office_mail', office_auto: true, office_confirm: { reply: 9, pid: 'p1' } } })]);
+  assert.equal(mail.panel, undefined, '맡기기 글은 패널 표지 없음'); assert.equal(mail.officeAuto, undefined); assert.equal(mail.officeConfirm, undefined);
+  const [plain] = await drainJobs([msg(302, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }] })]);
+  assert.equal(plain.panel, undefined, '대조군 — 잡 모양 불변');
+  // 실행 맥락 + 답 글 제안
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }];
+  let db = fakeDb({ peers }); const seen = [];
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _t, _sid, opts) => {
+    seen.push(opts.mirrorCtx);
+    panelWriteGate(opts.mirrorCtx, 'office_work', { action: 'task_add', title: '견적 회신' }); // 바로 실행이 켜져 있어 실행 쪽(null)
+    panelWriteGate(opts.mirrorCtx, 'office_deals', { action: 'deal_next', id: 'd1', to: 'contract' }); // 되돌리기 어려움 → 카드
+    return { reply: '확인 카드를 올렸습니다', handover: null, sessionId: null, artifacts: [] };
+  } })({ ...p, after: [] });
+  assert.equal(seen[0].officePanel, true); assert.equal(seen[0].officeAuto, true);
+  const posted = db.calls.find((c) => c[0] === 'insertMessage')?.[1] ?? db.calls.find((c) => c[0] === 'finishExecution')?.[1];
+  const meta = (db.calls.find((c) => c[0] === 'insertMessage') ?? [])[1]?.meta;
+  assert.deepEqual(meta?.office_proposals?.map((x) => [x.pid, x.tool, x.args.to]), [['p1', 'office_deals', 'contract']], '답 글에 카드 하나(바로 실행된 할 일은 카드 없음)');
+  assert.ok(posted);
+  // 맡기기 턴은 관문 밖
+  db = fakeDb({ peers }); const mailCtx = [];
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _t, _sid, opts) => { mailCtx.push(opts.mirrorCtx); return { reply: '답', sessionId: null, artifacts: [] }; } })({ ...mail, after: [] });
+  assert.equal(mailCtx[0].officePanel, undefined);
+  assert.equal((db.calls.find((c) => c[0] === 'insertMessage') ?? [])[1]?.meta?.office_proposals, undefined);
+  // 확인 글 — 답 글(42)을 다시 읽어 실행하고 결과를 턴 지시에 싣는다, 답 글에 office_result
+  const reply42 = { id: 42, channel_id: CH, author_kind: 'crew', crew_id: CREW, meta: { office_proposals: [{ pid: 'p1', tool: 'office_work', args: { action: 'task_add', title: '견적 회신' }, summary: '할 일 추가: 견적 회신' }] } };
+  db = fakeDb({ peers, parent: (id) => (id === 42 ? reply42 : null) }); const texts = [];
+  const [conf] = await drainJobs([msg(310, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], reply_to: 300, thread_root: 300, meta: { source: 'office_panel', office_confirm: { reply: 42, pid: 'p1' } } })]);
+  assert.deepEqual(conf.officeConfirm, { reply: 42, pid: 'p1' });
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, text) => { texts.push(text); return { reply: '할 일을 만들었습니다', sessionId: null, artifacts: [] }; } })({ ...conf, after: [] });
+  assert.match(texts[0], /확인 카드 p1에서 \[실행\]을 눌러 아래 동작을 게이트웨이가 이미 한 번 실행했다: 할 일 추가: 견적 회신/);
+  assert.deepEqual((db.calls.find((c) => c[0] === 'insertMessage') ?? [])[1]?.meta?.office_result, { reply: 42, pid: 'p1', status: 'ran' });
+  assert.equal((db.calls.find((c) => c[0] === 'insertMessage') ?? [])[1]?.meta?.panel_chain, true, '패널 턴의 답은 사슬 표지를 단다(다음 넘김이 이어받는다)');
+  assert.ok(db.calls.some((c) => c[0] === 'message' && c[1] === 42), '답 글을 DB에서 다시 읽는다(확인 글의 내용을 믿지 않는다)');
+  // 남(멤버)이 쓴 확인 글 — 실행하지 않는다
+  db = fakeDb({ peers, parent: (id) => (id === 42 ? reply42 : null) }); const texts2 = [];
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, text) => { texts2.push(text); return { reply: '답', sessionId: null, artifacts: [] }; } })({ ...conf, authorId: MEMBER, origin: MEMBER, after: [] });
+  assert.ok(!/이미 한 번 실행했다/.test(texts2[0] ?? ''), '손님·멤버 확인 글은 실행 경로를 타지 않는다');
+  assert.equal((db.calls.find((c) => c[0] === 'insertMessage') ?? [])[1]?.meta?.office_result, undefined);
+});
+
+// 검수 M1 — 패널 글에서 시작한 넘김·DM 전달·이어 실행은 패널 사슬 표지를 이어받아 오피스 쓰기를 하지 않는다
+test('오피스 패널 사슬: 넘김·전달·이어 실행이 표지를 잇고, 실행 맥락에 실린다', async () => {
+  const { messengerOrigin, mirrorCtxFromOrigin } = await import('../src/gateway/msgr-handoff.mjs');
+  M._autoLogForTest.clear();
+  const zed = crew({ id: ZED, slug: 'zed', display_name: '제드' });
+  const drainJobs = async (messages, parent = () => null) => { const db = fakeDb({ crews: [crew(), zed], parent, messages }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq); };
+  const root = msg(330, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: ZED }], meta: { source: 'office_panel' } });
+  const [hand] = await drainJobs([msg(331, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 330, reply_to: 330, mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: OWNER } })], (id) => (id === 330 ? root : null));
+  assert.equal(hand.panelChain, true, '패널 글을 뿌리로 한 넘김'); assert.equal(hand.panel, undefined);
+  const [plainHand] = await drainJobs([msg(333, { author_kind: 'crew', author_user_id: null, crew_id: ZED, thread_root: 332, reply_to: 332, mentions: [{ kind: 'crew', id: CREW }], meta: { hop: 0, origin: OWNER } })], (id) => (id === 332 ? msg(332, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: ZED }] }) : null));
+  assert.equal(plainHand.panelChain, undefined, '대조군 — 보통 넘김은 표지 없음');
+  // 실행 맥락
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }]; const db = fakeDb({ peers }); const seen = [];
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, _t, _sid, opts) => { seen.push(opts.mirrorCtx); return { reply: '답', sessionId: null, artifacts: [] }; } })({ ...hand, after: [] });
+  assert.equal(seen[0].officePanelChain, true); assert.equal(seen[0].officePanel, undefined);
+  // 예약·작업·결재 기록과 복원
+  const o = messengerOrigin({ kind: 'msgr', orgId: ORG, channelId: CH, crewId: CREW, uid: OWNER, wsId: WS, origin: OWNER, officePanel: true });
+  assert.equal(o.panelChain, true);
+  assert.equal(mirrorCtxFromOrigin(o).officePanelChain, true);
+  assert.equal(messengerOrigin({ kind: 'msgr', orgId: ORG, channelId: CH, crewId: CREW, uid: OWNER, wsId: WS, origin: OWNER }).panelChain, undefined, '대조군');
+  // 이어 실행(결재 후속·예약·긴 작업)의 맥락 복원
+  const f = scopedFixture(); const cont = [];
+  const rec = { orgId: ORG, channelId: CH, crewId: f.remote.id, threadRoot: 100, sourceMsgId: 101, uid: 'remote-owner', wsId: WS, origin: OWNER, hop: 1 };
+  await M.runMessengerContinuation(WS, 'feynman', { ...rec, panelChain: true }, '후속', null, { session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async (_ws, _slug, _t, _sid, opts) => { cont.push(opts.mirrorCtx); return { reply: 'ok\nMSGR: done', sessionId: null }; } });
+  assert.equal(cont[0].officePanelChain, true, '저장된 패널 사슬 표지는 이어 실행에서 사라지지 않는다');
+  await M.runMessengerContinuation(WS, 'feynman', rec, '후속', null, { session: async () => ({ db: f.db, uid: 'remote-owner' }), runChat: async (_ws, _slug, _t, _sid, opts) => { cont.push(opts.mirrorCtx); return { reply: 'ok\nMSGR: done', sessionId: null }; } });
+  assert.equal(cont[1].officePanelChain, undefined, '대조군');
+});
+
+// 오피스 패널 단계 보기(2단계 PR2) — 주인 혼자 1:1 패널 턴의 답 글에만 단계 요약(meta.office_steps)이 실린다
+test('오피스 패널: 주인 혼자 1:1이면 답 글에 단계 요약, 아니면 싣지 않는다', async () => {
+  const { createTrace } = await import('../src/turn-trace.mjs');
+  M._autoLogForTest.clear();
+  const drainJobs = async (messages) => { const db = fakeDb({ messages }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq); };
+  const [p] = await drainJobs([msg(320, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { source: 'office_panel' } })]);
+  const members = (rows) => ({ from: () => ({ select: () => ({ eq: async () => ({ data: rows, error: null }) }) }) });
+  const runChat = async (_ws, _slug, _t, _sid, opts) => {
+    const tr = createTrace({ source: 'messenger' }); opts.onTrace?.(tr);
+    tr.toolStart({ id: 'a', name: 'Read', input: { file_path: '/w/견적.md' } }); tr.toolEnd('a', { result: 'x' });
+    return { reply: '정리했습니다', sessionId: null, artifacts: [] };
+  };
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }];
+  for (const [name, rows, want] of [['주인 혼자', [{ member_kind: 'user', member_id: OWNER }, { member_kind: 'crew', member_id: CREW }], true],
+    ['다른 사람이 있는 방', [{ member_kind: 'user', member_id: OWNER }, { member_kind: 'user', member_id: MEMBER }, { member_kind: 'crew', member_id: CREW }], false]]) {
+    const db = fakeDb({ peers }); db.channelOverride = { kind: 'dm', name: 'dm:서윤' }; // 패널 방 = 1:1
+    await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER, client: members(rows) }), runChat })({ ...p, after: [] });
+    const meta = (db.calls.find((c) => c[0] === 'insertMessage') ?? [])[1]?.meta;
+    if (want) assert.deepEqual(meta?.office_steps, { n: 1, steps: [{ stage: 'memory', detail: '견적.md' }] }, name);
+    else assert.equal(meta?.office_steps, undefined, name);
+  }
+});
+
+// 오피스 패널 직무별 배분(2단계 PR3) — 맡길 동료 표지, 조율자 지시, 같은 대화만 문맥, 패널 턴 위임은 방에 미러하지 않는다
+test('오피스 패널 배분: 맡길 동료 표지·조율자 지시·대화별 문맥·위임 미러 생략', async () => {
+  M._autoLogForTest.clear();
+  const drainJobs = async (messages) => { const db = fakeDb({ messages }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq); };
+  const [p] = await drainJobs([msg(340, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], reply_to: 300, thread_root: 300, meta: { source: 'office_panel', office_route: '루나' } })]);
+  assert.equal(p.officeRoute, '루나');
+  const [mailJob] = await drainJobs([msg(341, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { source: 'office_mail', office_route: '루나' } })]);
+  assert.equal(mailJob.officeRoute, undefined, '맡기기 글은 표지를 읽지 않는다');
+  const context = [msg(300, { author_user_id: OWNER, thread_root: 300, body: '이 대화 첫 글' }), msg(310, { author_user_id: OWNER, thread_root: 310, body: '다른 대화 글' }), msg(320, { author_user_id: OWNER, thread_root: 300, reply_to: 300, body: '이 대화 이어 쓰기' })];
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }];
+  const solo = { from: () => ({ select: () => ({ eq: async () => ({ data: [{ member_kind: 'user', member_id: OWNER }, { member_kind: 'crew', member_id: CREW }], error: null }) }) }) };
+  const dmDb = (o) => { const d = fakeDb(o); d.channelOverride = { kind: 'dm', name: 'dm:서윤' }; return d; };
+  let db = dmDb({ peers, context }); const texts = [];
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER, client: solo }), runChat: async (_ws, _slug, text, _sid, opts) => {
+    texts.push(text); assert.equal(opts.mirrorCtx.officePanelSolo, true);
+    opts.mirrorCtx.panelDelegates = [{ name: '제드', role: '영업' }]; // chat.mjs delegate가 성공한 위임에 남기는 값
+    return { reply: '제드(영업)가 맡았습니다. @제드 확인 부탁\nMSGR: handoff', sessionId: null, artifacts: [] };
+  } })({ ...p, after: [] });
+  const posted = (db.calls.find((c) => c[0] === 'insertMessage') ?? [])[1];
+  assert.deepEqual(posted?.mentions, [], '패널 턴은 @이름·MSGR: handoff로 다시 넘기지 않는다(검수 M1)');
+  assert.equal(posted?.meta?.disposition, 'done');
+  assert.deepEqual(posted?.meta?.office_delegates, [{ name: '제드', role: '영업' }], '실제로 맡은 동료(검수 M5)');
+  assert.ok(!/MSGR: handoff로 이 채널에서 이어받는다|MSGR: handoff와 함께 쓰면/.test(texts[0]), '방의 @넘김 안내 없음(검수 M1)');
+  assert.match(texts[0], /너는 이 요청의 조율자다/);
+  assert.match(texts[0], /"루나"에게 맡기라고 골랐다/);
+  assert.ok(texts[0].includes('이 대화 첫 글') && texts[0].includes('이 대화 이어 쓰기'), '같은 대화 글은 문맥에');
+  assert.ok(!texts[0].includes('다른 대화 글'), '다른 대화 글은 문맥에서 뺀다');
+  assert.deepEqual(db.calls.find((c) => c[0] === 'contextOf')?.[5], { threadRoot: 300 });
+  // 패널 표지만 있고 주인 혼자 1:1이 아니면 조율자 지시·동기 위임 없음(검수 M4)
+  db = fakeDb({ peers, context }); const t0 = [];
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, text, _sid, opts) => { t0.push(text); assert.equal(opts.mirrorCtx.officePanelSolo, undefined); return { reply: '답', sessionId: null, artifacts: [] }; } })({ ...p, after: [] });
+  assert.ok(!/조율자다/.test(t0[0]));
+  // 대조군 — 보통 1:1 글은 조율자 지시 없이 방 전체 문맥
+  const [plain] = await drainJobs([msg(342, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }] })]);
+  db = fakeDb({ peers, context }); const t2 = [];
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, text) => { t2.push(text); return { reply: '답', sessionId: null, artifacts: [] }; } })({ ...plain, after: [] });
+  assert.ok(!/조율자다/.test(t2[0])); assert.ok(t2[0].includes('다른 대화 글'));
+  // 확인 카드 [실행] 턴은 조율자 지시 없음(결과만 알린다)
+  const [conf] = await drainJobs([msg(343, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], reply_to: 300, thread_root: 300, meta: { source: 'office_panel', office_confirm: { reply: 9, pid: 'p1' } } })]);
+  db = fakeDb({ peers, context }); const t3 = [];
+  await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER }), runChat: async (_ws, _slug, text) => { t3.push(text); return { reply: '답', sessionId: null, artifacts: [] }; } })({ ...conf, after: [] });
+  assert.ok(!/조율자다/.test(t3[0]));
+  // 패널 턴의 동기 위임 알림 — 처리한 것으로 끝내고 방에 올리지 않는다
+  const inserts = [];
+  const session = async () => ({ uid: OWNER, db: { crewBySlug: async () => ({ id: ZED, org_id: ORG }), insertMessage: async (row) => { inserts.push(row); return { id: 1 }; } } });
+  assert.equal(await M.msgrPush({ type: 'delegate', wsId: WS, from: 'seoyun', fromName: '서윤', to: 'zed', task: 't', reply: 'r', ctx: { kind: 'msgr', orgId: ORG, channelId: CH, threadRoot: 300, officePanel: true } }, { session }), true);
+  assert.equal(inserts.length, 0);
 });
 
 // 서버 트리거 msgr_dm_relay는 비멤버 크루 멘션을 새 1:1 방에 사람 명의로 옮겨 적으며 meta를 {relay}로 새로 만든다 — 오피스 표지가 빠진다(분리 검수 HIGH, 9/29).

@@ -50,6 +50,25 @@ html.agent-open .main { margin-right: var(--agent-w); }
 .agent-ctx { flex: 1; min-width: 0; font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .agent-send { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--mark); color: var(--mark-fg); box-shadow: 0 0 0 1px rgb(0 0 0 / 0.2); }
 .agent-send:disabled { background: var(--bg); color: var(--fg-3); box-shadow: none; }
+.agent-props { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.agent-prop { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--rc); background: var(--card); font-size: 12.5px; }
+.agent-prop-row { display: flex; align-items: center; gap: 8px; }
+.agent-prop-fields { margin: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.agent-prop-fields div { display: flex; gap: 8px; }
+.agent-prop-fields dt { flex: none; min-width: 72px; }
+.agent-prop-fields dd { margin: 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-prop.settled { background: var(--bg); color: var(--fg-2); }
+.agent-prop-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.agent-prop-act { display: flex; gap: 6px; flex: none; }
+.agent-auto { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--fg-2); cursor: pointer; }
+.agent-auto input { margin: 0; }
+.agent-steps { width: 100%; }
+.agent-steps-head { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-2); }
+.agent-steps-head[aria-expanded='false'] .ico { transform: rotate(-90deg); }
+.agent-steps-list { margin: 6px 0 0; padding: 8px 10px 8px 26px; border-radius: var(--rc); background: var(--bg); display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 1.45; }
+.agent-steps-list b { font-weight: 500; }
+.agent-steps-list span { overflow-wrap: anywhere; }
+.agent-route { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 @media (max-width: 767px) {
   html.agent-open .main { margin-right: 0; }
   .agent-dock { width: 100%; border-left: 0; }
