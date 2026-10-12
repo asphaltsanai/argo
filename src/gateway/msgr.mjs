@@ -53,7 +53,7 @@ import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
 import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, isOfficeSource, msgrJournal, ownerSoloTurn } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
-import { roomTurnFailure, roomTurnInterrupted, roomTurnStopped, roomAttachReason } from './msgr-room-errors.mjs';
+import { roomTurnFailureFor, roomTurnInterrupted, roomTurnStopped, roomAttachReason } from './msgr-room-errors.mjs';
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
@@ -2064,7 +2064,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         // 방(손님 포함)에는 일반 문구만 — 원문에 주인 쪽 엔드포인트 주소·경로가 들어 있다(D26, 실측 "…inference gateway (127.0.0.1:5291)").
         // 원문은 chat()이 회사 활동 로그에 이미 남겼다(주인만 본다). 게이트웨이 로컬 콘솔에도 남긴다.
         console.error(`[argo] msgr 턴 실패(${wsId}/${job.slug}/${job.msgId}):`, String(e?.message ?? e).slice(0, 400));
-        reply = roomTurnFailure(lang);
+        reply = roomTurnFailureFor(e, lang); // 원인을 아는 실패(실행기의 AI 로그인 만료)는 원인과 고칠 곳을, 그 밖은 일반 문구(원문 없음 — D26)
       }
     } finally {
       stopHeartbeat(); // 입력 중 방송(stopTyping)은 게시가 끝난 뒤에 멈춘다 — 링크 미리보기·게시 동안 표시가 끊기지 않게(2026-10-05 '표시가 사라지고 30초 뒤 답')

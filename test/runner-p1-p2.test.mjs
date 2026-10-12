@@ -99,8 +99,8 @@ test('P2 사슬: chat 반환 fellBack → 라우트 전달 → 스레드 저장 
 test('P1-1 미탐 봉합: 자가치유 성공 턴도 실패 러너의 ok:false 이벤트를 선기록한다(2갈래)', () => {
   // 치유 성공 시 조기 return이 실패 기록을 삼켜, P2가 "인증 오류"라 말하는 턴에 연결 카드의 그
   // 러너가 멀쩡해 보였다(검수 관점3 구조적 미탐). CLI·SDK 두 자가치유 블록 모두에서 재시도 직전 기록.
-  const pins = chatSrc.match(/appendEvent\(wsId, \{ \.\.\.evBase, ok: false, ms: Date\.now\(\) - t0, error: String\(e\.message \|\| e\)\.slice\(0, 400\), selfHealed: true \}\)\.catch\(\(\) => \{\}\);[\s\S]{0,700}?const healed = await chat\(/g) ?? [];
-  assert.equal(pins.length, 2, '선기록→재시도 순서 고정(CLI·SDK) — 제거·순서 역전 변이는 여기서 red');
+  const pins = chatSrc.match(/appendEvent\(wsId, \{ \.\.\.evBase, ok: false, ms: Date\.now\(\) - t0, error: String\(e\.message \|\| e\)\.slice\(0, 400\), selfHealed: true(?:, \.\.\.\(authCause \? \{ authLost: true \} : \{\}\)|, authLost: true)? \}\)\.catch\(\(\) => \{\}\);[\s\S]{0,700}?const healed = await chat\(/g) ?? [];
+  assert.equal(pins.length, 2, '선기록→재시도 순서 고정(CLI·SDK) — 제거·순서 역전 변이는 여기서 red'); // authLost — 인증 때문에 갈아탄 실패 기록(데크 배너가 읽는다, 2026-10-13)
 });
 
 test('P2 행동: appendTurn이 fellBack을 크루 메시지에 저장한다', async () => {

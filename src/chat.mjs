@@ -1355,6 +1355,7 @@ export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null,
     } else origin = 'vendor';
   }
   out.failCode = cls.code;
+  if (!out.failRunner) out.failRunner = runner; // 실패한 러너 — 메신저 실패 글이 "어느 로그인이 만료됐는지"를 원문 없이 말한다(msgr-room-errors roomTurnFailureFor)
   out.failOrigin = origin;
   return out;
 }
@@ -2012,6 +2013,7 @@ ${lang === 'en'
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1).
+        const authCause = !e?.toolLockup; // 잠김 교체가 아니면 인증 실패 — 대체 러너도 실패하면 처음 만료된 러너를 오류·이벤트에 남긴다(메신저 실패 글·데크 배너, 2026-10-13 상주 Claude OAuth 만료 사례)
         const alt = await resolveRunner(wsId, wantRunner, { exclude: tried }).catch(() => null);
         if (alt?.available && !tried.includes(alt.runner)) {
           console.warn(`[argo] ${runner} ${e?.toolLockup ? '도구 잠김(재조달 후에도)' : '인증 실패'} — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
@@ -2021,10 +2023,11 @@ ${lang === 'en'
             // 상한을 통째로 무력화한다(쪽지 hop이 같은 자리에서 새던 것과 같은 계열).
             // 실패한 러너의 사건을 먼저 남긴다 — 치유 성공 시 조기 return이 실패 기록을 삼켜,
             // P2가 "인증 오류"라 말하는 턴에 연결 카드(P1-1)의 그 러너는 멀쩡해 보였다(검수 관점3 미탐).
-            await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {});
+            await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true, ...(authCause ? { authLost: true } : {}) }).catch(() => {});
             const healed = await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, ownerSeat, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
+            if (authCause && e2 && typeof e2 === 'object' && !e2.aborted) e2.authFailedRunner = runner; // 첫 원인(인증 만료 러너) 보존 — 마지막 오류는 대체 러너의 것이라. 늘 덮는다: 바깥 프레임이 더 먼저 시도한 러너다(3단 사슬 claude → codex → gemini에서 안쪽이 붙인 codex를 claude로, #980 검수 2 LOW-1)
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
           }
         }
@@ -2033,14 +2036,14 @@ ${lang === 'en'
       if (!aborted && isProcessCrash(e?.message || e)) e = Object.assign(new Error(`${crashHint(lang)} (${String(e.message || e).slice(0, 120)})`), { cause: e });
       if (!aborted) { e = await surfaceRunnerFailure(e, { wsId, runner, lang }); prefixFallbackError(e); } // 구조화·출처·다음 턴 차단(불변식 A·C) → 대체 실행 실패 맥락 — 이벤트·사용자 에러 공통
       // 400자 — SDK 경로와 동일. 프리픽스(~45자)가 선점해도 진단 원인이 잘리지 않게(검수 LOW)
-      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: e?.cancellationIncomplete ? '자동 재개 차단됨; 일부 자식 작업 종료 확인 불가' : aborted ? USER_ABORT_ERROR : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}), ...(e?.cancellationIncomplete ? { cancellationIncomplete: true } : {}), ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
+      await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: e?.cancellationIncomplete ? '자동 재개 차단됨; 일부 자식 작업 종료 확인 불가' : aborted ? USER_ABORT_ERROR : String(e.message || e).slice(0, 400), ...(aborted ? { aborted: true } : {}), ...(e?.cancellationIncomplete ? { cancellationIncomplete: true } : {}), ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}), ...(e?.authFailedRunner ? { authFailedRunner: e.authFailedRunner } : {}) }); // 중단은 필드로도(문자열 동등 비교 fail-open 방지 — 검수 관점3)
       await clearTurnStatus(wsId, agentSlug);
       // cc 공유 노트 복원 — 소비(takeSharedNotes)가 러너 실행 전이라, 복원 없이는 실패한 턴이 동료가
       // 공유한 맥락을 영구 소실시킨다. 이 프레임이 직접 소비한 경우만(__seedNotes 재시도 프레임 제외).
       if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
       // 턴 전 자격 게이트가 끊은 오류(authExpired)는 우리가 만든 내부 문구라 사용자에겐 재연결 안내로 대체한다 — 이벤트엔 원문(위), SDK 갈래 catch와 같은 계약(검수 K52)
       // authExpired 필드는 유지한다 — 재시도 프레임을 감싼 바깥 프레임의 자가치유 판정(shouldSelfHeal)이 종전과 같은 신호를 보게. authError로 이중 감싸기를 막는다.
-      if (!aborted && e?.authExpired && !e?.authError) e = Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, authExpired: e.authExpired, cause: e, failCode: e.failCode, failOrigin: e.failOrigin });
+      if (!aborted && e?.authExpired && !e?.authError) e = Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, authExpired: e.authExpired, cause: e, failCode: e.failCode, failOrigin: e.failOrigin, failRunner: e.failRunner, authFailedRunner: e.authFailedRunner });
       throw aborted ? turnAbortedError(e) : e;
     } finally {
       closeTurnLedger(ledgerEntry); // 실패·중단 턴도 장부를 닫는다(멱등) — 열린 채 남으면 뒤 턴이 영원히 "겹침"으로 본다
@@ -2530,10 +2533,11 @@ ${lang === 'en'
       if (alt?.available && !tried.includes(alt.runner)) {
         console.warn(`[argo] ${runner} 인증 실패 — ${alt.runner}로 재시도(${wsId}/${agentSlug}, 제외 ${tried.join(',')})`);
         try {
-          await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
+          await appendEvent(wsId, { ...evBase, ok: false, ms: Date.now() - t0, error: String(e.message || e).slice(0, 400), selfHealed: true, authLost: true }).catch(() => {}); // 실패 러너 사건 선기록(CLI 갈래와 대칭 — P1-1 미탐 봉합)
           const healed = await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, ownerSeat, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
+          if (e2 && typeof e2 === 'object' && !e2.aborted) e2.authFailedRunner = runner; // 첫 원인(인증 만료 러너) 보존 — CLI 갈래와 같다(바깥 프레임이 늘 덮는다)
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
         }
       }
@@ -2555,7 +2559,7 @@ ${lang === 'en'
       ...evBase, ok: false, ms: Date.now() - t0, steps: stepsNow(), stepsTotal: traceRec.toolCount,
       error: e?.cancellationIncomplete ? '자동 재개 차단됨; 일부 자식 작업 종료 확인 불가' : aborted ? USER_ABORT_ERROR : String(e.message || e).slice(0, 400), // 진단 상세(errors[]/stderr 꼬리)까지 실리도록 400
       ...(aborted ? { aborted: true } : {}), ...(e?.cancellationIncomplete ? { cancellationIncomplete: true } : {}), // 중단 판정은 필드로(사유 문자열 동등 비교는 다국어화에 fail-open — 검수 관점3, thread aborted 필드 선례)
-      ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}), // 실패 코드 표·출처(vendor/argo/probe)
+      ...(e?.failCode ? { failCode: e.failCode, failOrigin: e.failOrigin } : {}), ...(e?.authFailedRunner ? { authFailedRunner: e.authFailedRunner } : {}), // 실패 코드 표·출처(vendor/argo/probe)
     });
     await clearTurnStatus(wsId, agentSlug);
     // cc 공유 노트 복원 — CLI 경로와 동일: 이 프레임이 직접 소비한 노트만 최종 실패 시 pending으로 되살린다
@@ -2586,7 +2590,8 @@ ${lang === 'en'
           ? Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${runnerAuthNotice(lang, runner)}`), { authError: true, cause: e })
           : e;
     // failCode/failOrigin은 위(이벤트 전)에서 e에 붙었다 — surfaced가 e를 감싼 새 객체면 옮겨 싣는다(재분류·재프로브 없음)
-    if (surfaced !== e && e?.failCode) Object.assign(surfaced, { failCode: e.failCode, failOrigin: e.failOrigin });
+    if (surfaced !== e && e?.failCode) Object.assign(surfaced, { failCode: e.failCode, failOrigin: e.failOrigin, failRunner: e.failRunner });
+    if (surfaced !== e && e?.authFailedRunner) surfaced.authFailedRunner = e.authFailedRunner; // 첫 원인(자가치유 전 인증 만료 러너)도 옮긴다
     throw aborted ? turnAbortedError(e) : surfaced;
   } finally {
     closeTurnLedger(ledgerEntry); // 실패·중단 턴도 장부를 닫는다(멱등)

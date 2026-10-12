@@ -8,6 +8,7 @@ import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 
 import { keepSide } from './split.mjs'; // 주 화면 이동은 현재 ?side=(옆에 열기 패널)를 유지 — 생 router.push는 패널을 닫는다
 import { subscribeSearch } from './search-bus.mjs'; // 상단 검색 받기(UL10)
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected } from '../../runner-connect';
+import { runnersAuthLost } from '../../runner-usable.mjs'; // 다른 러너는 되지만 한 러너의 로그인이 만료된 경우(데크 배너)
 import { useLang } from '../../i18n';
 import { failureReason } from '../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { approvalExpandDefault, approvalOwnerMayDecide } from '../../lib/approval-display.mjs';
@@ -355,12 +356,22 @@ function AiKeyBanner({ ws, agents = [] }) {
   const { t, lang } = useLang();
   // 외부 에이전트(카드 runner: http)만 있는 회사 — "연결된 AI가 없다"는 반쪽 사실이라 에이전트 이름·인원으로 갈라 말한다(유건 2026-09-08)
   const router = useRouter();
-  const [state, setState] = useState(null); // null(양호·로딩) | 'missing' | 'invalid'(끊김 — 재연결)
+  const [state, setState] = useState(null); // null(양호·로딩) | 'missing' | 'invalid'(끊김 — 재연결) | 'authLost'(다른 러너는 되지만 한 러너의 로그인 만료)
+  const [lostNames, setLostNames] = useState(''); // authLost일 때 만료된 러너 이름(Claude 등)
   useEffect(() => {
     let alive = true;
     const check = () => api(`/api/companies/${ws}/keys`).then((k) => {
       if (!alive) return;
-      if (anyRunnerUsable(k.runners)) setState(null);
+      if (anyRunnerUsable(k.runners)) {
+        // 쓸 수 있는 러너가 있어도, 연결해 둔 러너의 최근 턴이 로그인 만료로 실패했으면 말한다(2026-10-13 사례 — 다른 러너가 대신 답해 이 배너가 뜨지 않았다).
+        // 활동 조회 1건(로컬 파일, DB 아님) — 데크를 열 때·argo:refresh 때만(폴 없음).
+        return api(`/api/companies/${ws}/activity`).then((d) => {
+          if (!alive) return;
+          const lost = runnersAuthLost(d.events).filter((id) => k.runners?.[id]?.company?.connected || k.runners?.[id]?.hostAuthed);
+          setLostNames(lost.map((id) => k.runners?.[id]?.name || id).join(', '));
+          setState(lost.length ? 'authLost' : null);
+        });
+      }
       // 연결된 것이 숨김 러너(gemini)뿐 — "하나도 연결 안 됨"은 사실과 달라(재검수 MEDIUM-5) 제공 종료 안내로 갈라 보인다
       else setState(onlyHiddenConnected(k.runners) ? 'retired' : runnerNeedsReconnect(k.runners) ? 'invalid' : 'missing');
     }).catch(() => { /* 상태 확인 실패 — 오경보 대신 침묵 */ });
@@ -373,7 +384,7 @@ function AiKeyBanner({ ws, agents = [] }) {
   return (
     <div className="card fade-up" style={{ padding: '13px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderColor: 'var(--accent)' }}>
       <span style={{ color: 'var(--accent)', display: 'inline-flex' }}><Icon name="bolt" size={15} /></span>
-      <span style={{ fontSize: 13, flex: '1 1 200px', minWidth: 0 }}>{t(state === 'retired' ? 'deck.runner.retired' : state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
+      <span style={{ fontSize: 13, flex: '1 1 200px', minWidth: 0 }}>{state === 'authLost' ? t('deck.runner.authLost', { names: lostNames }) : t(state === 'retired' ? 'deck.runner.retired' : state === 'invalid' ? 'deck.runner.reconnect' : 'deck.runner.banner')}</span>
       <button className="btn btn-primary sm" style={{ flex: 'none' }} onClick={() => router.push(keepSide(`/c/${ws}/settings?ai=1`, window.location.search))}>
         {t('deck.aiKey.cta')}
       </button>
