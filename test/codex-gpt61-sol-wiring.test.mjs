@@ -35,6 +35,8 @@ const { classifyRunnerError } = await import('../src/runners/error-class.mjs');
 process.env.PATH = `${bin}:${process.env.PATH}`;
 process.env.ARGO_CODEX_PREFER_PATH = '1';
 process.env.FAKE_CLI_LOG = log;
+process.env.FAKE_STRICT_VENDOR = new URL('./helpers/strict-vendor.mjs', import.meta.url).href;
+process.env.FAKE_CODEX_MJS = new URL('../src/runners/codex.mjs', import.meta.url).href;
 
 // exec: argv·stdin 기록 후 --output-last-message에 답을 쓴다. app-server: JSON-RPC로 응답하고 받은 메시지를 기록한다.
 // FAKE_AS_REJECT가 있으면 turn/start 뒤 그 문구로 error(willRetry:false) + turn/completed(failed)를 보낸다(벤더 400의 app-server 모양).
@@ -72,8 +74,15 @@ if (a[0] === 'app-server') {
 }
 let s = '';
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', (d) => { s += d; }).on('end', () => {
+process.stdin.on('data', (d) => { s += d; }).on('end', async () => {
   fs.writeFileSync(process.env.FAKE_CLI_LOG, JSON.stringify({ argv: a, stdin: s }));
+  if (process.env.FAKE_ACCOUNT_MODELS != null) { // 엄격 벤더 규칙(helpers/strict-vendor.mjs codexChatgptReject) — ChatGPT 계정의 목록 밖 모델은 400
+    const { codexChatgptReject } = await import(process.env.FAKE_STRICT_VENDOR);
+    const { codexAuthMode } = await import(process.env.FAKE_CODEX_MJS);
+    const mi = a.indexOf('-m');
+    const why = codexChatgptReject({ authMode: await codexAuthMode(require('path').join(process.env.CODEX_HOME, 'auth.json')), model: mi >= 0 ? a[mi + 1] : '', accountModels: process.env.FAKE_ACCOUNT_MODELS.split(',') });
+    if (why) { process.stderr.write(why + '\\n'); process.exit(1); }
+  }
   const i = a.indexOf('--output-last-message');
   if (i >= 0) fs.writeFileSync(a[i + 1], 'OK');
 });
@@ -465,4 +474,56 @@ test('핀 폴더는 핀마다 다르고 예전 공용 폴더(codex-cli)와 겹�
     assert.ok(d.startsWith(join(home, '.argo', 'tools') + (process.platform === 'win32' ? '\\' : '/')), d);
   }
   assert.ok(b.endsWith('codex-cli-rust-v0.159.3'), b);
+});
+
+// ⑫~⑭ ChatGPT 계정(2026-10-13, 맥 one 상주 로그 — 자동 영입·대체 턴이 "gpt-6-astra not supported when using Codex with a ChatGPT account"로 전멸)
+// 쓸 수 있는 모델이 계정(플랜)마다 달라 고정 모델이 400을 받는다. ChatGPT 계정이면 모델을 비운 턴에 -m을 넣지 않고 codex가 그 계정 목록에서 고르게 둔다.
+// API 키 계정·자격 파일 없음은 종전 그대로 gpt-6-astra. 가짜 codex는 엄격 벤더 규칙(codexChatgptReject)으로 계정 목록 밖 모델을 거절한다.
+const hostAuth = join(process.env.HOME, '.codex', 'auth.json'); // 회사 자격이 없으면 host 로그인(~/.codex/auth.json)을 턴 홈에 들인다(importCodexAuth K26)
+const ACCOUNT = 'gpt-6-luna,gpt-5.6-terra,gpt-5.6-luna'; // 실측 계정의 목록(2026-10-13)
+async function withAuth(auth, fn) {
+  await mkdir(join(process.env.HOME, '.codex'), { recursive: true });
+  await writeFile(hostAuth, JSON.stringify(auth));
+  process.env.FAKE_ACCOUNT_MODELS = ACCOUNT;
+  try { return await fn(); } finally { delete process.env.FAKE_ACCOUNT_MODELS; await rm(hostAuth, { force: true }); }
+}
+const CHATGPT = { auth_mode: 'chatgpt', OPENAI_API_KEY: null, tokens: { access_token: 'x', refresh_token: 'y' } };
+
+test('⑫ exec — ChatGPT 계정이면 모델을 비운 턴에 -m을 넣지 않는다(계정 목록의 기본), 이름 있는 모델·강도는 그대로', { skip: process.platform === 'win32' }, async () => {
+  await withManaged({ pin: CODEX_PIN }, () => withAuth(CHATGPT, async () => {
+    for (const [model, effort, wantModel, wantEffort] of [
+      ['', '', null, null],
+      ['', 'high', null, 'model_reasoning_effort=high'],
+      ['gpt-5.6-terra', '', 'gpt-5.6-terra', null],
+    ]) {
+      assert.equal(await externalExec({ runner: 'codex', model, effort, cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK', `${model || '(비움)'}/${effort || '(비움)'}`);
+      const argv = await lastArgv();
+      assert.equal(modelArg(argv), wantModel, `${model || '(비움)'}/${effort || '(비움)'}`);
+      assert.equal(effortArg(argv), wantEffort);
+    }
+  }));
+});
+
+test('⑬ exec — 옛 모양 auth.json(auth_mode 없이 ChatGPT 토큰만)도 ChatGPT 계정, API 키 계정은 종전대로 -m gpt-6-astra', { skip: process.platform === 'win32' }, async () => {
+  await withManaged({ pin: CODEX_PIN }, async () => {
+    await withAuth({ tokens: { access_token: 'x' } }, async () => {
+      assert.equal(await externalExec({ runner: 'codex', model: '', effort: '', cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK');
+      assert.equal(modelArg(await lastArgv()), null);
+    });
+    await withAuth({ auth_mode: 'apikey', OPENAI_API_KEY: 'sk-test-not-real' }, async () => {
+      assert.equal(await externalExec({ runner: 'codex', model: '', effort: '', cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK');
+      assert.equal(modelArg(await lastArgv()), UNSET_MODEL);
+    });
+  });
+});
+
+test('⑭ app-server — ChatGPT 계정이면 모델을 비운 턴의 thread/start에 모델을 싣지 않는다', { skip: process.platform === 'win32' }, async () => {
+  process.env.ARGO_CODEX_ENGINE = 'appserver';
+  try {
+    await withManaged({ pin: CODEX_PIN }, () => withAuth(CHATGPT, async () => {
+      assert.equal(await externalExec({ runner: 'codex', model: '', effort: '', cwd, prompt: 'hi', timeoutMs: 60_000 }), 'OK');
+      const { received } = JSON.parse(await readFile(log, 'utf8'));
+      assert.ok(!received.find((m) => m.method === 'thread/start').params.model, '모델을 비운다');
+    }));
+  } finally { delete process.env.ARGO_CODEX_ENGINE; }
 });

@@ -27,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makePermissionGate } from '../permission-gate.mjs';
 import { scrubServerSecrets } from './shared.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexUnsetModel } from './codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexUnsetModel, codexAuthMode } from './codex.mjs';
 import { codexModelEffort } from '../model-effort.mjs';
 
 /** 크루 effort → app-server ReasoningEffort 값(순수). CLI 인자(codexEffortArgs)와 같은 사상 —
@@ -229,6 +229,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     auth = await importCodexAuth(baseHome, CODEX_HOME);
     await writeCodexTurnConfig(CODEX_HOME, mcpServers);
     const cmd = await codexCmd(); // 관리본(핀) 우선 — exec 경로와 같은 조달 규율
+    const unsetModel = codexUnsetModel(cmd, auth?.mode === 'none' ? null : await codexAuthMode(auth.dst)); // ChatGPT 계정은 비움(계정마다 모델이 달라 400 — codexUnsetModel 주석, 2026-10-13)
     // windowsHide — exec()(shared.mjs)와 동형. 없으면 윈도우 사이드카에서 턴마다 콘솔 창이 뜬다
     // (2026-08-21 제보 계열, 분리 검수 MEDIUM-3). 스폰 실패·비정상 종료는 아래 child 이벤트로 잡는다.
     child = spawn(cmd.file, [...cmd.args, 'app-server'], {
@@ -253,7 +254,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     const { reply } = await Promise.race([
       runAppServerSession({
         input: child.stdin, output: child.stdout,
-        prompt, model, unsetModel: codexUnsetModel(cmd), effort, cwd, timeoutMs, signal, onSteerable, onEvent,
+        prompt, model, unsetModel, effort, cwd, timeoutMs, signal, onSteerable, onEvent,
         judge: makeApprovalJudge(cwd, { workRoots, lang }),
       }),
       childFail,

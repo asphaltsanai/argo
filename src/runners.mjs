@@ -15,7 +15,7 @@ import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존
 import { recordCodexRollout } from './runner-limits.mjs'; // 구독 잔여 한도(K91)
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner, isRetiredRunner } from './runners/catalog.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli, codexOutdatedError, codexPinStale, codexUnsetModel } from './runners/codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli, codexOutdatedError, codexPinStale, codexUnsetModel, codexAuthMode } from './runners/codex.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
 import { createCodexJsonReader, humanizeCodexJsonError } from './runners/codex-json.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
@@ -185,7 +185,8 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       const cmd = await codexCmd(); // 관리본(핀) 우선 > 즉석 조달 > PATH 폴백(2026-08-25 반전) — 사용자 설치 없이도 돈다
       // 모델을 비운 턴은 고정 모델로 — `-m` 없이 돌리면 서버 기본 모델이 바이너리 버전마다 바뀐다(codexUnsetModel, 검수 2026-10-08 HIGH).
       // 강도 인자는 크루가 준 모델로 계산한다(비운 모델 = 옛 사상 max→xhigh) — 0.1.97과 같은 인자에 -m만 더한다.
-      const runModel = model || codexUnsetModel(cmd);
+      // ChatGPT 계정은 고정하지 않는다(계정마다 모델이 달라 400 — codexUnsetModel 주석, 2026-10-13).
+      const runModel = model || codexUnsetModel(cmd, auth?.mode === 'none' ? null : await codexAuthMode(auth.dst));
       // JSON 모드 — 단계가 stdout JSONL로 흐른다. 경고·실패 문구는 사람 모드와 같은 stderr 줄로 되살려 아래 판정(잠김·apiError·업데이트 안내)이
       // 종전과 같은 글을 보게 한다(codex-json.mjs 머리 주석 — 실측). 명령 출력이 stdout으로 옮겨 오므로 stdout 버퍼는 사람 모드 stderr가 쓰던 만큼 넉넉히.
       const json = codexJsonMode(cmd);

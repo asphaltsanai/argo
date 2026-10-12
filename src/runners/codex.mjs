@@ -261,8 +261,23 @@ export async function codexPinStale() {
 /** 모델을 비운 codex 턴에 넣을 모델(검수 2026-10-08 HIGH) — 자동 에이전트·러너 대체·목록 밖 모델·CLI 원샷은 `-m` 없이 돌아 서버 기본
     모델을 썼고, 그 기본이 바이너리 버전마다 바뀐다(catalog.mjs CODEX_UNSET_MODEL). 이 핀 관리본(cmd.pinned)일 때만 넣는다 — 버전을
     모르는 실행 파일(PATH 설치본·이 핀을 아직 못 받아 빌려 쓰는 예전 공용 관리본)은 지금처럼 비워 그 버전의 기본 모델로 돈다(옛 codex가 새 모델을 거절하지 않게).
-    원격 카탈로그 alias를 따른다(모델 폐기 때 앱 발행 없이 옮길 길). */
-export const codexUnsetModel = (cmd) => (cmd?.pinned ? normalizeModelId('codex', CODEX_UNSET_MODEL) : '');
+    원격 카탈로그 alias를 따른다(모델 폐기 때 앱 발행 없이 옮길 길).
+    ChatGPT 계정(authMode 'chatgpt')이면 넣지 않는다(2026-10-13): 쓸 수 있는 모델이 계정(플랜)마다 달라 고정 모델이 400 "not supported when
+    using Codex with a ChatGPT account"로 턴을 전부 죽였다(실측: 한 계정은 gpt-6-astra·gpt-5.6-sol·gpt-6.1-sol 모두 거절, -m 없으면 그 계정 목록의
+    기본 gpt-6-luna로 응답). 비우면 codex가 그 계정 목록에서 기본을 고른다 — 핀 승격이 이 턴들의 모델을 바꿀 수 있지만 계정에 없는 모델보다 낫다.
+    API 키·모름(자격 파일 없음·읽기 실패)은 종전 그대로. */
+export const codexUnsetModel = (cmd, authMode = null) => (cmd?.pinned && authMode !== 'chatgpt' ? normalizeModelId('codex', CODEX_UNSET_MODEL) : '');
+
+/** 턴 홈 auth.json의 자격 종류 → 'chatgpt' | 'apikey' | null(없음·읽기 실패·모르는 모양). 종류 칸만 보고 토큰 값은 쓰지 않는다.
+    auth_mode가 있으면 그것을, 없으면(옛 모양) API 키가 있으면 apikey, ChatGPT 토큰만 있으면 chatgpt. */
+export async function codexAuthMode(authFile) {
+  let j;
+  try { j = JSON.parse(await readFile(authFile, 'utf8')); } catch { return null; }
+  const mode = String(j?.auth_mode ?? '').toLowerCase();
+  if (mode === 'chatgpt') return 'chatgpt';
+  if (mode === 'apikey' || mode === 'api_key' || j?.OPENAI_API_KEY) return 'apikey';
+  return j?.tokens ? 'chatgpt' : null;
+}
 
 /** 낡은 codex의 모델 거절 → 업데이트 대기 안내(순수). "requires a newer version"은 버전 문제가 확실하다. "not supported when
     using Codex with a ChatGPT account"는 낡은 핀이 새 모델에 내는 문구지만(0.149.1→GPT-6 2026-09-28, 0.157.1→GPT-6.1 Sol 2026-10-07 실측) 핀이 최신이면 계정 문제라 건드리지
