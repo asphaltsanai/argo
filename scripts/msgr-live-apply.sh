@@ -7,6 +7,9 @@
 # 옛 파일 7개가 다시 실행돼 뒤 마이그레이션의 함수·정책을 옛 정의로 덮고 백필을 재실행했다(복구: scripts/incident-2026-09-23-*).
 # 그래서 목록을 없애고 인자로만 받으며, 더 새 버전이 이미 기록돼 있으면 옛 파일은 적용하지 않는다.
 set -euo pipefail
+# 라이브 DB 적용은 맥 one에서만(CLAUDE.md "머신" 표, 2026-10-12). 맥 two(홈 /Users/leankim)에서는 거부하고 맥 one 세션에 넘긴다.
+# ponytail: 맥 two 홈 + 원격이 GitHub인 실제 체크아웃만 막는다(CI 러너와 원격이 로컬 경로인 시험용 임시 레포는 통과). 개발 맥이 늘면 홈을 더한다.
+[ "$HOME" != "/Users/leankim" ] || ! git -C "$(dirname "$0")/.." remote get-url origin 2>/dev/null | grep -q 'github.com' || { echo "거부  라이브 DB 적용은 맥 one에서만 합니다 — 여기는 맥 two(HOME=$HOME). 맥 one 세션에 넘기세요"; exit 5; }
 cd "$(dirname "$0")/.."
 # 검문(2026-09-24) — 라이브에는 main에 병합된 것과 **똑같은** 파일만 적용한다. 옛 브랜치에 남은 옛 적용 스크립트·수정 중인 마이그레이션이
 # 라이브 함수를 덮는 사고(9/23)를 구조로 막는다. 접속 정보를 읽기 전에 거른다.

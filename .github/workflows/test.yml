@@ -38,7 +38,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     # 행 방지 — 테스트가 자식 프로세스를 스폰하는 계열이 있어 hang 시 기본 6시간을 태우지 않게 상한.
     # 25분: 리스 넘겨받기 e2e(운영 주기 8초·TTL 120초 장면, #884)가 더해져 macOS 잡이 20분 근처까지 왔다(npm test 17~19분 + 스모크 1~1.5분).
-    timeout-minutes: 25
+    # 30분(2026-10-12): main의 macOS 잡이 이미 22.0~23.4분(최근 성공 6회)이었고, 오피스 테스트를 더해 24.1분이 됐다 — 25분 상한에 닿지 않게.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -95,6 +96,15 @@ jobs:
           npm test --prefix apps/messenger
           npm run build --prefix apps/messenger
           node scripts/messenger-dist-smoke.mjs
+
+      # 오피스 테스트(2026-10-12) — 그동안 CI 밖이라 오피스의 confirm 금지·사전 밖 한글 금지와 게이트 A가 요구하는 apps/office/test가 사람이 돌릴 때만 작동했다.
+      # macOS만: 오피스 시험은 Windows에서 돌려 본 적이 없고 URL.pathname 경로를 쓴다(분리 검수 MEDIUM 2). Windows는 시험을 고친 뒤 넣는다.
+      - if: runner.os == 'macOS'
+        name: Office tests
+        shell: bash
+        run: |
+          npm ci --prefix apps/office --no-audit --no-fund
+          npm test --prefix apps/office
 
       # 네이티브 엔진 산출물 검사(분리 검수 2026-09-05 NEW-HIGH-2·T8) — 소스만 임포트하는 스위트가 못 보는 축: webpack이 워커 URL을
       # 청크 에셋으로 재작성해 프로덕션·standalone에서만 MODULE_NOT_FOUND가 났다. standalone을 로컬 모드로 재빌드해 실제로 부팅·Grep 턴을 완주한다.

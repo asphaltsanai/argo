@@ -1,6 +1,6 @@
 // 파일 보내기(20260930160000) — 유건 2026-09-30 "헤르메스 포함 외부 에이전트랑 내부 에이전트 모두 파일 송수신 등이 가능해야해".
 // Hermes는 최종 답 글을 먼저 보내고 파일을 send_document·send_image_file·send_video·send_voice로 따로 부른다(v0.21.3 base.py _deliver_media_attachments).
-// 승인 기준: 대화면 봇 답글에, 원문이 없으면(예약 작업) 결과 방의 봇 새 글에 붙는다, 파일당 25MB — 넘으면 방에 한 줄로 알린다.
+// 승인 기준: 대화면 봇 답글에, 원문이 없으면(예약 작업) 결과 방의 봇 새 글에 붙는다, 파일당 플랜 상한(무료 25MB · Pro 500MB, 서버 판정) — 넘으면 방에 한 줄로 알린다.
 // 실제 Python 어댑터로 돈다. 업로드 HTTP(createUpload → PUT → attachFile)는 로컬 HTTP 서버로 실제로 오간다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -96,7 +96,7 @@ function run(body) {
   assert.equal(r.status, 0, r.stderr || r.stdout);
 }
 
-test('업로드 HTTP — createUpload(서버 판정) → 서명 주소에 파일 바이트 PUT → attachFile. 25MB 초과는 요청 없이 413', () => {
+test('업로드 HTTP — createUpload(서버 판정) → 서명 주소에 파일 바이트 PUT → attachFile. 전역 천장(500MB) 초과는 요청 없이 413', () => {
   const r = spawnSync('python3', ['-c', String.raw`
 import importlib.util, sys, types, json, threading, tempfile, os
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -124,13 +124,63 @@ assert out == {'file_id': 'fid-1', 'message_id': 7}, out
 assert SEEN[0] == ('createUpload', {'message_id': 7, 'file_name': '보고서.pdf', 'file_size': 10}), SEEN[0]
 assert SEEN[1] == ('PUT', '/upload?token=t', 'application/pdf', 'false', b'%PDF-bytes'), SEEN[1]
 assert SEEN[2] == ('attachFile', {'message_id': 7, 'storage_path': 'o/c/7/bot-0a1b2c3d-report.pdf', 'file_name': '보고서.pdf', 'mime_type': 'application/pdf'}), SEEN[2]
-big = os.path.join(d, 'big.bin'); open(big, 'wb').truncate(25 * 1024 * 1024 + 1)
+big = os.path.join(d, 'big.bin'); open(big, 'wb').truncate(500 * 1024 * 1024 + 1)
 SEEN.clear()
 try:
     m._upload_file('http://127.0.0.1:%d' % srv.server_port, 'tok', 7, big); raise SystemExit('초과인데 올렸다')
 except m.ArgoMsgrError as e:
     assert e.status == 413
 assert SEEN == [], '초과 파일은 서버에 묻지도 않는다'
+srv.shutdown()
+`, ADAPTER], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+// 서버 판정 HTTP — createUpload가 플랜 상한으로 거절하면(413) PUT·attachFile 없이 그 상태로 올라온다. 크기 n을 만들어 _upload_file에 넣고 서버가 본 호출을 돌려준다.
+const SIZED_UPLOAD = String.raw`
+import importlib.util, sys, types, json, threading, tempfile, os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+for name in ['gateway', 'gateway.config', 'gateway.platforms', 'gateway.platforms.base']:
+    sys.modules[name] = types.ModuleType(name)
+sys.modules['gateway.config'].Platform = str
+b = sys.modules['gateway.platforms.base']; b.BasePlatformAdapter = object; b.MessageEvent = b.SendResult = dict; b.MessageType = type('T', (), {'TEXT': 'text'})
+spec = importlib.util.spec_from_file_location('argo_adapter', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+SEEN = []
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        SEEN.append((self.path.rsplit('/', 1)[-1], json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')))
+        data = json.dumps({'ok': False, 'error_code': 413, 'description': 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)'}).encode()
+        self.send_response(413); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(data)
+srv = HTTPServer(('127.0.0.1', 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
+d = tempfile.mkdtemp()
+def sized(n):
+    SEEN.clear()
+    p = os.path.join(d, 'f%d.bin' % n); open(p, 'wb').truncate(n)
+    try:
+        m._upload_file('http://127.0.0.1:%d' % srv.server_port, 'tok', 7, p); raise SystemExit('서버가 거절했는데 성공')
+    except m.ArgoMsgrError as e:
+        assert e.status == 413, e
+    return list(SEEN)
+MB = 1024 * 1024
+`;
+
+test('업로드 경계 고정 — 25MB 이하는 서버(createUpload)에 크기를 그대로 묻는다', () => {
+  const r = spawnSync('python3', ['-c', SIZED_UPLOAD + String.raw`
+for n in (1, 25 * MB):
+    seen = sized(n)
+    assert seen == [('createUpload', {'message_id': 7, 'file_name': 'f%d.bin' % n, 'file_size': n})], seen
+srv.shutdown()
+`, ADAPTER], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+test('업로드 상한 = 전역 천장 500MB — 25MB~500MB는 서버가 플랜(무료 25MB·Pro 500MB)으로 판정하고, 500MB 초과만 요청 없이 413', () => {
+  const r = spawnSync('python3', ['-c', SIZED_UPLOAD + String.raw`
+for n in (25 * MB + 1, 26 * MB, 500 * MB):
+    seen = sized(n)
+    assert [c[0] for c in seen] == ['createUpload'] and seen[0][1]['file_size'] == n, (n, seen)
+assert sized(500 * MB + 1) == [], '천장을 넘으면 서버에 묻지도 않는다'
 srv.shutdown()
 `, ADAPTER], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);
@@ -183,16 +233,25 @@ async def main():
 asyncio.run(main())
 `));
 
-test('25MB 초과·업로드 실패 — 올리지 않고 방에 한 줄로 알린다(답이 있으면 새 글, 아직이면 그 줄이 답)', () => run(String.raw`
+test('천장(500MB) 초과·서버의 플랜 거절(413)·업로드 실패 — 올리지 않고 방에 한 줄로 알린다(답이 있으면 새 글, 아직이면 그 줄이 답)', () => run(String.raw`
 big = work / 'big.zip'
-with open(big, 'wb') as f: f.truncate(25 * 1024 * 1024 + 1)
+with open(big, 'wb') as f: f.truncate(500 * 1024 * 1024 + 1)
+mid = work / 'mid.zip'
+with open(mid, 'wb') as f: f.truncate(26 * 1024 * 1024)
 async def main():
     inbound = {'message_id': 5, 'execution_attempt': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'chat': {'id': CH}}
     a._pending[5] = inbound; a._inbound.set(inbound)
     await a.send(CH, '결과입니다.', reply_to='5', metadata={'notify': True})
     res = await a.send_document(CH, str(big), metadata=FINAL)
     assert not res.success and UP == []
-    assert sent()[-1] == {'chat_id': CH, 'text': '파일 big.zip은(는) 25MB를 넘어 올리지 못했습니다.'}, sent()[-1]
+    assert sent()[-1] == {'chat_id': CH, 'text': '파일 big.zip은(는) 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.'}, sent()[-1]
+    res = await a.send_document(CH, str(mid), metadata=FINAL)
+    assert res.success and [u[2] for u in UP] == ['mid.zip'], ('25MB를 넘어도 천장 안이면 서버에 맡긴다(Pro 주인)', UP)
+    def plan_413(*_a): raise m.ArgoMsgrError(413, 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)')
+    m._upload_file = plan_413
+    mid2 = work / 'mid2.zip'; mid2.write_bytes(b'x' * 10)
+    res = await a.send_document(CH, str(mid2), metadata=FINAL)
+    assert not res.success and sent()[-1] == {'chat_id': CH, 'text': '파일 mid2.zip은(는) 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.'}, ('서버의 플랜 거절도 이유를 방에 남긴다', sent()[-1])
     def boom(*_a): raise m.ArgoMsgrError(409, 'Conflict: attach files within 1 hour of posting the message')
     m._upload_file = boom
     res = await a.send_document(CH, str(pdf), metadata=FINAL)
@@ -204,7 +263,7 @@ async def fresh():
     a2._pending[8] = inbound; a2._inbound.set(inbound)
     await a2.send_document(CH, str(big), metadata=FINAL)
     p = sent()[-1]
-    assert p['reply_to_message_id'] == 8 and '25MB' in p['text'], '아직 답하지 않았으면 안내가 그 요청의 답이 된다(답이 없는 채로 남지 않게)'
+    assert p['reply_to_message_id'] == 8 and '크기 상한' in p['text'], '아직 답하지 않았으면 안내가 그 요청의 답이 된다(답이 없는 채로 남지 않게)'
 asyncio.run(fresh())
 `));
 
