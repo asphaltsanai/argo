@@ -8,6 +8,7 @@
 //   ④ 조직 등록을 모두 해제했고 연결된 개인 행이 없으면(없음·available·detached) 끈다(종전 그대로)  ⑤ 연결된 개인 행이 있으면 켜 둔다(개인 공간도 브리지가 답한다)
 //   ⑥ 조직 등록 연결은 켠다(종전 그대로)  ⑦ 개인 공간 [연결]은 종전처럼 브리지를 건드리지 않는다
 //   ⑧ [다시 연결](분리 검수 MEDIUM-1): 조직 없는 계정의 꺼진 브리지를 개인 행으로 되살린다, 연결된 행이 없으면 종전처럼 noCrews
+//   ⑨ 멈춘 행만인데 최소 버전 조회(msgr_my_agent_pause)가 실패하면 판정하지 않는다 — 브리지 값 그대로, 쓰기 0(검수 1 LOW-1)
 //   ⑧-a 멈춘 행만 + 옛 앱이면 꺼 두고 업데이트 안내로 답한다(재검수 LOW-A)  ⑧-b 멈춘 행만 + 새 앱이면 되살린다  ⑧-c 소유자가 아닌 기기는 쓰지 않는다
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -122,4 +123,15 @@ test('⑧-c [다시 연결] — 이 회사 소유자가 아닌 계정은 owner�
   assert.equal(out.body.runtime.state, 'owner');
   assert.equal(out.enabled, false);
   assert.ok(!out.log.some((l) => l.startsWith('enabled=')), String(out.log));
+});
+
+test('⑨ 멈춘 행만인데 최소 버전 조회가 실패하면 옛 앱으로 판정하지 않는다 — 브리지 값 그대로, 쓰기 0', () => {
+  const re = run({ crews: personal(2, 'paused'), pauseReason: 'off', pauseRpcFail: true, enabled: true, body: { reconnect: true } });
+  assert.equal(re.body.runtime?.state, 'reconnecting', JSON.stringify(re));
+  assert.equal(re.enabled, true);
+  assert.ok(!re.log.some((l) => l.startsWith('enabled=')), String(re.log));
+  const del = orgDel(personal(2, 'paused'), { pauseReason: 'off', pauseRpcFail: true, enabled: true });
+  assert.equal(del.status, 200);
+  assert.equal(del.enabled, true, JSON.stringify(del));
+  assert.ok(!del.log.some((l) => l.startsWith('enabled=')), String(del.log));
 });

@@ -1,6 +1,6 @@
 // 본체 설정 '메신저 연결' 라우트(app/api/companies/[ws]/msgr/route.js)를 실제로 돌리는 자식 프로세스 — 세션·회사 설정·DB만 대역으로 바꾼다.
 // 실행: node --experimental-test-module-mocks --no-warnings test/helpers/msgr-route-harness.mjs  (입력은 env ARGO_MSGR_HARNESS = JSON)
-// 입력 { ownerId(회사 소유자 — 기본 이 계정), crews: [행], agents: [이 회사 에이전트 slug — 행이 없는 것까지], pauseReason, minApp: 'new'|'old', enabled, method, body, auto: true(이어서 진짜 autoEnableMsgr 한 번) }
+// 입력 { ownerId(회사 소유자 — 기본 이 계정), pauseRpcFail(msgr_my_agent_pause 실패), crews: [행], agents: [이 회사 에이전트 slug — 행이 없는 것까지], pauseReason, minApp: 'new'|'old', enabled, method, body, auto: true(이어서 진짜 autoEnableMsgr 한 번) }
 // 출력(stdout 마지막 줄 JSON) { status, body(응답 JSON), enabled, rows: ['slug:status'], auto, log }
 // DB 대역은 PostgREST가 select 열 목록대로만 돌려주는 것까지 흉내 내지 않는다 — 라우트가 읽는 열(id·org_id·slug·status·hosting)은 행에 늘 있다.
 import { mock } from 'node:test';
@@ -36,6 +36,7 @@ function from(table) {
 const client = {
   from,
   async rpc(name, args) {
+    if (name === 'msgr_my_agent_pause' && input.pauseRpcFail) return { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } }; // 판정 조회 실패
     if (name === 'msgr_my_agent_pause') { const paused = crews.filter((r) => r.status === 'paused').length; return { data: { paused, active: crews.filter((r) => r.status === 'active').length, limit: 4, reason: paused ? pauseReason : null, min_app: MIN }, error: null }; }
     if (name === 'msgr_free_keep') { // 실제 함수(20261012130000)처럼 새 앱이 없으면(app·off) 오류 — 라우트는 오류를 돌려주고 브리지 값을 쓰지 않는다
       if (pauseReason === 'app' || pauseReason === 'off') return { data: null, error: { code: 'P0001', message: 'msgr_app_update_required msgr_pro_required' } };

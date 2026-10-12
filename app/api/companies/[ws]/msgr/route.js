@@ -76,7 +76,11 @@ async function syncBridge(ws, c, read = null) {
   // paused(무료 계정 일시 중지 #941)만 남은 회사도 켠다(2026-10-11) — 최신 앱은 브리지가 돌아야 기기 심박(앱 버전)이 나가고, 서버가 그 심박을 보고 무료 계정
   // 에이전트를 4명까지 재개한다(20261011120000). 단 이 앱이 서버가 정한 최소 버전(#943 실시간 방식 포함 발행) 이상일 때만 — 아니면 #941처럼 꺼 둔다(검수 #945 MEDIUM-2).
   let enabled = rows.some((r) => r.status === 'active');
-  if (!enabled && rows.some((r) => r.status === 'paused')) enabled = appMeetsMin((await readAgentPause(c.client).catch(() => null))?.min_app);
+  if (!enabled && rows.some((r) => r.status === 'paused')) {
+    const info = await readAgentPause(c.client).catch(() => null);
+    if (!info) return { regs, enabled: null }; // 최소 버전을 못 읽으면(RPC 실패·옛 서버) 판정하지 않고 값을 쓰지 않는다 — 옛 앱으로 오판해 돌던 브리지를 끄지 않게(검수 1 LOW-1)
+    enabled = appMeetsMin(info.min_app);
+  }
   const company = await loadCompany(ws);
   if (!!company.msgr?.enabled !== enabled) await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), enabled } }));
   return { regs, enabled };
@@ -131,7 +135,7 @@ export async function POST(req, { params }) {
     // 사람이 누를 때만 — 위 조회 1건을 그대로 쓰고 + (멈춘 행만이면) rpc 1건 + 값이 바뀔 때만 쓰기 1건.
     // 멈춘 행만 있고 이 앱이 최소 버전 미만이면 브리지를 꺼 둔다(#945 MEDIUM-2) — '다시 연결하는 중'이 아니라 업데이트 안내로 답한다(재검수 LOW-A)
     const { enabled } = await syncBridge(ws, c, crews);
-    if (enabled === false) return apiError('msgr_app_update_required', lang);
+    if (enabled === false) return apiError('msgr_app_update_required', lang); // 판정 못 함(null)은 종전처럼 깨우기만 한다
     nudgeGateway(ws);
     return Response.json({ ok: true, runtime: { state: 'reconnecting' } });
   }
