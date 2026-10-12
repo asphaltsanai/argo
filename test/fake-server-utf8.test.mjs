@@ -11,6 +11,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SELF = fileURLToPath(import.meta.url);
 
 /** 문자열에 이어 붙이는 HTTP 본문 수집기(`req|q|res.on('data', (c) => b += c)`) 중 같은 줄이나 앞 3줄에 그 변수의 setEncoding이 없는 자리. */
+// 한계: 흔한 모양만 잡는다 — 변수 이름 req·q·res, 작은따옴표 'data', 화살표 함수 안의 `x += c`. `request.on`·`"data"`·`function (c) {…}`·함수 참조(`.on('data', collect)`)·`b = b + c`·`+= c.toString()`·자식 프로세스 stdin은 놓친다(2026-10-13 검수 2 LOW-2). 새 수집기는 모양과 관계없이 setEncoding을 붙인다.
 export function unsafeCollectors(text) {
   const lines = text.split('\n'); const out = [];
   const re = /\b(req|q|res)\.on\(\s*'data'\s*,\s*\(?\s*(\w+)\s*\)?\s*=>\s*[({]?\s*\w+\s*\+=\s*\2\b/g;
