@@ -57,6 +57,22 @@ export function lastTurnByRunner(events) {
   return by;
 }
 
+/** 활동 이벤트(최신순) → 지금 로그인이 만료된 것으로 보이는 러너 id 목록(순수). 러너별 **최신 턴**이 인증 때문에 실패했으면 만료로 본다 —
+    authLost(자가치유 직전 기록: 인증 때문에 다른 러너로 갈아탔다) 또는 failCode 'auth_expired'(chat.mjs surfaceRunnerFailure). 같은 러너의 더 최근
+    성공 턴이 있으면 해제(먼저 본 것이 최신이라 그 하나만 본다). 중단 턴은 원인이 아니다. 다른 러너가 대신 답해 "쓸 수 있는 러너 없음" 배너가 뜨지 않던
+    경우를 데크 배너가 말하게 한다(2026-10-13 상주 Claude OAuth 만료 — 메신저엔 일반 실패만, 주인은 본체를 열어 봐야 알았다). */
+export function runnersAuthLost(events) {
+  const seen = new Set(); const lost = [];
+  for (const e of events ?? []) {
+    // 자가치유 뒤 바깥 턴의 실패 기록은 러너가 처음 러너인데 실패 코드는 대체 러너의 것이다 — authFailedRunner(처음 만료된 러너)가 있으면 그 러너의 기록으로 본다
+    const runner = e?.authFailedRunner || e?.runner;
+    if (e?.type !== 'turn' || !runner || seen.has(runner) || isAbortedTurnEvent(e)) continue;
+    seen.add(runner);
+    if (e.ok === false && (e.authLost === true || e.failCode === 'auth_expired' || !!e.authFailedRunner)) lost.push(runner);
+  }
+  return lost;
+}
+
 /** 활동 이벤트 → 러너별 최신 검진 실패(P1-2 주기 검진, 순수). 턴 실패(lastTurnByRunner)와 **별개
     소스**다: 턴은 "쓰다 실패했다", 검진은 "지금 자격이 죽어 있다". 성공 검진은 이벤트로 남지 않으므로
     (실패만 기록) 여기 없다는 것이 곧 "최근 확정 실패 없음"이다. */

@@ -1254,6 +1254,7 @@ const DICT = {
   'deck.crewControl': ['에이전트 관제 · {name}', 'Agent Control · {name}'],
   'deck.runner.banner': ['AI 러너 연결이 필요합니다 — 에이전트가 일하려면 러너를 하나 연결해 주세요.', 'An AI runner is required — connect one so your agents can work.'],
   'deck.runner.reconnect': ['러너 연결이 끊겼습니다 — 다시 연결해 주세요.', 'Runner connection lost — please reconnect.'],
+  'deck.runner.authLost': ['{names} 로그인이 만료됐습니다. 이 AI를 쓰는 에이전트는 다른 AI로 대신 답하거나, 대신할 AI가 없으면 답하지 못합니다. 다시 로그인하세요.', '{names} login has expired. Agents that use it answer with another AI instead, or cannot answer if none is available. Sign in again.'],
   'deck.runner.retired': ['연결된 러너(Gemini)는 더 이상 제공되지 않습니다 — 설정 → AI 연결에서 다른 러너를 연결해 주세요. 같은 구글 모델은 Antigravity로 쓸 수 있습니다.', 'The connected runner (Gemini) is no longer offered — connect another runner in Settings → AI connections. Antigravity runs the same Google models.'],
   'deck.aiKey.cta': ['설정에서 연결하기', 'Connect in Settings'],
   'deck.memory': ['기억', 'Memory'],

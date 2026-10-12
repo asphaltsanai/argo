@@ -3,11 +3,36 @@
 // 첨부 실패도 같은 모양 — 파일 읽기 오류 원문(EACCES 등)에는 주인 컴퓨터의 절대 경로가 들어 있다.
 // 상세는 주인에게만: 실패 턴은 chat()이 회사 활동 로그에 원문과 함께 남기고(appendEvent ok:false), 게이트웨이는 로컬 콘솔에 남긴다.
 import { pick } from './protocol.mjs';
+import { RUNNERS } from '../runners/catalog.mjs'; // 러너 표시 이름만 읽는다(원문·계정·토큰은 싣지 않는다)
 
 /** 크루 턴 실패 — 방에 올리는 일반 문구(원문 없음). */
 export const roomTurnFailure = (lang = 'ko') => pick(
   '에이전트가 지금 답하지 못했습니다. 주인이 Argo 활동에서 원인을 확인할 수 있습니다.',
   'The agent could not answer right now. Its owner can see the cause in Argo activity.', lang);
+
+/** 실패가 실행기의 AI 로그인 만료 때문인가 → 그 러너 id(모르면 'unknown') | null. chat.mjs가 붙이는 필드만 본다 — 원문 문자열을 다시 판정하지 않는다
+    (벤더 문구 판정은 chat.mjs AUTH_ERR_RE·surfaceRunnerFailure 한 곳). 우선순위: 자가치유 전 처음 만료된 러너(authFailedRunner — 대체 러너까지 실패하면
+    마지막 오류는 대체 러너의 것이다, 2026-10-13 상주 Claude OAuth 만료 → codex 재시도 실패 사례) → 게이트가 끊은 러너(authExpired) → 분류 코드 auth_expired의 실패 러너. */
+export function roomAuthRunner(e) {
+  if (!e || typeof e !== 'object' || e.aborted || e.subscriptionBlocked) return null;
+  if (typeof e.authFailedRunner === 'string' && e.authFailedRunner) return e.authFailedRunner;
+  if (typeof e.authExpired === 'string' && e.authExpired) return e.authExpired;
+  if (e.failCode === 'auth_expired' || e.authExpired || e.authError) return typeof e.failRunner === 'string' && e.failRunner ? e.failRunner : 'unknown';
+  return null;
+}
+
+/** 크루 턴 실패 — 원인을 아는 경우만 원인과 고칠 곳을 말하고, 그 밖은 일반 문구(roomTurnFailure). 방(손님 포함)에 오르므로 원문·계정·토큰은 싣지 않는다 —
+    러너 이름(Claude 등)과 할 일만. 다시 로그인은 실행기 주인만 할 수 있어 "주인이"라고 말한다(데스크톱: 설정 → AI 연결, 서버: 그 기기에서 다시 로그인). */
+export function roomTurnFailureFor(e, lang = 'ko') {
+  const runner = roomAuthRunner(e);
+  if (!runner) return roomTurnFailure(lang);
+  const name = RUNNERS[runner]?.name;
+  return name
+    ? pick(`이 에이전트를 돌리는 실행기의 ${name} 로그인이 만료돼 답하지 못했습니다. 실행기 주인이 ${name}에 다시 로그인하면 다시 답할 수 있습니다(Argo 데스크톱: 설정 → AI 연결).`,
+      `The ${name} login on the runner behind this agent has expired, so it could not answer. Once the runner's owner signs in to ${name} again, it can answer again (Argo desktop: Settings → AI connection).`, lang)
+    : pick('이 에이전트를 돌리는 실행기의 AI 로그인이 만료돼 답하지 못했습니다. 실행기 주인이 다시 로그인하면 다시 답할 수 있습니다(Argo 데스크톱: 설정 → AI 연결).',
+      "The AI login on the runner behind this agent has expired, so it could not answer. Once the runner's owner signs in again, it can answer again (Argo desktop: Settings → AI connection).", lang);
+}
 
 /** 답하던 중 에이전트(상주)가 다시 시작돼 끊긴 턴(D25). 자동으로 다시 하지 않는 이유와 사용자가 할 일을 함께 말한다. */
 export const roomTurnInterrupted = (lang = 'ko') => pick(
