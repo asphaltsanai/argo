@@ -167,8 +167,7 @@ const T = {
       '  argo office hold "<제목>" --reason "<사유>" --source-name "<세션 제목>" [--org <조직 id>]',
       '  argo office hold --task <할 일 id> --reason "<사유>" [--org <조직 id>]',
       '  argo office tasks [--org <조직 id>] [--json]',
-      '  argo office <영역> <동작> [--옵션 값 …]   영역: work deals calendar company files mail briefing (argo office tools)',
-      '  argo office orgs · argo office mcp (Claude Code·Codex가 붙는 MCP 서버)',
+      '  에이전트가 오피스를 읽고 쓰는 일은 오피스 원격 MCP(<오피스 주소>/api/mcp)로 붙인다.',
       '조직 id를 비우면 데이터 폴더(ARGO_ROOT)의 config.json {"org":"…"}을 씁니다.',
     ].join('\n'),
     needLogin: `먼저 로그인해야 합니다 — ${LOGIN}`,
@@ -199,8 +198,7 @@ const T = {
       '  argo office hold "<title>" --reason "<reason>" --source-name "<session title>" [--org <org id>]',
       '  argo office hold --task <task id> --reason "<reason>" [--org <org id>]',
       '  argo office tasks [--org <org id>] [--json]',
-      '  argo office <area> <action> [--option value …]   areas: work deals calendar company files mail briefing (argo office tools)',
-      '  argo office orgs · argo office mcp (MCP server for Claude Code·Codex)',
+      '  For agents reading and writing Office, connect the Office remote MCP (<office address>/api/mcp).',
       'Without an org id, config.json {"org":"…"} in the data folder (ARGO_ROOT) is used.',
     ].join('\n'),
     needLogin: `Sign in first — ${LOGIN}`,
@@ -226,7 +224,6 @@ const T = {
 };
 const errText = (t, msg) => t.err[Object.keys(t.err).find((k) => String(msg).includes(k))] ?? String(msg).slice(0, 300);
 
-export const TOOL_SUBS = ['work', 'deals', 'calendar', 'company', 'files', 'mail', 'briefing', 'orgs', 'tools', 'mcp'];
 const OPTIONS = {
   org: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, project: { type: 'string' }, task: { type: 'string' },
   reason: { type: 'string' }, 'source-name': { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
@@ -236,15 +233,9 @@ const OPTIONS = {
  * argo office <하위 명령> — 종료 코드를 돌려준다(0 성공, 1 입력·서버 오류, 2 로그인 필요).
  * deps: { root, lang, out, err, newId, now, timeoutMs, _mkClient, _fresh } — 테스트가 주입한다.
  */
-export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), newId = randomUUID, now = Date.now, timeoutMs = 15_000, _mkClient, _fresh, _ancestor, _confirm } = {}) {
+export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'ko', out = (s) => console.log(s), err = (s) => console.error(s), newId = randomUUID, now = Date.now, timeoutMs = 15_000, _mkClient, _fresh, _ancestor } = {}) {
   const t = T[lang] ?? T.ko;
   const [sub, ...rest] = argv;
-  // 영역 명령(10/10 — 할 일·페이지·거래·일정·회사·문서함·메일·브리핑 읽기·쓰기, 조직 목록, MCP 서버) — 옵션이 영역마다 달라 여기 parseArgs를 거치지 않는다.
-  // 맨 위 import에 싣지 않는다(훅이 report만 부를 때 zod·도구 처리기를 싣지 않게)
-  if (TOOL_SUBS.includes(sub)) {
-    const { toolsMain } = await import('./office-tools-cli.mjs');
-    return toolsMain(sub, rest, { root, lang, out, err, cfgOrg: (await readOfficeConfig(root)).org, needLogin: t.needLogin, _fresh, _mkClient, _ancestor, _confirm });
-  }
   let v, pos;
   try { ({ values: v, positionals: pos } = parseArgs({ args: rest, options: OPTIONS, allowPositionals: true, strict: true })); }
   catch (e) { err(`${t.failed(e.message)}\n${t.usage}`); return 1; }
@@ -252,7 +243,6 @@ export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'k
   // 예전 하위 명령(tasks·hold·report — Claude Code 훅이 부른다)도 같은 판정(분리 검수 M1: 할 일 읽기·쓰기가 판정 없이 열려 있었다).
   // 도움말 판단은 인자 글자가 아니라 parseArgs 결과로 한다(보안 리뷰: `hold … -- --help`처럼 해석기와 다른 판단으로 판정을 건너뛰지 않게)
   {
-    const { agentTurnState, agentTurnRefusal } = await import('./office-tools-cli.mjs');
     const st = await agentTurnState({ _ancestor });
     if (st) { err(agentTurnRefusal(st, lang)); return 1; }
   }
@@ -335,3 +325,18 @@ export async function officeMain(argv, { root = process.env.ARGO_ROOT, lang = 'k
   })].join('\n'));
   return 0;
 }
+
+/* ── 아르고 에이전트 턴 판정(10/10 분리 검수 MEDIUM-1) — 에이전트가 셸로 업무 현황 명령을 부르지 않게. 2026-10-13 office-tools-cli.mjs를 지우며 여기로 옮겼다 ── */
+/** 아르고 에이전트 턴 안(셸·MCP 자식)인가 — 러너 환경(scrubServerSecrets)이 붙이는 표지 */
+export const inAgentTurn = (env = process.env) => !!env.ARGO_AGENT_TURN;
+/** 'agent'(자기 env 표지 또는 조상 프로세스 표지) | 'unknown'(판정 실패 — 호출부가 거절, fail-closed) | null(사람).
+    자기 env 표지는 셸에서 지울 수 있어 조상(러너 CLI)의 표지를 같이 본다(agent-peer markedAncestor — 방지턱이고 한계는 그 주석). 보안 리뷰(10/10) */
+export async function agentTurnState({ env = process.env, _ancestor } = {}) {
+  if (inAgentTurn(env)) return 'agent';
+  const ancestor = _ancestor ?? (await import('./agent-peer.mjs')).markedAncestor; // 쓸 때만 — 훅이 report만 부를 때 싣지 않게
+  try { return (await ancestor()) > 0 ? 'agent' : null; } catch { return 'unknown'; }
+}
+/** 거절 문장 — 'unknown'은 이유가 다르다(분리 검수 M3: Codex 샌드박스 셸은 /bin/ps를 못 띄워 사람도 여기 걸린다) */
+export const agentTurnRefusal = (state, lang = 'ko') => state === 'unknown'
+  ? (lang === 'en' ? 'Could not check whether this runs inside an Argo agent turn (ps unavailable — e.g. a sandboxed shell), so it was refused. Run it from a normal terminal.' : '아르고 에이전트 턴 안인지 확인하지 못해 거절했습니다(ps를 실행할 수 없음 — 샌드박스 셸 등). 일반 터미널에서 실행하세요.')
+  : (lang === 'en' ? 'Inside an Argo agent turn — use the Argo Office connector instead of the argo office CLI.' : '아르고 에이전트 턴 안입니다 — argo office CLI 대신 아르고 오피스 커넥터를 쓰세요.');

@@ -29,8 +29,6 @@ export function messengerOrigin(ctx, targetSlug = null) {
     uid: ctx.uid, wsId: ctx.wsId, origin: ctx.origin ?? null, hop: ctx.hop ?? 0,
     // 손님 표지는 사슬을 따라간다 — 쪽지·예약·결재로 옮겨 탄 뒤에도 "주인이 시킨 일"로 되살아나지 않게(넘김 뒤 쪽지는 rootAuthor를 잃는다).
     ...(ctx.rootAuthor ? { rootAuthor: ctx.rootAuthor } : {}), ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}),
-    // 오피스 패널에서 시작한 사슬 — 예약·작업·결재 후속으로 옮겨 탄 턴은 패널 카드가 없어 오피스 쓰기를 하지 않는다(office-proposals.mjs, 검수 M1). 내리는 방향
-    ...(ctx.officePanel === true || ctx.officePanelChain === true ? { panelChain: true } : {}),
     // 크루가 넘긴 턴 표지 — 예약·작업·결재 후속으로 옮겨 탄 뒤에도 사장 직접 턴으로 되살아나지 않게(풀 오토 제외, 유건 결정 2026-10-03)
     ...(ctx.handoffFrom ? { handoffFrom: ctx.handoffFrom } : {}),
     // 이어 실행 근거(msgr.mjs restoreMessengerContext — 결재 후속·예약·긴 작업 턴) — 이 턴이 올리는 결재 카드용이다(msgrPush가 payload에 싣는다).
@@ -44,7 +42,7 @@ export function messengerOrigin(ctx, targetSlug = null) {
 export function mirrorCtxFromOrigin(o, extra = {}) {
   return { kind: 'msgr', orgId: o.orgId, channelId: o.channelId, threadRoot: o.threadRoot ?? null,
     uid: o.uid ?? null, wsId: o.wsId ?? null, origin: o.origin ?? null,
-    ...(o.rootAuthor ? { rootAuthor: o.rootAuthor } : {}), ...(o.guest === true ? { guest: true } : {}), ...(o.office === true ? { office: true } : {}), ...(o.panelChain === true ? { officePanelChain: true } : {}), ...(o.handoffFrom ? { handoffFrom: o.handoffFrom } : {}), ...extra };
+    ...(o.rootAuthor ? { rootAuthor: o.rootAuthor } : {}), ...(o.guest === true ? { guest: true } : {}), ...(o.office === true ? { office: true } : {}), ...(o.handoffFrom ? { handoffFrom: o.handoffFrom } : {}), ...extra };
 }
 
 /** 오피스에서 맡긴 글인가 — 메시지 meta.source가 office_로 시작한다(아르고 오피스 '크루에게 맡기기'). 멤버가 쓸 수 있는 값이지만

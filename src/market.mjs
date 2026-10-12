@@ -235,6 +235,15 @@ export const CONNECTOR_CATALOG = [
     // 실측 기준 이 4개가 쓰기다 — 목록이 어긋나면 테스트가 문다.
     dangerous: ['create_event', 'update_event', 'delete_event', 'respond_to_event'],
   },
+  {
+    // 아르고 오피스 원격 MCP(2026-10-13 오피스 독립 앱 분리 — 유건 지시). 에이전트는 오피스를 이 커넥터로만 쓴다(본체의 오피스 크루 도구는 지웠다).
+    // 인증은 Supabase Auth의 OAuth 2.1 서버(자동 등록 DCR — 고정 client_id 없음). 쓰기는 오피스 서버가 '확인할 변경'으로 올리고 사람이 오피스 화면에서 실행한다 —
+    // 그래서 도구는 전부 readOnlyHint이고 여기서 결재를 더 걸지 않는다(같은 쓰기에 결재 카드와 오피스 확인이 겹치지 않게).
+    id: 'argo-office',
+    name: '아르고 오피스',
+    url: 'https://argo-office.vercel.app/api/mcp',
+    note: '일정·할 일·페이지·거래처·거래·문서함·메일을 읽고, 바꾸는 일은 오피스 화면의 확인할 변경으로 올립니다.',
+  },
 ];
 
 // 영어 미러 — 등재 시 **같은 id·같은 url·같은 scopes**로 짝을 맞춘다(name·note만 언어별).
@@ -251,6 +260,12 @@ export const CONNECTOR_CATALOG_EN = [
       client_secret_env: 'ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET',
     },
     dangerous: ['create_event', 'update_event', 'delete_event', 'respond_to_event'],
+  },
+  {
+    id: 'argo-office',
+    name: 'Argo Office',
+    url: 'https://argo-office.vercel.app/api/mcp',
+    note: 'Reads calendar, tasks, pages, customers, deals, files and mail; changes are filed as pending changes you run in Office.',
   },
 ];
 
@@ -601,8 +616,6 @@ export async function importHostMcp(wsId, name) {
   catch { throw new Error('이 컴퓨터의 Claude Code 설정(~/.claude.json)을 읽을 수 없습니다'); }
   const src = cfg.mcpServers?.[name];
   if (!src || typeof src !== 'object') throw new Error(`이 컴퓨터의 Claude Code에 "${name}" MCP가 없습니다`);
-  // 아르고 오피스 MCP(argo office mcp)는 가져오지 않는다 — 에이전트는 자기 오피스 도구를 쓴다(그 도구가 방을 누가 보는지 판정한다. 10/10 분리 검수 MEDIUM-1)
-  if ([src.command, ...(Array.isArray(src.args) ? src.args : [])].join(' ').match(/argo(\.mjs)?\s+office\s+mcp|office-mcp\.mjs/)) throw new Error('아르고 오피스 MCP는 가져오지 않습니다 — 에이전트는 아르고 안의 오피스 도구를 씁니다');
   const safe = String(name).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
   if (!NAME_RE.test(safe)) throw new Error('가져올 수 없는 이름입니다');
   // 설정 원형 보존(command/args/env/type/url/headers) — SDK mcpServers가 그대로 먹는 형태

@@ -3,7 +3,7 @@
 // 호칭 규칙 판정(hasAddressRule·userSetAddress). 행동 전체는 test/agent-one-person.test.mjs(실제 chat()·게이트웨이 처리기)가 잠근다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ownerSoloRoom, audienceOf } from '../src/gateway/office-audience.mjs';
+import { ownerSoloRoom } from '../src/gateway/owner-solo.mjs';
 import { ownerSoloTurn } from '../src/gateway/msgr-handoff.mjs';
 import { inContextScope, isOwnerSoloScope, soloKey, soloSeenFor, soloMsgIds } from '../src/thread.mjs';
 import { applyDeparted, forgetChannels, foldedSolo, summaryRecalled, unscopedSummaryGone } from '../src/departed.mjs';
@@ -37,13 +37,6 @@ test('ownerSoloRoom — 주인 하나 + 이 에이전트 하나인 1:1만 참', 
   assert.equal(await ownerSoloRoom(undefined, dm, OWNER, CREW), false, '클라이언트 없음 → 좁게');
 });
 
-test('ownerSoloRoom의 사람 규칙은 오피스 도구의 owner 판정(audienceOf)과 같다', async () => {
-  for (const rows of [[m('user', OWNER), m('crew', CREW)], [m('user', OWNER), m('user', GUEST), m('crew', CREW)], [m('user', GUEST), m('crew', CREW)]]) {
-    const usersOnly = rows.filter((r) => r.member_kind === 'user').map((r) => ({ member_id: r.member_id }));
-    const owner = (await audienceOf(clientOf(usersOnly), { ...dm, orgId: null }, OWNER)) === 'owner';
-    assert.equal(await ownerSoloRoom(clientOf(rows), dm, OWNER, CREW), owner);
-  }
-});
 
 test('ownerSoloTurn — 게이트웨이 표지가 있어도 주인 직접 턴이 아니면 거짓(fail-closed)', () => {
   const base = { kind: 'msgr', channelKind: 'dm', ownerSolo: true, uid: OWNER, origin: OWNER };
