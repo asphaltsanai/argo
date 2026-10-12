@@ -627,6 +627,11 @@ test('G-3 규칙 주입 핀: chat()은 mirrorCtx.orgSlug로 규칙을 읽어 SDK
   assert.match(chatSrc, /const sysTail = orgRules[^\n]*\n\s*\+ \(mirrorCtx\?\.kind === 'msgr' && mirrorCtx\.officePanelSolo !== true \? rosterPrompt/, 'SDK·네이티브 공용 프롬프트 꼬리(sysTail) 머리에 규칙집 — 두 엔진이 같은 값(오피스 패널 턴은 동기 위임 명단 — 2단계 PR3)');
   assert.match(chatSrc, /systemPrompt: systemPromptFor\(md, p\.root, skills, meta, lang, \{ userName: turnUser \}\) \+ sysTail/, 'SDK 프롬프트가 꼬리를 붙인다');
   assert.match(chatSrc, /const rulesCtx = \(mirrorCtx\?\.kind === 'msgr' \|\| mirrorCtx\?\.kind === 'msgr-rules' \|\| mirrorCtx\?\.orgSlug\) \? \{ kind: 'msgr-rules', orgSlug: mirrorCtx\.orgSlug, channelName: mirrorCtx\.channelName \?\? ''[^\n]*\} : null;[^\n]*\n[\s\S]{0,800}?const childCtx = rulesCtx \? delegateRulesCtx\(rulesCtx, mirrorCtx\) : [^\n]*\n[\s\S]{0,600}?r = await chat\(wsId, target\.slug, delegated, null, \{[^}]*\bmirrorCtx: childCtx, abortTag: childTag \}\);/, '위임 턴 규칙 이어짐(미러·결재 각인은 kind msgr만) — 오피스 패널 동료 턴은 delegateRulesCtx가 셸 결재 목적지만 더한다(2단계 PR3 검수 H1)');
+  { const seg = chatSrc.slice(chatSrc.indexOf('const rulesCtx = (mirrorCtx?.kind'), chatSrc.indexOf('mirrorCtx: childCtx, abortTag: childTag'));
+    assert.ok(seg.length > 0);
+    assert.equal((seg.match(/\bchildCtx\s*=[^=]/g) ?? []).length, 1, 'childCtx 대입은 선언 한 번뿐(재검수 LOW — 느슨한 구간 정규식 보완)');
+    assert.equal((seg.match(/\brulesCtx\s*=[^=]/g) ?? []).length, 1, 'rulesCtx 대입은 선언 한 번뿐');
+    assert.ok(!/\b(childCtx|rulesCtx)\.[A-Za-z]+\s*=[^=]/.test(seg), '선언과 위임 호출 사이에 규칙 문맥 속성을 고치지 않는다'); }
 });
 
 test('G-4 조직 문서 제안: 브리지 미러가 kind org_doc·payload를 싣고 카드 본문이 제안 안내, 위험 high; chat()은 propose_org_doc 도구를 메신저 턴에만 등록; 후속 문구는 "서버가 반영"', async () => {

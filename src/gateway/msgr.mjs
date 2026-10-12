@@ -1908,8 +1908,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // 최근 채널 대화 — 참고용(지시 아님). 이름 접두로 발화자를 가르고 본문은 세척.
     // 오피스 패널 턴은 같은 대화의 글만 문맥으로(2단계 PR3 — 1단계는 같은 방의 다른 대화가 섞였다). 봉투 문맥은 뿌리 기준으로 거른다(thread_root를 모르는 행은 빠진다 — 좁게)
     const panelThread = job.panel === true ? job.threadRoot ?? job.msgId : null;
-    const ctxRows = panelThread != null
-      ? await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? [], { threadRoot: panelThread }) // 봉투 문맥은 방 전체 최근 12건이라 옛 대화로 돌아오면 비었다 — 그 대화를 따로 읽는다(검수 M3, 조회 1건)
+    let ctxRows = panelThread != null
+      ? (envelope ? (envelope.context ?? []).filter((r) => r.id === panelThread || r.thread_root === panelThread) : await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? [], { threadRoot: panelThread })) // 봉투는 AI 동의 거르기를 거친 값 — 주인 혼자 1:1로 확인되면 아래(try 안)에서 그 대화를 따로 다시 읽는다(검수 M3·재검수 M-B)
       : envelope?.context ?? await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? []);
     // 주인 혼자 1:1(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 데스크톱 대화와 같은 대화로 본다(맥락 양방향 + 일지, 세션은 잇지 않는다 — chat.mjs ownerSoloTurn).
     // 주인이 직접 보낸 첫 단계 턴(손님·넘김·DM 전달·오피스 아님 — ownerSoloTurn)이고, 지난 대화도 주인과 이 에이전트의 글뿐이며(나간 사람·전달된 글이 섞인 방 제외),
@@ -2002,7 +2002,11 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       // 주인 혼자 1:1 방 확인(구성원 조회 1건)은 실행권을 잡은 뒤에만 — 다른 프로세스가 실행 중인 잡이 3초마다 DEFER로 다시 집힐 때 조회를 되풀이하지 않게(재검수 LOW 2026-10-08).
       const solo = soloCandidate && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
       if (ctx.officePanel === true) panelTrace.solo = await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId); // 패널 턴만(패널 턴은 soloCandidate가 아니라 위와 겹치지 않는다 — 검수 L3)
-      if (panelTrace.solo) ctx.officePanelSolo = true; // 주인 혼자 1:1 패널 턴만 동기 위임·넘김 없는 답(chat.mjs, 검수 M4) — meta.source는 사람이 쓸 수 있는 값이라 방 판정을 같이 본다
+      if (panelTrace.solo) ctx.officePanelSolo = true;
+      if (panelTrace.solo && envelope && panelThread != null) { // 봉투는 방 전체 최근 12건이라 옛 대화로 돌아오면 비었다(검수 M3). 사람이 주인뿐인 방이라 동의 거르기가 필요 없다 — 그 대화를 따로 읽는다(조회 1건)
+        ctxRows = await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? [], { threadRoot: panelThread });
+        ctx.roomIds = [...ctxRows.map((r) => r.id), ...(job.replyTo ? [job.replyTo] : [])];
+      } // 주인 혼자 1:1 패널 턴만 동기 위임·넘김 없는 답(chat.mjs, 검수 M4) — meta.source는 사람이 쓸 수 있는 값이라 방 판정을 같이 본다
       if (solo) ctx.ownerSolo = true;
       // 개인 공간(조직 없는 방) 턴 — 결재·예약·긴 작업의 여는 스위치(messengerOrigin)에 서버 판정(crew 1:1인가)을 싣는다(계획 5-3 #3). 같은 자리(실행권을 잡은 뒤 1회)라
       // DEFER로 다시 집혀도 되풀이하지 않는다. 조직 턴은 문맥 모양까지 그대로(묻지도 싣지도 않는다), 손님 턴은 어차피 거절이라 묻지 않는다, 봉투 없는 옛 서버도 묻지 않는다(모름 = 거절).

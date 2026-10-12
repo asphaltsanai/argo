@@ -1,8 +1,8 @@
 import { selfPostsSection } from './self-posts.mjs';
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, settingsDirectTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
 import { officeToolSpecs } from './gateway/office-tools.mjs'; // 오피스 도구 7종 정의(일정·회사·문서함·할 일·페이지·거래·메일·브리핑) — CLI·MCP와 같은 한 곳
-import { panelWriteGate, panelLaterNo } from './gateway/office-proposals.mjs';
-import { trackPanelChild, panelChildTag } from './panel-children.mjs'; // 패널 동기 위임 동료 턴 등록부(중단 전파) // 오피스 패널 턴의 쓰기 확인 카드 관문 · 예약·긴 작업 거절 문구
+import { panelWriteGate, panelLaterNo } from './gateway/office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드 관문 · 예약·긴 작업 거절 문구
+import { trackPanelChild, panelChildTag } from './panel-children.mjs'; // 패널 동기 위임 동료 턴 등록부(중단 전파)
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -142,7 +142,8 @@ export function shellGateMsgr(mirrorCtx) {
     표지 없는 위임 턴은 받은 그대로(지금 동작). 내보내기는 시험용 */
 export function delegateRulesCtx(rulesCtx, mirrorCtx) {
   if (mirrorCtx?.kind !== 'msgr' || mirrorCtx.officePanelSolo !== true) return rulesCtx;
-  return { ...rulesCtx, shellGate: shellGateMsgr(mirrorCtx) ?? {} };
+  // 결재로 올리면 승인해도 이어 실행할 길이 없다(동료는 이 방의 메신저 에이전트가 아니다 — 재검수 M-A). 고위험 셸은 거절하고 조율자에게 돌려주게 한다
+  return { ...rulesCtx, shellGate: { deny: true } };
 }
 
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */

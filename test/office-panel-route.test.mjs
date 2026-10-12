@@ -66,12 +66,18 @@ test('패널 턴의 delegate는 채널 넘김이 아니라 동기 실행(결과�
 test('패널 동료 턴의 고위험 셸은 결재로 막힌다(그 밖의 위임 턴은 지금 그대로)', async () => {
   const rules = { kind: 'msgr-rules', orgSlug: null, channelName: '', channelId: 'ch' };
   const child = delegateRulesCtx(rules, { ...panel, orgId: 'o', channelKind: 'dm' });
-  assert.ok(child.shellGate, '조율자 문맥에서 만든 결재 목적지');
+  assert.deepEqual(child.shellGate, { deny: true }, '동료 턴은 고위험 셸 거절 표지');
   assert.equal(delegateRulesCtx(rules, { ...panel, officePanelSolo: undefined }), rules, '대조군 — 패널(혼자 1:1)이 아니면 받은 그대로');
   assert.deepEqual(shellGateMsgr(child), child.shellGate);
   assert.equal(shellGateMsgr({ kind: 'msgr-rules', channelId: 'ch' }), null, '대조군 — 표지 없는 위임 턴은 지금처럼 게이트 밖');
+  const { loadApprovals } = await import('../src/approvals.mjs');
+  const before = (await loadApprovals(WS)).length;
   const gate = makePermissionGate(WS, 'luna', paths(WS).root, 'pepper', 'ko', [], { msgr: shellGateMsgr(child) });
-  assert.equal((await gate('Bash', { command: 'git push --force origin main' })).behavior, 'deny');
+  const res = await gate('Bash', { command: 'git push --force origin main' });
+  assert.equal(res.behavior, 'deny');
+  assert.match(res.message, /맡긴 동료에게 돌려줘라/, '조율자에게 돌려준다(재검수 M-A — 결재로 올리면 승인해도 실행할 길이 없다)');
+  assert.equal((await loadApprovals(WS)).length, before, '결재를 만들지 않는다');
+  assert.equal((await gate('Bash', { command: 'ls' })).behavior, 'allow', '고위험이 아닌 명령은 그대로');
 });
 
 // 검수 M2 — 패널 '중단'은 그 글에서 동기로 맡긴 동료 턴도 멈춘다
