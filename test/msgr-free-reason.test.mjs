@@ -61,7 +61,7 @@ test('⑥ 라우트 배선(검수 #945) — 새 행은 연결 해제로 먼저 �
   assert.doesNotMatch(act, /status: 'active', allow: 'owner'/, 'active로 바로 넣지 않는다(미러 insert와 구별되지 않는다)');
   assert.ok(act.indexOf("insert(row)") < act.indexOf('beatNow(c, ws)') && act.indexOf('beatNow(c, ws)') < act.indexOf("update({ ...base, status: 'active' })"), '넣기 → 새 앱 심박 → 연결 순서');
   assert.equal(FREE_REASON_CODE.room, undefined, "room(자리 남음)은 오류가 아니다 — 연결 결과에 오류 코드를 붙이지 않는다");
-  assert.match(route, /let enabled = regs\.some\(\(r\) => r\.status === 'active'\);\n\s+if \(!enabled && regs\.some\(\(r\) => r\.status === 'paused'\)\) enabled = appMeetsMin\(/);
+  assert.match(route, /let enabled = rows\.some\(\(r\) => r\.status === 'active'\);\n\s+if \(!enabled && rows\.some\(\(r\) => r\.status === 'paused'\)\) enabled = appMeetsMin\(/); // 조직 등록 + 개인 공간 행(동작은 msgr-sync-enabled-personal.test.mjs가 잠근다)
 });
 
 test('⑦ 화면 검수 B(10/11) — 연결 카드의 멈춘 행은 "파견 해제됨"이 아니라 멈춤 + 이유, 교체 안내는 대기 표시와 다른 말(멈췄어요), 이유 읽기는 멈춘 행이 있을 때만', () => {
