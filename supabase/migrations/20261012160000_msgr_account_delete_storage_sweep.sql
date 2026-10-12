@@ -9,13 +9,18 @@
 --   3) 아바타(msgr-avatars/avatars/<uid>/…): 새 후보 함수 msgr_storage_sweep_avatars — 경로의 uid가 auth.users에 없는 공개 아바타.
 --      정리 엣지가 버킷별로 지운다(supabase/functions/msgr-storage-sweep). 경로가 uid 모양이 아니면 건드리지 않는다.
 --   4) msgr_storage_sweep_kick은 두 후보 중 하나라도 있으면 엣지를 부른다(유휴 = 호출 0 그대로).
--- 지워지기까지의 틈: 계정 삭제 뒤 다음 정각+17분 크론까지(최대 1시간). 그동안 msgr 첨부는 방이 없어 서명 URL을 못 만들고(권한 거부),
--- 공개 아바타 URL은 열린다 — 프로필 행이 함께 지워져 앱 어디에서도 그 URL을 보여 주지 않는다.
+-- 지워지기까지의 틈: 계정 삭제 뒤 다음 정각+17분 크론까지(최대 약 1시간). 그동안 msgr 첨부는 방이 없어 새 서명 URL을 못 만들지만(권한 거부)
+-- 이미 발급된 서명 URL(앱 기본 1시간)과 공개 아바타 URL은 바이트가 지워질 때까지 열린다(실제 storage-api로 확인 — 정리 뒤 400).
+-- 종전에는 행을 지워 바로 닫혔다(바이트는 영구히 남음). 프로필 행이 함께 지워져 앱 화면이 새로 그 URL을 보여 주지는 않는다.
+-- 첫 실행 범위: 아바타 후보는 계정이 어떤 경로로 지워졌든(테스트 스크립트·대시보드 포함) 남은 아바타 전부다 — 적용 전 같은 조건으로 운영 개수를 읽어 보고한다
+--   (10/12 조회: 0건). msgr 후보 기준은 바꾸지 않았다.
 -- 부하: 계정 삭제·purge의 쓰기는 줄어든다(storage 행 삭제 없음). 정리는 종전과 같은 1시간 크론, 후보가 없으면 호출 0.
 --   아바타 후보 조회는 msgr-avatars 버킷 행(운영 33행, 10/12)과 auth.users 색인 조회 — 크론 1회에 한 번.
--- 되돌리기: 20260916150000의 msgr_delete_me·20260914200000의 msgr_purge_orgs·20261011150000의 msgr_storage_sweep_kick 정의를 다시 적용한다
---   (msgr_storage_sweep_avatars는 남겨도 무해 — 엣지가 부르지 않으면 쓰이지 않는다).
--- 적용: bash scripts/msgr-live-apply.sh 20261012160000_msgr_account_delete_storage_sweep  →  엣지 msgr-storage-sweep 재배포(--no-verify-jwt)
+-- 되돌리기: 옛 파일을 통째로 다시 실행하지 않는다(그 파일들의 다른 함수·정책이 나중 정의를 덮는다 — 9/23 사고 모양). 적용 직전에 세 함수
+--   (msgr_delete_me·msgr_purge_orgs·msgr_storage_sweep_kick)의 pg_get_functiondef를 백업해 두고, 되돌릴 때는 그 세 정의만 실행한다.
+--   아바타 정리만 멈추려면 revoke execute on function public.msgr_storage_sweep_avatars(int) from service_role(엣지는 버킷별로 404를 따로 다룬다).
+-- 적용 순서: 엣지 msgr-storage-sweep 먼저 재배포(--no-verify-jwt — 새 엣지는 옛 DB에서도 동작, 아바타 함수 없음 = 그 버킷만 건너뜀)
+--   → bash scripts/msgr-live-apply.sh 20261012160000_msgr_account_delete_storage_sweep. 반대 순서면 그 사이 kick이 아바타 후보 때문에 옛 엣지를 매시간 부른다.
 
 -- 1) 계정 삭제 — 20260916150000 정의에서 저장소 줄만 뺐다
 create or replace function public.msgr_delete_me() returns jsonb
@@ -110,6 +115,7 @@ begin
   return query
     select o.name from storage.objects o
      where o.bucket_id = 'msgr-avatars'
+       and (to_jsonb(o) ->> 'archived_at') is null and coalesce((to_jsonb(o) ->> 'is_delete_marker')::boolean, false) = false -- 지금 버전만(버전 관리 보관본·삭제 표시는 Storage API 삭제 대상이 아니라 매시간 다시 후보가 된다 — 분리 검수 LOW-4). 열이 없는 storage 버전에서도 동작
        and (storage.foldername(o.name))[1] = 'avatars'
        and public.msgr_uuid_or_null((storage.foldername(o.name))[2]) is not null
        and not exists (select 1 from auth.users u where u.id = public.msgr_uuid_or_null((storage.foldername(o.name))[2]))

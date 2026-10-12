@@ -273,3 +273,14 @@ test('[크론] 정리 실행기는 주소·비밀이 있고 두 후보(msgr·아
   sql(`delete from public.msgr_settings where key = 'storage_sweep_secret'`);
   assert.equal(kick(), 'f', '비밀이 없으면 부르지 않는다');
 });
+
+test('[정리 후보] 아바타 후보는 지금 버전만 — 버전 관리 보관본·삭제 표시는 매시간 다시 후보가 되지 않게 뺀다(열이 있는 storage 버전)', { skip }, () => {
+  sql(`alter table storage.objects add column if not exists archived_at timestamptz; alter table storage.objects add column if not exists is_delete_marker boolean not null default false`);
+  const gone = 'c7c7c7c7-c7c7-4c7c-8c7c-c7c7c7c7c7c7';
+  sql(`insert into storage.objects (bucket_id, name, archived_at) values ('msgr-avatars', 'avatars/${gone}/old.jpg', now())`);
+  sql(`insert into storage.objects (bucket_id, name, is_delete_marker) values ('msgr-avatars', 'avatars/${gone}/marker.jpg', true)`);
+  sql(`insert into storage.objects (bucket_id, name) values ('msgr-avatars', 'avatars/${gone}/cur.jpg')`);
+  const c = sql(`select coalesce(string_agg(n, ','), '') from public.msgr_storage_sweep_avatars(1000) n`).split(',');
+  assert.ok(c.includes(`avatars/${gone}/cur.jpg`));
+  assert.ok(!c.includes(`avatars/${gone}/old.jpg`) && !c.includes(`avatars/${gone}/marker.jpg`));
+});

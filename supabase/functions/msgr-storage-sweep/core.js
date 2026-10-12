@@ -9,7 +9,8 @@ export async function runSweep({ list, remove, batch = BATCH, maxRounds = MAX_RO
   const done = new Set();
   let removed = 0;
   for (let round = 1; round <= maxRounds; round++) {
-    const names = (await list(batch)) ?? [];
+    let names;
+    try { names = (await list(batch)) ?? []; } catch { return { removed, rounds: round, stopped: 'list_failed' }; } // 몇 바퀴 지운 뒤 읽기가 실패해도 지운 수를 잃지 않는다(분리 검수 참고 3)
     if (!names.length) return { removed, rounds: round, stopped: 'empty' };
     if (names.every((n) => done.has(n))) return { removed, rounds: round, stopped: 'not_progressing' };
     const fresh = names.filter((n) => !done.has(n));
@@ -47,7 +48,7 @@ export async function sweepBuckets({ url, service, buckets = SWEEP_BUCKETS, fetc
   const out = {};
   for (const b of buckets) {
     const { list, remove } = bucketOps({ url, service, bucket: b.bucket, rpc: b.rpc, fetch: f });
-    try { out[b.bucket] = await runSweep({ list, remove, batch, maxRounds }); } catch (e) { out[b.bucket] = { removed: 0, stopped: 'list_failed', error: String(e?.message ?? e).slice(0, 120) }; }
+    try { out[b.bucket] = await runSweep({ list, remove, batch, maxRounds }); } catch (e) { out[b.bucket] = { removed: 0, stopped: 'failed', error: String(e?.message ?? e).slice(0, 120) }; }
   }
   return out;
 }

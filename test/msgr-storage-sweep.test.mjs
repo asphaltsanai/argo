@@ -113,3 +113,9 @@ test('[유휴] 두 버킷 모두 후보가 없으면 목록 읽기만 하고 지
     assert.equal(s.reqs.length, 2);
   } finally { await s.close(); }
 });
+
+test('[보고] 몇 바퀴 지운 뒤 목록 읽기가 실패해도 지운 수를 그대로 보고한다', async () => {
+  let n = 0;
+  const r = await runSweep({ list: async () => { if (++n > 1) throw new Error('list 503'); return ['a']; }, remove: async () => {} });
+  assert.deepEqual(r, { removed: 1, rounds: 2, stopped: 'list_failed' });
+});
