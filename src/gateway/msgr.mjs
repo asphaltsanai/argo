@@ -674,7 +674,7 @@ export async function sessionClient() {
   if (cached?.key !== key) {
     const client = createClient(sess.url, sess.anonKey, msgrClientOptions(sess.access_token));
     try { await client.realtime.setAuth(sess.access_token); } catch { /* realtime 미가용 — 폴만으로도 완결 */ }
-    cached = { key, client, db: makeDb(client), uid: sess.user.id };
+    cached = { key, client, db: makeDb(client), uid: sess.user.id, email: sess.user.email ?? '' }; // email — 설정 카드가 이 기기가 로그인한 계정을 보인다(메신저 계정과 비교)
   }
   return cached;
 }
