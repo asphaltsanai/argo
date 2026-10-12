@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // PR 본문 규칙 검사(CLAUDE.md "인접 회귀 방지 3"·"DB 위생 5"·"회귀 게이트 1·5"·"벤더 1·4"·"버그 방지" — 2026-10-12).
 // 바뀐 파일과 추가된 줄을 보고, 규칙이 요구하는 절이 PR 본문에서 비어 있으면 실패한다. 문서만 바뀐 PR은 검사하지 않는다.
-// 절은 .github/pull_request_template.md의 `## ` 제목 단위로 읽고, 안내 주석(<!-- -->)과 빈 표 칸은 내용으로 치지 않는다.
+// 절은 .github/pull_request_template.md의 `## ` 제목 단위로 읽고(`###` 이하는 위 절에 합친다), 안내 주석(<!-- -->)·빈 표 칸·자리 표시(대기·pending·TBD만)는 내용으로 치지 않는다.
 // CI: .github/workflows/pr-rules.yml. 로컬: node scripts/pr-rules-check.mjs <본문파일> <파일목록> <diff>. 시험: test/rule-gates.test.mjs
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, posix } from 'node:path';
@@ -41,13 +41,16 @@ export function messengerShared(root = ROOT) {
 }
 
 // 본문을 `## 제목` 단위로 나누고, 주석·빈 표 칸·구분선을 지운 내용만 남긴다.
+// `###`·`####` 소제목은 바로 위 `#`·`##` 절의 일부다 — 새 절로 끊으면 "## 영향 반경" 아래에 "### 축"을 둔 본문이 빈 절로 실패했다(#961 검수 LOW-1).
+// 소제목 글자는 내용으로 치지 않는다. 위에 절이 없으면 `###`도 절로 읽고, 그 뒤 같은 단계 제목은 새 절이다(제목 단계를 하나 내려 쓴 본문).
 export function sections(body) {
   const clean = String(body || '').replace(/<!--[\s\S]*?-->/g, '').replace(/```[\s\S]*?```/g, '(코드)'); // 코드 블록 안의 # 줄은 제목이 아니다
   const out = {};
-  let cur = '';
+  let cur = ''; let level = 0; // 지금 절의 제목 단계 — 같거나 높은 단계의 제목이 나오면 새 절
   for (const line of clean.split('\n')) {
-    const h = line.match(/^#{1,4}\s+(.+?)\s*$/);
-    if (h) { cur = h[1]; out[cur] ??= ''; continue; }
+    const h = line.match(/^(#{1,4})\s+(.+?)\s*$/);
+    if (h && (h[1].length <= 2 || cur === '' || h[1].length <= level)) { cur = h[2]; level = h[1].length; out[cur] ??= ''; continue; }
+    if (h) continue; // 소제목 — 위 절에 합친다
     const text = line.replace(/^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*$/, '').replace(/^\s*(\|\s*)+$/, '').trim();
     if (text) out[cur] = `${out[cur] ?? ''}${text}\n`;
   }
@@ -55,7 +58,10 @@ export function sections(body) {
 }
 const sectionText = (secs, re) => Object.entries(secs).filter(([k]) => re.test(k)).map(([, v]) => v).join('');
 const EMPTY = /^(해당\s*없음|없음|안\s*함|미실시|n\/?a|-)\.?$/i;
-const filled = (t) => t.trim() !== '' && !EMPTY.test(t.trim());
+// 자리 표시 — 줄마다 목록 기호와 "라벨:"을 떼고 이것만 남으면 내용이 아니다. 절의 모든 줄이 자리 표시면 빈 절이다("분리 검수: 대기"만 적어도 통과하던 것, #961 검수 LOW-2).
+const PLACEHOLDER = /^(대기(\s*중)?|예정|pending|tbd|todo|wip)\.?$/i;
+const placeholderLine = (l) => PLACEHOLDER.test(l.replace(/^[-*]\s*/, '').replace(/^[^:：]{1,30}[:：]\s*/, '').trim());
+const filled = (t) => t.trim() !== '' && !EMPTY.test(t.trim()) && !t.trim().split('\n').every(placeholderLine);
 
 // 반환: 빠진 항목 설명 목록(빈 배열 = 통과). added = [{ file, line }]
 export function checkPr({ body = '', files = [], added = [], shared = messengerShared() }) {
