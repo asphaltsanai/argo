@@ -30,6 +30,21 @@
 
 맥 two에서 발행·운영 반영이 필요하면 맥 one 세션에 메시지로 넘긴다.
 
+## 규칙 강제 장치 (2026-10-12)
+
+| 규칙 | 막는 장치 |
+|---|---|
+| PR 본문: 영향 반경·분리 검수·경우 표·부하(분당)·메신저 390/1280/880·러너별 검증 | `.github/workflows/pr-rules.yml` + `scripts/pr-rules-check.mjs`(바뀐 파일에 따라 해당 절이 비면 실패, 템플릿 `.github/pull_request_template.md`) |
+| `window.confirm/prompt` 금지, 마이그레이션 버전 중복, 새 마이그레이션의 `storage.objects`·기억 데이터 SQL 삭제 금지(`-- rule-ok:` 예외) | `test/rule-gates.test.mjs`(CI `npm test`) |
+| 오피스 confirm 금지·사전 밖 한글 금지 | `apps/office/test`(CI macOS) |
+| 맥 two에서 라이브 DB 적용·iOS 발행 금지 | `scripts/msgr-live-apply.sh`·`apps/messenger/scripts/ios-store.mjs` 첫머리(exit 5) |
+| 라이브 적용은 main과 같은 파일만 | `msgr-live-apply.sh` 검문 |
+| 시크릿 평문 커밋 금지 | `.githooks/pre-commit`(`npm install`이 켬) |
+| deep-link 스킴·벤더 도구 정의 | `ios-store.test.mjs`·`native-tool-schema.test.mjs`·`test/helpers/strict-vendor.mjs` |
+| 발행 전 맥 업데이트 경로 | `update-path-gate.yml` |
+
+장치가 없는 판단 규칙(North Star 역대조, 소비자 전수 수색, 심각도, 안심 문장 금지, 게이트 A·B 실행, 검수 환경 반영)은 분리 검수가 PR의 "검수" 절에서 확인한다. 규칙 문장을 바꾸면 위 장치도 같은 PR에서 고친다.
+
 ## 검수 환경 → 발행 흐름 (2026-10-05)
 
 목표: 아르고·메신저·오피스 세 제품의 연결성, 사용하기 쉬운 화면(UI/UX), 버그·오류 없는 사용성.
