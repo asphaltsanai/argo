@@ -136,7 +136,7 @@
 
 ## UI 규칙
 
-- **다국어(2026-07-10, 위반 금지).** 모든 UI 문자열은 `app/i18n.jsx` 사전(`t`)으로만 넣고 새 화면은 지시가 없어도 ko·en 둘 다 등록한다. 한국어 모드는 고유명사(Argo, Claude 등)를 빼고 마이크로라벨까지 한글. 월 지출 한도는 한국어 모드에서 원화(₩, `fmtMoney` 고정 환산율). 언어 전환은 `cmd+/`, 상태는 localStorage `argo-lang`.
+- **다국어(2026-07-10, 위반 금지).** 모든 UI 문자열은 `app/i18n.jsx` 사전(`t`)으로만 넣고 새 화면은 지시가 없어도 ko·en 둘 다 등록한다. 한국어 모드는 고유명사(Argo, Claude 등)를 빼고 마이크로라벨까지 한글. 언어 전환은 `cmd+/`, 상태는 localStorage `argo-lang`.
 - **삭제류 액션.** 크루 해고·회사 보관 등은 `ui.jsx`의 `DangerModal`(이름 입력 + 확인 문구)을 쓴다. `window.confirm`/`window.prompt`는 Tauri에서 동작하지 않아 금지.
 
 ## 기본 라우팅 (맥 one에 설치된 도구 — 맥 two에는 없다)
