@@ -226,11 +226,12 @@ test('회전 — 이름이 같으면 이름 때문에 파일을 다시 쓰지 �
   for (const [label, display, rewritten] of [['같은 이름', '유건', false], ['바뀐 이름', '김유건', true]]) {
     await writeSession({ id: 'u-1', email: 'u-1@b.c', name: '유건', nameAt: 0 }, { expiresIn: -10 });
     let atQuery = null;
-    const c = fakeClient({ refresh: rotate, profile: () => ({ data: { display_name: display }, error: null }), onQuery: () => { const st = statSync(SESSION_FILE); atQuery = { ino: st.ino, mtimeMs: st.mtimeMs }; } });
+    const c = fakeClient({ refresh: rotate, profile: () => ({ data: { display_name: display }, error: null }), onQuery: () => { const st = statSync(SESSION_FILE, { bigint: true }); atQuery = { ino: st.ino, mtimeNs: st.mtimeNs }; } });
     await getFreshDeviceSession({ _mkClient: c.mk });
-    const st = statSync(SESSION_FILE);
+    // bigint — Windows의 파일 번호(64비트)는 Number로 받으면 2^53을 넘는 자리가 뭉개져 다른 파일이 같은 ino로 보인다(10/12 windows-latest 실패: 재기록인데 같은 inode·mtime)
+    const st = statSync(SESSION_FILE, { bigint: true });
     assert.ok(atQuery, label);
-    assert.equal(st.ino === atQuery.ino && st.mtimeMs === atQuery.mtimeMs, !rewritten, `${label}: 재기록 ${rewritten}`);
+    assert.equal(st.ino === atQuery.ino && st.mtimeNs === atQuery.mtimeNs, !rewritten, `${label}: 재기록 ${rewritten}`);
     assert.equal((await readSession()).user.name, display, label);
   }
   await clearDeviceSession();
