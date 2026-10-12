@@ -24,7 +24,7 @@ const TASK = '99999999-8888-4777-8666-555555555555';
 const calls = []; let mode = 'ok';
 let hold = null; // 다음 office_session_report 응답을 이 Promise가 풀릴 때까지 붙잡는다(경쟁 시험)
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => (b += c)); req.on('end', () => {
     const path = new URL(req.url, 'http://x').pathname;
     if (path === '/rest/v1/rpc/office_session_report') {
       calls.push({ body: JSON.parse(b || '{}'), auth: req.headers.authorization ?? null, raw: b });

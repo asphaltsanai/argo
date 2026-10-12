@@ -21,7 +21,7 @@ const textReply = (res, text) => sse(res, [['message_start', start()], ['content
   ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }], ['content_block_stop', { type: 'content_block_stop', index: 0 }],
   ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } }], ['message_stop', { type: 'message_stop' }]]);
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
     if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
       const body = JSON.parse(b || '{}');
       const system = typeof body.system === 'string' ? body.system : JSON.stringify(body.system ?? '');

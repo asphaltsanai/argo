@@ -56,7 +56,7 @@ test('R3-2 CRITICAL-2. 컴퓨터 유즈 — 옵트인 없으면 게이트 deny, 
   assert.ok(names({ computer: true }).some((n) => n.startsWith('computer_')));
   assert.ok(!names({ computer: false }).some((n) => n.startsWith('computer_')));
   // 실루프: opts.computer 미지정 → init 이벤트의 tools에 computer_* 없음(browser_*는 있음)
-  const srv = createServer((req, res) => { let b = ''; req.on('data', (d) => { b += d; }); req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'm', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } })); }); });
+  const srv = createServer((req, res) => { let b = ''; req.setEncoding('utf8'); req.on('data', (d) => { b += d; }); req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'm', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } })); }); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   try {
     const base = `http://127.0.0.1:${srv.address().port}`;

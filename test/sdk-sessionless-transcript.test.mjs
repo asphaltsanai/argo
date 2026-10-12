@@ -40,7 +40,7 @@ const sse = (res, step) => {
 const bodies = {}; // 장면 → 요청 본문(messages JSON) 목록
 let onScene = async () => ({ text: '네' });
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; });
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; });
   req.on('end', async () => {
     if (!(req.method === 'POST' && req.url.startsWith('/v1/messages'))) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}'); }
     const body = JSON.parse(b || '{}');

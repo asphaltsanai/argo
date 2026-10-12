@@ -95,7 +95,7 @@ test('B3. 이미지 결과 조립 — 비전 모델은 이미지 블록 + 파일
   assert.equal(b.length, 1); assert.match(b[0].text, /이미지 입력을 지원하지 않는/);
   assert.equal((await readdir(join(root, 'vault', 'files', 'screenshots'))).length, 2);
   // 루프 배선 — 가짜 벤더가 computer_screenshot을 부르면 tool_result.content가 블록 배열(이미지 포함)이다(비전 모델). 실행기는 주입 없이 스텁 불가라 builtinTools를 비전 모델로 돌리되 도구 자체는 가짜 서버가 부르지 않는 경로로 검증.
-  const srv = createServer((req, res) => { let d = ''; req.on('data', (c) => { d += c; }); req.on('end', () => { const body = JSON.parse(d); const n = (srv.bodies ??= []).push(body);
+  const srv = createServer((req, res) => { let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; }); req.on('end', () => { const body = JSON.parse(d); const n = (srv.bodies ??= []).push(body);
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(n === 1 ? { content: [{ type: 'tool_use', id: 'w1', name: 'Write', input: { file_path: 'vault/x.md', content: 'x' } }], stop_reason: 'tool_use', usage: {}, model: 'claude-x' } : { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: {}, model: 'claude-x' })); }); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   try {

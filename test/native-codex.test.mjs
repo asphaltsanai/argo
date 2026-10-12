@@ -35,7 +35,7 @@ const withFlag = async (fn) => { process.env.ARGO_NATIVE_RUNNERS = 'openrouter,g
 
 async function fakeServer(handler) {
   const calls = [];
-  const srv = createServer((req, res) => { let d = ''; req.on('data', (c) => { d += c; }); req.on('end', () => { calls.push({ url: req.url, headers: req.headers, body: d }); handler(calls.at(-1), calls.length, res); }); });
+  const srv = createServer((req, res) => { let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; }); req.on('end', () => { calls.push({ url: req.url, headers: req.headers, body: d }); handler(calls.at(-1), calls.length, res); }); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   return { base: `http://127.0.0.1:${srv.address().port}`, calls, close: () => new Promise((r) => srv.close(r)) };
 }

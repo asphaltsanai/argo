@@ -13,7 +13,7 @@ process.env.ARGO_ROOT = join(await mkdtemp(join(tmpdir(), 'argo-httprt-')), 'wor
 
 // 가짜 Claude 엔드포인트 — 요청 수를 센다. 거절이 없으면 runner: http 크루가 이 러너로 대신 돈다(Messages SSE 한 턴).
 let hits = 0;
-const fake = createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => { hits++;
+const fake = createServer((req, res) => { let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => { hits++;
   if (!req.url.includes('/v1/messages')) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}'); }
   res.writeHead(200, { 'content-type': 'text/event-stream' });
   const ev = (t, d) => res.write(`event: ${t}\ndata: ${JSON.stringify({ type: t, ...d })}\n\n`);
