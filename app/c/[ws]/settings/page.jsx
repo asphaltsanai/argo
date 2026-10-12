@@ -14,7 +14,7 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
-import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView } from './msgr-card.mjs';
+import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason } from './msgr-card.mjs';
 import { keepChoices, togglePick, pickReady, hereSlugs, sameAsActive, FREE_AGENT_LIMIT } from './keep-choices.mjs'; // 무료 계정이 유지할 에이전트를 고른다(2026-10-12 제보)
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
@@ -924,6 +924,7 @@ function MsgrCard({ ws, agents }) {
   const policyLine = org?.policy ? t('settings.msgr.policy.summary', { allow: t(`settings.msgr.allow.${org.policy.allow_default}`) + (org.policy.allow_locked ? t('settings.msgr.policy.locked') : ''), approver: t(`settings.msgr.policy.approver.${org.policy.approval_high_by ?? 'admin'}`), memory: (org.policy.crew_memory_default === false ? t('settings.msgr.policy.memory.off') : t('settings.msgr.policy.memory.on')) + (org.policy.crew_memory_locked ? t('settings.msgr.policy.locked') : '') }) : '';
 
   const personalView = personalCardView({ st, agents }); // 조직이 없는 사용자의 개인 공간 줄(검수 스택 화면 4차)
+  const setupWhy = msgrSetupReason({ st }); // 메신저에 내 에이전트가 하나도 없을 때 이유·할 일(2026-10-13 사례) — 있으면 '첫 응답을 기다리는 중' 대신 이것을 보인다
   // 연결 한 곳 — 조직 카드(scope { orgId })와 개인 공간 카드(scope { personal: true })가 같은 길. 무료 4명이 차 있으면 서버가 미리 알린 멈출 에이전트를
   // 먼저 보이고 확인을 받는다(교체 뒤 같은 단추를 다시 누르면 방금 멈춘 에이전트와 다시 바뀌는 것을 미리 알 수 있게). 미리 알림 실패·빈 목록이면 종전대로 바로 연결.
   async function connectAgents(scope, slugs, confirmed = false) {
@@ -1067,10 +1068,29 @@ function MsgrCard({ ws, agents }) {
       </div>
       <p style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0, lineHeight: 1.7 }}>{t('settings.msgr.help')}</p>
       {st === null && <Skeleton h={44} />}
-      {st && !st.signedIn && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.notSignedIn')}</p>}
+      {st && !st.signedIn && <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0, flex: '1 1 240px' }}>{t('settings.msgr.notSignedIn')}</p>
+        <Link className="btn sm" href="/login">{t('home.signIn')}</Link>
+      </div>}
+      {/* 이 기기가 로그인한 계정 — 메신저 앱의 계정과 같아야 에이전트가 나타난다(사이드바 계정 표시와 같은 전체 주소) */}
+      {st?.signedIn && !!st.email && <p className="msgr-account" style={{ fontSize: 12, color: 'var(--fg-2)', margin: 0 }}>{t('settings.msgr.account')} <span className="mono" style={{ color: 'var(--fg-1)', overflowWrap: 'anywhere' }}>{st.email}</span></p>}
+      {setupWhy && (
+        <section className="msgr-runtime" aria-live="polite">
+          <div>
+            <span className="microlabel">{t('settings.msgr.setup.title')}</span>
+            <p>{t(`settings.msgr.setup.${setupWhy.reason}`, { email: st.email || t('settings.msgr.setup.thisAccount') })}</p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', flex: 'none' }}>{/* flex: none — .msgr-runtime > div의 min-width: 0이 단추 묶음까지 줄여 단추가 상자 밖으로 나갔다 */}
+            {setupWhy.action === 'login'
+              ? <Link className="btn sm" href="/login">{t('settings.msgr.setup.switch')}</Link>
+              : <button type="button" className="btn btn-primary sm" disabled={reconnecting} onClick={reconnectBridge}>{reconnecting ? <Spinner size={12} /> : t('settings.msgr.setup.connect')}</button>}
+            {setupWhy.reason === 'pending' && <Link className="btn sm" href={`/c/${ws}/settings?tab=devices#settings-update`}>{t('settings.update.check')}</Link>}{/* 기기·데이터 탭의 앱 업데이트 카드로(같은 화면 ?tab= 이동 — useRememberedTab) */}
+          </div>
+        </section>
+      )}
       {st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{personalCount ? t('settings.msgr.personalOnly', { n: personalCount }) : t('settings.msgr.noOrg')}</p>}
       {/* 실행기 연결 상태 — 개인 공간도 이 기기의 실행기가 답한다. 조직이 없어도 보인다(CX-12: 조직 블록 안에만 있어 숨었다) */}
-      {showRuntime && !st.orgs?.length && (
+      {showRuntime && !st.orgs?.length && !setupWhy && (
         <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
           <div>
             <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
@@ -1126,13 +1146,13 @@ function MsgrCard({ ws, agents }) {
         </div>
         {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
         {!!agents.length && <>
-          <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
+          {!setupWhy && <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
             <div>
               <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
               <p>{runtimeCopy}</p>
             </div>
             {runtimeButton}
-          </section>
+          </section>}
           <section className="msgr-connection" aria-labelledby="msgr-connection-title">
             <div>
               <span className="microlabel" id="msgr-connection-title">{t('settings.msgr.connection.title')}</span>
@@ -2082,7 +2102,7 @@ function UpdateCard() {
   // (실사용 요청 2026-07-27). 데스크톱과 같은 카드 자리·같은 훅(단일 출처).
   if (!isApp) {
     return (
-      <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div className="card" id="settings-update" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <span className="card-title">{t('settings.update.title')}</span>
         <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>
           {t('settings.update.current', { v: current || '—' })}
@@ -2107,7 +2127,7 @@ function UpdateCard() {
     );
   }
   return (
-    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div className="card" id="settings-update" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <span className="card-title">{t('settings.update.title')}</span>
       <p style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>
         {t('settings.update.current', { v: current || '—' })}

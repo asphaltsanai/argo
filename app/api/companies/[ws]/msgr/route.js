@@ -10,7 +10,8 @@ import { msgrGatewayStatus, msgrRuntimeState } from '../../../../../src/connecti
 import { nudgeGateway } from '../../../../../src/gateway.mjs';
 import { splitCardRows } from './card-rows.mjs'; // 행 나누기 — 카드 판정과 같은 모양을 테스트가 잠근다(UL10)
 import { freeAgentReason, readAgentPause, swapNotes } from './free-reason.mjs'; // 무료 계정 연결이 멈춘 이유·교체 안내(2026-10-11)
-import { keepPlan } from './keep-plan.mjs'; // 유지할 에이전트 적용 판정(새로 넣을 행·함께 연결할 행·거절) — 행동 시험이 잠근다
+import { keepPlan } from './keep-plan.mjs';
+import { setupFacts, zeroRowsReconnect } from './setup-facts.mjs'; // 행 0개일 때 이유(계정·소유자·연결 준비) — 자동 켜기와 같은 조건 // 유지할 에이전트 적용 판정(새로 넣을 행·함께 연결할 행·거절) — 행동 시험이 잠근다
 
 const ALLOW = new Set(['all', 'list', 'owner']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -109,7 +110,9 @@ export async function GET(_req, { params }) {
     const [orgs, { crews, personalCount, personal }, gateway] = await Promise.all([myOrgs(c), myCardRows(c, ws), msgrGatewayStatus(ws)]);
     // 멈춘 행(무료 계정 한도)의 이유 — 카드 줄 문구(msgr-card.mjs pausedLabelKey). 멈춘 행이 있을 때만 읽는다(카드의 8초 폴에 호출을 늘리지 않게, 화면 검수 B)
     const pauseReason = [...crews, ...personal].some((r) => r.status === 'paused') ? (await readAgentPause(c.client).catch(() => null))?.reason ?? null : null;
-    return Response.json({ signedIn: true, uid: c.uid, orgs, crews, personalCount, personal, pauseReason, runtime: runtimeState(gateway) });
+    // 내 행이 하나도 없으면 왜 없는지 — 회사 파일 읽기 + (조직이 없을 때) 메신저 프로필 조회 1건. 행이 있으면 0건(카드 8초 폴은 행이 있을 때만 돈다)
+    const setup = await setupFacts({ rows: [...crews, ...personal], orgCount: orgs.length, company: await loadCompany(ws).catch(() => null), uid: c.uid, hasProfile: () => c.db.hasMsgrProfile(c.uid) });
+    return Response.json({ signedIn: true, uid: c.uid, email: c.email ?? '', orgs, crews, personalCount, personal, pauseReason, setup, runtime: runtimeState(gateway) });
   } catch (e) { return upstream('GET', e, await requestLang()); }
 }
 
@@ -131,6 +134,14 @@ export async function POST(req, { params }) {
     // 개인 공간 행도 센다(분리 검수 MEDIUM-1, 2026-10-12) — 조직 등록만 세면 조직 없는 계정은 늘 noCrews였고, 이미 꺼진 브리지(enabled=false)를
     //   되살릴 길이 없었다(자동 켜기도 크루 행이 있고 멈춘 행이 없으면 켜지 않는다). 다시 연결은 브리지 값을 행 상태에 맞춘 뒤 깨운다.
     const crews = await myBridgeRows(c, ws);
+    if (!crews.length) { // 행이 하나도 없다 — 자동 켜기(10분에 한 번)를 기다리지 않고 사람이 누른 지금 켠다. 조건은 자동 켜기와 같다(setup-facts.mjs)
+      const orgCount = (await c.db.myOrgIds(c.uid).catch(() => [])).length;
+      const go = zeroRowsReconnect({ owner: true, orgCount, profile: orgCount ? null : await c.db.hasMsgrProfile(c.uid).then((v) => !!v, () => null) });
+      if (go === 'account') return Response.json({ ok: false, runtime: { state: 'account' } });
+      if (!company.msgr?.enabled) await updateCompany(ws, (cur) => (cur.msgr?.enabled ? {} : { msgr: { ...(cur.msgr ?? {}), enabled: true } }));
+      nudgeGateway(ws); // 같은 sync에서 브리지가 시작되고 미러가 개인·조직 행을 만든다
+      return Response.json({ ok: true, runtime: { state: 'reconnecting' } });
+    }
     if (!crews.some((crew) => crew.status === 'active' || crew.status === 'paused')) return Response.json({ ok: false, runtime: { state: 'noCrews' } }); // paused = 무료 계정 — 브리지가 돌아야 재개된다(syncEnabled)
     // 사람이 누를 때만 — 위 조회 1건을 그대로 쓰고 + (멈춘 행만이면) rpc 1건 + 값이 바뀔 때만 쓰기 1건.
     // 멈춘 행만 있고 이 앱이 최소 버전 미만이면 브리지를 꺼 둔다(#945 MEDIUM-2) — '다시 연결하는 중'이 아니라 업데이트 안내로 답한다(재검수 LOW-A)

@@ -70,3 +70,15 @@ export function runtimeAction(state, { polling }) {
   if (state === 'offline' || state === 'company') return 'reconnect';
   return polling ? null : 'recheck';
 }
+
+/** 메신저에 에이전트가 하나도 없을 때(내 행 0개 — GET 응답 setup이 있을 때만) 이유 한 줄과 단추 하나(2026-10-13 사례: 카드는 '첫 응답을 기다리는 중'만 보였다).
+    → { reason, action } | null. reason: 'owner'(이 회사를 만든 계정이 아님) · 'account'(이 계정으로 메신저에 로그인한 적 없음 — 메신저와 다른 계정)
+    · 'pending'(계정은 맞고 이 기기의 실행기가 아직 에이전트를 메신저에 올리지 않음). action: 'login'(계정 바꾸기) | 'connect'(지금 연결).
+    순서는 브리지 자동 켜기 조건(autoEnableMsgr)과 같다 — 소유자 → 조직 멤버이거나 메신저 프로필. 프로필을 못 읽었으면(null) 계정 문제로 단정하지 않는다. */
+export function msgrSetupReason({ st } = {}) {
+  const s = st?.signedIn ? st.setup : null;
+  if (!s) return null;
+  if (!s.owner) return { reason: 'owner', action: 'login' };
+  if (!st.orgs?.length && s.profile === false) return { reason: 'account', action: 'login' };
+  return { reason: 'pending', action: 'connect' };
+}
