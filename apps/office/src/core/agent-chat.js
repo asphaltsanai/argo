@@ -154,9 +154,12 @@ export function keptSteps(row) {
 }
 
 /* ── 직무별 배분(2단계 PR3) — 답 글의 단계 요약에서 '동료에게 맡김' 단계의 대상을 모으고, '다른 에이전트에게 맡기기'는 같은 대화에 맡길 동료 이름을 실은 글을 넣는다 ── */
+/** 실제로 맡은 동료 — 게이트웨이가 위임에 성공한 동료의 이름·직무만 meta.office_delegates로 싣는다(실패한 위임·slug는 보이지 않게, 검수 M5) */
 export function delegatedTo(row) {
-  const k = keptSteps(row);
-  return k ? [...new Set(k.steps.filter((s) => s.stage === 'delegate' && s.detail).map((s) => s.detail))] : [];
+  const list = row?.author_kind === 'crew' && Array.isArray(row.meta?.office_delegates) ? row.meta.office_delegates : [];
+  const seen = new Set();
+  return list.filter((d) => d && typeof d.name === 'string' && d.name.trim()).map((d) => ({ name: d.name.trim().slice(0, 40), role: typeof d.role === 'string' ? d.role.trim().slice(0, 40) : '' }))
+    .filter((d) => !seen.has(d.name) && seen.add(d.name));
 }
 
 /** 맡길 동료를 고른 글 — 같은 대화 뿌리에 붙인다. 반환: 글 번호 */
@@ -164,6 +167,8 @@ export async function sendRoute(sb, { channel, uid, root, name, body, clientId }
   const row = { channel_id: channel, author_kind: 'user', author_user_id: uid, body, client_msg_id: clientId,
     meta: { source: PANEL_SOURCE, office_route: name }, reply_to: root, thread_root: root };
   const { data, error } = await sb.from('msgr_messages').insert(row).select('id').single();
-  if (error) throw Object.assign(new Error(error.message), { code: error.code });
-  return data.id;
+  if (!error) return data.id;
+  const found = await sb.from('msgr_messages').select('id').eq('channel_id', channel).eq('author_user_id', uid).eq('client_msg_id', clientId).maybeSingle(); // 같은 요청·같은 동료를 두 번 골라도 한 건
+  if (!found.error && found.data) return found.data.id;
+  throw Object.assign(new Error(error.message), { code: error.code });
 }

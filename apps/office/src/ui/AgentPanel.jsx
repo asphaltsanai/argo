@@ -127,7 +127,7 @@ function RouteBar({ row, others, onRoute }) {
   if (!names.length && !others.length) return null;
   return (
     <div className="agent-route dim small">
-      {names.length > 0 && <span>{t('agent.route.by', { names: names.join(', ') })}</span>}
+      {names.length > 0 && <span>{t('agent.route.by', { names: names.map((d) => (d.role ? `${d.name}(${d.role})` : d.name)).join(', ') })}</span>}
       {others.length > 0 && <select className="agent-pick" aria-label={t('agent.route.pick')} value="" onChange={(e) => { if (e.target.value) onRoute(e.target.value); }}>
         <option value="">{t('agent.route.pick')}</option>
         {others.map((c) => <option key={c.id} value={c.name}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}
@@ -257,14 +257,16 @@ export default function AgentPanel({ path, space, onClose }) {
   const agree = () => rpc('msgr_set_ai_consent', { consent: true }).then(() => setAgain((n) => n + 1), () => {});
   const toggleAuto = (on) => { setAuto(on); writeLocal(autoKey(), on); };
   const cancelProp = (key) => { const next = [...canceled.filter((k) => k !== key), key].slice(-200); setCanceled(next); writeLocal(cancelKey(), next); }; // 이 기기에만 — 오래된 것부터 200개 유지
+  const routing = useRef(false);
   const routeTo = async (asked, name) => { // 같은 요청을 고른 동료에게 — 조율자가 그 동료에게 맡기고 결과를 검토해 답한다
-    if (!room?.channel || !root) return;
+    if (!room?.channel || !root || routing.current) return;
+    routing.current = true; // 보내는 동안 잠금 — 빠르게 두 번 골라 조율자 턴이 두 번 도는 것을 막는다
     try {
-      const id = await sendRoute(sbRef.current, { channel: room.channel, uid: ME.id, root, name, clientId: `or:${asked.id}:${Date.now()}`,
+      const id = await sendRoute(sbRef.current, { channel: room.channel, uid: ME.id, root, name, clientId: `or:${asked.id}:${name}`,
         body: t('agent.route.body', { name, text: shownBody(asked.body, fence).slice(0, 2000) }) });
       setSentAt(Date.now());
       loadRow(sbRef.current, id).then((r) => { if (r) setRows((rs) => [r, ...rs.filter((x) => x.id !== r.id)]); }, () => {});
-    } catch { showToast(t('agent.sendFail')); }
+    } catch { showToast(t('agent.sendFail')); } finally { routing.current = false; }
   };
   const runProp = async (row, p) => {
     if (!room?.channel || !root) return;
@@ -303,7 +305,7 @@ export default function AgentPanel({ path, space, onClose }) {
           return <ProposalCard key={p.pid} p={p} state={st === 'open' && canceled.includes(key) ? 'canceled' : st} onRun={() => runProp(r, p)} onCancel={() => cancelProp(key)} />;
         })}</div>;
         const asked = r.author_kind === 'crew' ? thread.find((x) => x.id === r.reply_to && x.author_kind === 'user') : null;
-        const route = asked && <RouteBar row={r} others={crews.filter((c) => c.id !== crew.id)} onRoute={(name) => routeTo(asked, name)} />;
+        const route = asked && <RouteBar row={r} others={crews.filter((c) => c.id !== crew.id && c.name !== crew.name)} onRoute={(name) => routeTo(asked, name)} />;
         return <Message key={r.id} row={r} files={files} crewName={crew.name} fence={fence} cards={cards} route={route} />;
       })}
       {busyTurn && <div className="agent-progress dim small"><span className="agent-spin" />{t('agent.preparing', { crew: crew.name, sec: Math.max(0, Math.round((now - progress.startedAt) / 1000)) })}

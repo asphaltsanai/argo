@@ -1,7 +1,8 @@
 import { selfPostsSection } from './self-posts.mjs';
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, settingsDirectTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
 import { officeToolSpecs } from './gateway/office-tools.mjs'; // 오피스 도구 7종 정의(일정·회사·문서함·할 일·페이지·거래·메일·브리핑) — CLI·MCP와 같은 한 곳
-import { panelWriteGate, panelLaterNo } from './gateway/office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드 관문 · 예약·긴 작업 거절 문구
+import { panelWriteGate, panelLaterNo } from './gateway/office-proposals.mjs';
+import { trackPanelChild, panelChildTag } from './panel-children.mjs'; // 패널 동기 위임 동료 턴 등록부(중단 전파) // 오피스 패널 턴의 쓰기 확인 카드 관문 · 예약·긴 작업 거절 문구
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -132,8 +133,16 @@ export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__c
     개인 crew 1:1(서버 판정 ownCrewRoom)은 이 방이 목적지가 된다 — 예전에는 개인 거절을 삼켜 {}가 돼, 카드 없이 실행 중 문맥으로 표 직접 넣기를 시도하다 RLS에 막혔다(계획 6절 D28).
     메신저 밖 턴은 null(게이트 꺼짐). 내보내기는 D28 경로 테스트용. */
 export function shellGateMsgr(mirrorCtx) {
+  if (mirrorCtx?.kind === 'msgr-rules') return mirrorCtx.shellGate ?? null; // 오피스 패널 조율자가 동기로 맡긴 동료 턴 — 조율자와 같은 결재 목적지(검수 H1). 그 밖의 위임 턴은 지금 그대로
   if (mirrorCtx?.kind !== 'msgr') return null;
   try { return messengerOrigin(mirrorCtx) ?? {}; } catch { return {}; }
+}
+
+/** 동기 위임으로 띄우는 동료 턴의 규칙 문맥 — 오피스 패널 턴(주인 혼자 1:1)이면 조율자와 같은 고위험 셸 결재 목적지를 싣는다(검수 H1).
+    표지 없는 위임 턴은 받은 그대로(지금 동작). 내보내기는 시험용 */
+export function delegateRulesCtx(rulesCtx, mirrorCtx) {
+  if (mirrorCtx?.kind !== 'msgr' || mirrorCtx.officePanelSolo !== true) return rulesCtx;
+  return { ...rulesCtx, shellGate: shellGateMsgr(mirrorCtx) ?? {} };
 }
 
 /** 동료 명단 + 위임 규칙 — 위임 도구가 붙는 턴에만 주입한다. */
@@ -631,7 +640,7 @@ async function turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx, lim = DELE
   return (await listAgents(wsId)).filter((a) => {
     if (!(a.slug !== agentSlug && (!chain.includes(a.slug) || (a.slug === lastSender && replyAllowed)))) return false;
     if (mirrorCtx?.kind === 'msgr-rules') return false;
-    if (mirrorCtx?.kind !== 'msgr' || mirrorCtx.officePanel === true) return true; // 오피스 패널 턴 — 조율자가 같은 워크스페이스 동료를 동기 위임으로 부른다(2단계 PR3)
+    if (mirrorCtx?.kind !== 'msgr' || mirrorCtx.officePanelSolo === true) return true; // 오피스 패널 턴(주인 혼자 1:1) — 조율자가 같은 워크스페이스 동료를 동기 위임으로 부른다(2단계 PR3, 검수 M4)
     return mirrorCtx.peers?.some((peer) => peer.slug === a.slug
       && peer.owner_user_id === mirrorCtx.uid && peer.ws_id === wsId) ?? false;
   });
@@ -675,7 +684,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   // (SDK 서버 객체는 도구를 내보내지 않는다). sink가 없으면 종전과 동일.
   // sink는 **최종 등재 배열**(아래 createSdkMcpServer tools)과 같은 원천에서 채운다 — tool() 호출 시점에 모으면 동료 0·커넥터 0에서도
   // delegate·send_to_crew·use_connector가 광고된다(분리 검수 HIGH-1: 유령 도구 3종, 설계서 §2-2 위반).
-  const handoffColleagues = mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanel !== true ? messengerColleagues(mirrorCtx, hop) : colleagues; // 패널 턴은 데스크톱처럼 동기 위임(2단계 PR3)
+  const handoffColleagues = mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanelSolo !== true ? messengerColleagues(mirrorCtx, hop) : colleagues; // 패널 턴(주인 혼자 1:1)은 데스크톱처럼 동기 위임(2단계 PR3)
   const defs = new WeakMap();
   const tool = (name, description, shape, handler) => { const t = sdkTool(name, description, shape, handler); if (sink) defs.set(t, { name, description, shape, handler }); return t; };
   // 위임 체인의 직전 크루 — 이 크루가 올리는 결재에 "누구의 위임으로 온 요청인지"를 실어 흐름을 보이게 한다
@@ -787,7 +796,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
           ? `Delegation limit (${lim.delegate} per turn) reached. Don't start more delegations this turn: report what is done and what remains, and ask the user "Shall I continue?" — their reply continues in a new turn.`
           : `위임 상한(${lim.delegate}회)에 닿았다. 이번 턴은 더 위임하지 말고, 끝낸 일과 남은 일을 알린 뒤 사용자에게 "계속할까요?"라고 물어라 — 사용자가 이어서 보내면 새 턴으로 계속된다.`);
       }
-      if ((mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanel !== true) || mirrorCtx?.kind === 'msgr-rules') { // 오피스 패널 턴은 아래 동기 위임 — 결과를 받아 패널 답에 모은다(2단계 PR3)
+      if ((mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanelSolo !== true) || mirrorCtx?.kind === 'msgr-rules') { // 오피스 패널 턴(주인 혼자 1:1)은 아래 동기 위임 — 결과를 받아 패널 답에 모은다(2단계 PR3)
         try {
           stageMessengerHandoff(mirrorCtx, { to, message: task });
           cnt.delegate += 1;
@@ -810,8 +819,15 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         const rulesCtx = (mirrorCtx?.kind === 'msgr' || mirrorCtx?.kind === 'msgr-rules' || mirrorCtx?.orgSlug) ? { kind: 'msgr-rules', orgSlug: mirrorCtx.orgSlug, channelName: mirrorCtx.channelName ?? '', ...(mirrorCtx.channelId ? { channelId: mirrorCtx.channelId } : {}), ...(mirrorCtx.orgMemory ? { orgMemory: mirrorCtx.orgMemory } : {}) } : null; // 서버 기억도 같은 채널 동료에게(청중이 같다). G-3: 조직 규칙은 위임받은 동료에게도(미러·결재 각인은 kind 'msgr'만)
         // 위임받은 동료도 부른 턴의 범위로 돈다 — 텔레그램 그룹·슬랙 채널·자동 턴 목적지면 그 범위 기록만 붙이고 주인 대화(범위 없는 기록)는 붙이지 않는다
         // (CLI 러너는 세션이 없어도 최근 기록을 붙인다 — 부른 쪽이 공유 목적지면 위임 결과도 그곳에 미러된다)
-        const childCtx = rulesCtx ?? (turnScope(mirrorCtx) ? { kind: 'scope', scope: turnScope(mirrorCtx) } : null);
-        const r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal, delegationRelaxed: lim.relaxed, delegationTree: budget, sessionChain: session?.child ?? null, mirrorCtx: childCtx }); // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
+        const panelTurn = mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanelSolo === true;
+        // 오피스 패널 턴의 동기 위임 — 동료 턴도 조율자와 같은 고위험 셸 결재(D28)를 거치고(검수 H1), 패널 '중단'이 동료 턴까지 멈춘다(검수 M2, panel-children.mjs)
+        const childCtx = rulesCtx ? delegateRulesCtx(rulesCtx, mirrorCtx) : (turnScope(mirrorCtx) ? { kind: 'scope', scope: turnScope(mirrorCtx) } : null);
+        const untrack = panelTurn && mirrorCtx.sourceMsgId != null ? trackPanelChild(wsId, mirrorCtx.sourceMsgId, target.slug) : null;
+        let r;
+        const childTag = untrack ? panelChildTag(mirrorCtx.sourceMsgId) : undefined; // 패널 '중단'이 이 표지로 동료 턴을 멈춘다
+        try { r = await chat(wsId, target.slug, delegated, null, { from: fromSlug, hop: hop + 1, chain: [...chain, fromSlug], workFolder, journal, delegationRelaxed: lim.relaxed, delegationTree: budget, sessionChain: session?.child ?? null, mirrorCtx: childCtx, abortTag: childTag }); }
+        finally { untrack?.(); }
+        if (panelTurn) (mirrorCtx.panelDelegates ??= []).push({ name: target.name, ...(target.role ? { role: String(target.role).slice(0, 40) } : {}) }); // 실제로 맡은 동료 — 패널 '맡은 동료' 줄(검수 M5) // journal = 팀 메신저 채널 정책(off·org 태그)을 위임 턴에도(같은 조직 내용)
         // 위임 트레이스 — 대상 크루의 대화에도 남긴다(세션은 건드리지 않음). 웹에서 양쪽 다 보인다.
         const { appendTurn } = await import('./thread.mjs');
         await appendTurn(wsId, target.slug, { userMsg: delegated, reply: r.reply, handover: r.handover, sessionId: null, via: 'delegate', artifacts: r.artifacts, ...(turnScope(childCtx) ? { contextScope: turnScope(childCtx) } : {}) })
@@ -1265,7 +1281,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.orgId ? [office, officeFiles, officeWork, officeDeals] : []), // 오피스 회사 기록·문서함·드라이브·할 일·페이지·거래 — 메신저 조직 채널 턴에만(그 조직). 개인 공간 턴에는 늘 거절할 도구라 싣지 않는다
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm' ? [officeBriefing] : []), // 오피스 브리핑 — 주인 1:1 턴에만(주인 계정으로 쓰므로 여럿 있는 방에서 남의 부탁을 주인 권한으로 실행하지 않게)
     ...(mirrorCtx?.kind === 'msgr' && mirrorCtx.channelKind === 'dm' ? [officeMail] : []), // 오피스 메일 — 주인 개인 메일함이라 1:1 턴에만(사람이 둘인 1:1은 처리기가 거절)
-    ...(handoffColleagues.length ? [delegate, sendToCrew] : []),
+    ...(handoffColleagues.length ? [delegate, ...(mirrorCtx?.officePanelSolo === true ? [] : [sendToCrew])] : []), // 패널 턴은 동기 위임만 — 쪽지(비동기 넘김)는 결과가 패널로 오지 않는다(검수 M1)
     ...(sendSession ? [sendSession] : []),
     // 연결 0이면 도구 자체를 등재하지 않는다 — 없는 능력 광고 금지(설계서 §2-2).
     ...(connectors.length ? [useConnector] : []),
@@ -1648,7 +1664,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     ? (lang === 'en'
         ? `\n## Messenger turn — sending files to the user\n- To hand over a file, save it inside the company work folder under vault/projects/, vault/files/ or vault/_imported/, and reference it in your reply as a markdown image or link with that vault-relative path (e.g. ![draft](projects/20261002_x/draft.png), [report.pdf](projects/20261002_x/report.pdf)).\n- Argo Messenger attaches those files automatically (up to 10 per reply): images appear in the message bubble and other files as download cards, and the local path is removed from the message. On Telegram, vault-relative paths are attached automatically (up to 3 per reply); on other channels the user downloads them from the web/app chat chips.\n- Files outside those folders — other folders on this computer, other companies, settings, journal/notes, vault/_imported/unsorted/, hidden files and .env — are never attached, and only deliverable formats are attached (images, pdf, docx, xlsx, pptx, csv, md, zip — not json, yaml, keys or databases). Save deliverables in those folders.\n- Do not hand over a file as an external link instead (GitHub, cloud storage, etc.) — the recipient may not be able to open it. Save it in those folders and send it as an attachment.\n- Replying to the user is NOT an external send — no approval needed.`
         : `\n## 메신저 턴 — 사용자에게 파일 보내기\n- 파일을 건네려면 회사 작업 폴더의 vault/projects/·vault/files/·vault/_imported/ 안에 저장하고, 답변 본문에 그 vault 기준 경로로 마크다운 이미지·링크를 적어라(예: ![시안](projects/20261002_x/시안.png), [보고서.pdf](projects/20261002_x/보고서.pdf)).\n- 아르고 메신저에서는 그 파일이 자동 첨부된다(답변당 최대 10개) — 이미지는 말풍선에 바로 보이고 다른 파일은 내려받기 카드로 나오며, 본문의 로컬 경로는 지워진다. 텔레그램이면 vault 기준 경로가 자동 첨부되고(답변당 최대 3개), 다른 채널이면 사용자가 웹·앱 채팅의 다운로드 칩으로 받는다.\n- 그 구역 밖 파일(이 컴퓨터의 다른 폴더·다른 회사·설정·일지/노트·vault/_imported/unsorted/·숨김 파일·.env)은 붙지 않고, 결과물 형식(그림·pdf·docx·xlsx·pptx·csv·md·zip)만 붙는다 — json·yaml·키·DB 파일은 붙지 않는다. 결과물은 반드시 그 구역에 저장하라.\n- 파일을 GitHub·클라우드 저장소 같은 외부 링크로 대신 주지 마라 — 받는 사람이 열 수 없을 수 있다. 위 구역에 저장해 첨부로 보내라.\n- **사용자에게 답하는 것은 외부 발송이 아니다 — 결재 불필요.**`)
-    : '') + (mirrorCtx?.kind === 'msgr' ? messengerHandoffHint(lang) : '');
+    : '') + (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanelSolo !== true ? messengerHandoffHint(lang) : ''); // 패널 턴은 넘김·DM 전달 안내 없음(검수 M1)
   // 대체 실행이 '실패'하면 위 자가 고지가 나올 수 없다 — 에러 메시지 자체에 대체 사실을 붙인다
   // (턴 실패 표시·이벤트 기록·메신저 회신 전 표면 공통).
   const prefixFallbackError = (e) => {
@@ -1789,7 +1805,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliTools = !!crewBridge;
       const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server, ...(crewBridge ? { crew: crewBridge.server } : {}) } : null;
       const cliMcp = cliMcpServers ? Object.keys(cliMcpServers).filter((k) => k !== 'crew') : []; // 안내 목록은 외부 MCP만(SDK connectedMcp와 같게 — crew는 도구 안내로 따로 나간다)
-      const cliRoster = cliTools ? (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanel !== true ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : cliColleagues.length ? rosterPrompt(cliColleagues, lang, false, lim) : hopCapNote) : ''; // SDK 턴과 같은 식
+      const cliRoster = cliTools ? (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanelSolo !== true ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : cliColleagues.length ? rosterPrompt(cliColleagues, lang, false, lim) : hopCapNote) : ''; // SDK 턴과 같은 식
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다. ctx = 스레드 맥락 구획(아래에서 정한다)
       const cliSelfNote = await selfNoteFor(); // CLI 러너는 세션을 잇지 않고 맥락을 매번 다시 싣는다 — 최근 글 그대로
       const promptWith = (ctx) => `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
@@ -2239,7 +2255,7 @@ ${lang === 'en'
   await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource, undefined, undefined, traceRec.id); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
   // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
   const sysTail = orgRules // 조직 규칙집(팀 메신저 채널 턴) — SDK·네이티브 두 엔진이 같은 꼬리를 쓴다
-    + (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanel !== true ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : colleagues.length ? rosterPrompt(colleagues, lang, false, lim) : hopCapNote)
+    + (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanelSolo !== true ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : colleagues.length ? rosterPrompt(colleagues, lang, false, lim) : hopCapNote)
     + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder, source: turnSource, fullAuto })
     + (browserBridge ? browserMcpDirective(lang) : '')
     + messengerNote

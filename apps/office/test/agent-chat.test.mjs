@@ -163,14 +163,18 @@ test('단계 — 모르는 단계 코드는 작업으로, 에이전트 답의 �
 // 직무별 배분(2단계 PR3) — 맡은 동료 모으기, 맡길 동료 글
 import { delegatedTo, sendRoute } from '../src/core/agent-chat.js';
 
-test('맡은 동료 — 답 글 단계 요약의 동료에게 맡김 대상만, 겹치면 하나', () => {
-  assert.deepEqual(delegatedTo({ author_kind: 'crew', meta: { office_steps: { n: 3, steps: [{ stage: 'delegate', detail: 'luna' }, { stage: 'memory', detail: 'a.md' }, { stage: 'delegate', detail: 'luna' }] } } }), ['luna']);
-  assert.deepEqual(delegatedTo({ author_kind: 'crew', meta: {} }), []);
+test('맡은 동료 — 게이트웨이가 실은 성공한 위임(이름·직무)만, 겹치면 하나, 단계 요약의 시도는 보지 않는다', () => {
+  assert.deepEqual(delegatedTo({ author_kind: 'crew', meta: { office_delegates: [{ name: '루나', role: '영업' }, { name: '루나', role: '영업' }, { name: '' }, null] } }), [{ name: '루나', role: '영업' }]);
+  assert.deepEqual(delegatedTo({ author_kind: 'crew', meta: { office_steps: { n: 1, steps: [{ stage: 'delegate', detail: '없는이름' }] } } }), [], '실패했을 수 있는 시도는 표시하지 않는다');
+  assert.deepEqual(delegatedTo({ author_kind: 'user', meta: { office_delegates: [{ name: '루나' }] } }), []);
 });
 
 test('맡길 동료 글 — 대화 뿌리에 붙이고 meta에 동료 이름', async () => {
   const inserted = [];
-  const sb = { from: () => ({ insert: (row) => { inserted.push(row); return { select: () => ({ single: async () => ({ data: { id: 77 } }) }) }; } }) };
-  assert.equal(await sendRoute(sb, { channel: 'ch', uid: 'u1', root: 10, name: '루나', body: '루나에게 맡겨 줘: 견적', clientId: 'or:5:1' }), 77);
-  assert.deepEqual(inserted[0], { channel_id: 'ch', author_kind: 'user', author_user_id: 'u1', body: '루나에게 맡겨 줘: 견적', client_msg_id: 'or:5:1', meta: { source: PANEL_SOURCE, office_route: '루나' }, reply_to: 10, thread_root: 10 });
+  const sb = { from: () => ({ insert: (row) => { inserted.push(row); return { select: () => ({ single: async () => (inserted.length === 1 ? { data: { id: 77 } } : { error: { code: '23505', message: 'dup' } }) }) }; },
+    select: () => ({ eq() { return this; }, maybeSingle: async () => ({ data: { id: 77 } }) }) }) };
+  const args = { channel: 'ch', uid: 'u1', root: 10, name: '루나', body: '루나에게 맡겨 줘: 견적', clientId: 'or:5:루나' };
+  assert.equal(await sendRoute(sb, args), 77);
+  assert.equal(await sendRoute(sb, args), 77, '같은 요청·같은 동료를 다시 골라도 한 건');
+  assert.deepEqual(inserted[0], { channel_id: 'ch', author_kind: 'user', author_user_id: 'u1', body: '루나에게 맡겨 줘: 견적', client_msg_id: 'or:5:루나', meta: { source: PANEL_SOURCE, office_route: '루나' }, reply_to: 10, thread_root: 10 });
 });
