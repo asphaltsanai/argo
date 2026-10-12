@@ -89,3 +89,35 @@ test('전송 통로 — 글에 meta·reply_to를 싣고, 응답을 잃으면 같
   assert.equal(preps, 1); assert.ok(retry.calls.filter((c) => c.op === 'insert').every((c) => c.row.reply_to === 10));
 });
 
+
+// 쓰기 확인 카드(2단계 PR1) — 카드 목록·상태·확인 글 쓰기
+import { proposalsOf, proposalState, sendConfirm } from '../src/core/agent-chat.js';
+
+test('카드 목록은 에이전트 글의 검증된 제안만', () => {
+  const p = { pid: 'p1', tool: 'office_work', args: {}, summary: '할 일 추가: a' };
+  assert.deepEqual(proposalsOf({ author_kind: 'crew', meta: { office_proposals: [p, { pid: 'x', summary: 'b' }, null, { pid: 'p2' }] } }), [p]);
+  assert.deepEqual(proposalsOf({ author_kind: 'user', meta: { office_proposals: [p] } }), [], '사람 글의 제안은 카드가 아니다');
+  assert.deepEqual(proposalsOf({ author_kind: 'crew', meta: {} }), []);
+});
+
+test('카드 상태 — 열림 → 실행 요청함(확인 글) → 실행함(결과 표지)', () => {
+  const thread = [bot(42, 10)];
+  assert.equal(proposalState(thread, 42, 'p1'), 'open');
+  thread.push({ ...me(43, '실행: 할 일 추가'), meta: { source: PANEL_SOURCE, office_confirm: { reply: 42, pid: 'p1' } } });
+  assert.equal(proposalState(thread, 42, 'p1'), 'sent');
+  assert.equal(proposalState(thread, 42, 'p2'), 'open', '다른 카드는 그대로');
+  thread.push({ ...bot(44, 10), meta: { office_result: { reply: 42, pid: 'p1' } } });
+  assert.equal(proposalState(thread, 42, 'p1'), 'done');
+});
+
+test('확인 글 — 대화 뿌리에 붙이고 같은 카드는 한 건(client_msg_id 고정)', async () => {
+  const inserted = [];
+  const sb = { from: () => ({
+    insert: (row) => { inserted.push(row); return { select: () => ({ single: async () => (inserted.length === 1 ? { data: { id: 50 } } : { error: { code: '23505', message: 'dup' } }) }) }; },
+    select: () => ({ eq() { return this; }, maybeSingle: async () => ({ data: { id: 50 } }) }),
+  }) };
+  const args = { channel: 'ch', uid: 'u1', root: 10, replyId: 42, pid: 'p1', body: '실행: 할 일 추가' };
+  assert.equal(await sendConfirm(sb, args), 50);
+  assert.equal(await sendConfirm(sb, args), 50, '두 번째는 이미 있는 글 번호');
+  assert.deepEqual(inserted[0], { channel_id: 'ch', author_kind: 'user', author_user_id: 'u1', body: '실행: 할 일 추가', client_msg_id: 'oc:42:p1', meta: { source: PANEL_SOURCE, office_confirm: { reply: 42, pid: 'p1' } }, reply_to: 10, thread_root: 10 });
+});

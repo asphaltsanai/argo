@@ -28,5 +28,12 @@ export const AGENT_DICT = {
   'agent.context': ['같은 에이전트와의 최근 대화는 참고 맥락으로 함께 전달됩니다.', 'Recent messages with this agent are shared as context.'],
   'agent.filesOnly': ['첨부한 파일을 확인해 줘.', 'Please look at the attached files.'],
   'agent.open.file': ['열기', 'Open'],
+  'agent.prop.run': ['실행', 'Run'],
+  'agent.prop.cancel': ['취소', 'Cancel'],
+  'agent.prop.sent': ['실행 요청함', 'Run requested'],
+  'agent.prop.done': ['실행함', 'Done'],
+  'agent.prop.canceled': ['취소함', 'Canceled'],
+  'agent.prop.body': ['실행: {summary}', 'Run: {summary}'],
+  'agent.auto': ['바로 실행', 'Run directly'],
+  'agent.auto.hint': ['켜면 할 일 만들기 같은 되돌릴 수 있는 쓰기는 확인 없이 실행합니다. 계약 확정·삭제처럼 되돌리기 어려운 일은 늘 확인합니다.', 'When on, undoable changes such as adding a task run without asking. Hard-to-undo actions such as confirming a contract or deleting always ask.'],
 };
-

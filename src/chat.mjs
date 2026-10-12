@@ -1,6 +1,7 @@
 import { selfPostsSection } from './self-posts.mjs';
 import { stageMessengerHandoff, messengerOrigin, messengerHandoffHint, parseMessengerDisposition, isGuestCtx, ownerDirectTurn, ownerSoloTurn, settingsDirectTurn, msgrJournal } from './gateway/msgr-handoff.mjs';
 import { officeToolSpecs } from './gateway/office-tools.mjs'; // 오피스 도구 7종 정의(일정·회사·문서함·할 일·페이지·거래·메일·브리핑) — CLI·MCP와 같은 한 곳
+import { panelWriteGate } from './gateway/office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드 관문
 import { createBrowserMcpBridge, browserMcpDirective } from './engine/browser-mcp.mjs';
 // 대화 계층 — 페르소나 카드 + 회사 스킬 + vault 사용법을 시스템 프롬프트로, Agent SDK가 루프·도구를 담당.
 // 도구는 워크스페이스 안 파일 읽기/쓰기/검색만 — 폴더 전체가 잠재 컨텍스트, 링크가 탐색 경로.
@@ -1138,6 +1139,8 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   // 손님 턴은 읽기까지 막는다. 세션 없음·RPC 오류·방 판정은 처리기가 한 줄로 돌려준다. 어떤 턴에 싣는지는 아래 tools 배열이 정한다
   const officeTool = (spec) => tool(spec.name, spec.description, spec.shape, async (args) => {
     if (guest) return guestNo(lang === 'en' ? spec.guest.en : spec.guest.ko);
+    const staged = panelWriteGate(mirrorCtx, spec.name, args, lang); // 오피스 패널 턴의 쓰기는 실행하지 않고 확인 카드로 모은다(office-proposals.mjs, 2단계 PR1)
+    if (staged) return text(staged);
     const ownerId = (await loadCompany(wsId).catch(() => ({}))).ownerId ?? null;
     return text(await spec.run(args, { ctx: mirrorCtx, crew: fromSlug, crewName: fromName, lang, ownerId }));
   });

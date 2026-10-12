@@ -59,6 +59,7 @@ import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from '
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
 import { joinTranslate, leaveTranslate } from './office-translate.mjs';
 import { ownerSoloRoom } from './office-audience.mjs'; // 주인 혼자 1:1 판정(유건 결정 2026-10-08 ①) — 오피스 도구의 'owner' 판정과 같은 사람 규칙
+import { isPanelSource, confirmOf, proposalsMeta, findProposal } from './office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드(2단계 PR1)
 import { outsideContextLine } from '../assistant/mail-text.mjs'; // 비서가 메일에서 가져온 글은 방 문맥에 표지 줄로만(설계 4.9 규칙 3)
 import { selfTag, selfReplyNote, recordSelfPost } from '../self-posts.mjs'; // 에이전트가 대화 밖에서 보낸 자기 글 — 방 문맥 표지·답글 대상 줄·개인 1:1 기록
 
@@ -1451,6 +1452,8 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         // 사장 글의 순차 멘션(@A > @B)의 다음 크루 턴도 사장 글에서 바로 생겨 표지가 없다(유건 결정 2026-10-03). 표지가 있으면 handoffFrom으로 풀 오토 아님.
         hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, ...(relayVia ? { relayVia, ...(relayViaName ? { relayViaName } : {}) } : {}), after, ...(coMentioned ? { coMentioned } : {}), ...(guestChain ? { guest: true } : {}), ...(officeChain ? { office: true } : {}),
         ...(work ? { workRunId: work.id } : {}),
+        // 오피스 패널에서 사람이 보낸 글 — 쓰기 확인 카드 관문(office-proposals.mjs). 바로 실행·확인 표지는 패널 글에서만 읽는다(크루 글·넘김은 대상 아님)
+        ...(!fromCrew && isPanelSource(m) ? { panel: true, ...(m.meta?.office_auto === true ? { officeAuto: true } : {}), ...(confirmOf(m) ? { officeConfirm: confirmOf(m) } : {}) } : {}),
       });
       out.queued++;
     };
@@ -1562,6 +1565,22 @@ async function deliverReplyFiles(wsId, db, { orgId, channelId, channelKind = nul
 const planOrRaw = (wsId, text, lang, max) => planReplyFiles(wsId, text, { lang, ...(max ? { max } : {}) })
   .catch((e) => { console.error(`[argo] msgr 첨부 계획 실패(${wsId}):`, e?.message ?? e); return { body: String(text ?? ''), files: [], fails: [] }; });
 
+/** 오피스 패널 확인 카드 [실행] — 확인 글이 가리키는 답 글을 DB에서 다시 읽어(같은 방·이 에이전트의 답·그 pid) 제안 인자 그대로 오피스 도구를 한 번 실행한다.
+    주인 본인이 보낸 확인 글만(손님·넘김은 job 단계에서 이미 빠진다). 반환: { result: 실행했으면 도구 결과 글, note: 이 턴 지시에 덧붙일 줄 }. 조회 1건 + 도구 실행 1회. */
+export async function runOfficeConfirm(db, { wsId, job, ctx, uid, lang = 'ko', crewName = '' }, deps = { specs: async (lang) => (await import('./office-tools.mjs')).officeToolSpecs(lang), owner: async (ws) => (await loadCompany(ws).catch(() => ({}))).ownerId ?? null }) {
+  const say = (ko, en) => (lang === 'en' ? en : ko);
+  const c = job.officeConfirm;
+  const row = job.authorId === uid ? await db.message(c.reply) : null;
+  const p = findProposal(row, { channelId: job.channelId, crewId: job.crewId, pid: c.pid });
+  if (!p) return { result: null, note: `\n${say('[사용자가 확인 카드에서 [실행]을 눌렀지만 그 제안을 찾지 못해 아무것도 실행하지 않았다. 다시 요청해 달라고 짧게 알려라]', '[The user pressed Run on a confirmation card, but the proposal was not found, so nothing ran. Briefly ask them to request it again]')}` };
+  const spec = (await deps.specs(lang)).find((x) => x.name === p.tool); // 도구 정의는 실행할 때만 불러온다 — msgr.mjs를 가볍게(해고 라우트가 동적으로 가져온다)
+  let result;
+  try { result = String(await spec.run(p.args, { ctx: { ...ctx, officePanel: false }, crew: job.slug, crewName, lang, ownerId: await deps.owner(wsId) })); } // 관문(officeTurn — 방·주인 세션)은 처리기가 그대로 본다
+  catch (e) { result = say(`실행 중 오류: ${String(e?.message ?? e).slice(0, 200)}`, `Error while running: ${String(e?.message ?? e).slice(0, 200)}`); }
+  return { result, note: `\n${say(`[사용자가 확인 카드 ${p.pid}에서 [실행]을 눌러 아래 동작을 게이트웨이가 이미 한 번 실행했다: ${p.summary}\n도구 결과(바깥 글 표지는 그대로 바깥 글이다):\n${result}\n결과를 사용자에게 한두 문장으로 알려라. 같은 동작을 다시 부르지 마라]`,
+    `[The user pressed Run on confirmation card ${p.pid}, and the gateway already ran this action once: ${p.summary}\nTool result (outside-text markers still mark outside text):\n${result}\nTell the user the outcome in one or two sentences. Do not call the same action again]`)}` };
+}
+
 async function messengerReply(ctx, text, { db = null, lang = 'ko', loopTurn = false } = {}) {
   const workReply = parseWorkReply(ctx.work, ctx.crewId, text);
   const parsed = parseMessengerDisposition(workReply.text);
@@ -1585,7 +1604,7 @@ async function messengerReply(ctx, text, { db = null, lang = 'ko', loopTurn = fa
   for (const id of copiedIds) mentions.push({ kind: 'crew', id, role: 'cc' });
   return { replyForChecks: parsed.text, reply: [visible, handoff].filter(Boolean).join('\n\n'), msgrReply: { mentions, meta: { hop: ctx.hop ?? 0, origin: ctx.origin ?? null, ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}),
     ...(parsed.disposition === 'done' ? { disposition: 'done' } : {}),
-    ...(workReply.status ? { work_status: workReply.status } : {}) } } };
+    ...(workReply.status ? { work_status: workReply.status } : {}), ...proposalsMeta(ctx) } } };
 }
 
 /** 개인 공간 crew 1:1 판정(서버 msgr_is_own_crew_room) — true·false·모르면 null(옛 db 어댑터·옛 서버·조회 실패). 호출부는 true일 때만 연다. */
@@ -1924,7 +1943,8 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // ownerName — 주인이 직접 말한 턴에만 그 사람의 이름(용어 변경 T5: 에이전트가 사용자를 이름으로 부른다). 이미 읽은 값이라 추가 조회 0.
     // 손님·넘김(DM 전달 포함)·오피스 턴은 싣지 않는다 — 지금 말한 사람이 사용자가 아니거나 사용자가 직접 시킨 일이 아니다. 이름이 없으면('멤버' 대체값) 싣지 않는다.
     const ownerName = !guest && !job.fromCrewId && !job.relayVia && job.office !== true && typeof rawHumanName === 'string' && rawHumanName.trim() ? clean(rawHumanName, 40) : null;
-    const ctx = { chatType: 'group', ...authority, channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, sourceMsgId: job.msgId, wsId, hop: job.hop ?? 0, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '', handoffs: [], peers, ...(work ? { work } : {}), ...(ownerName ? { ownerName } : {}) };
+    const ctx = { chatType: 'group', ...authority, channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, sourceMsgId: job.msgId, wsId, hop: job.hop ?? 0, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '', handoffs: [], peers, ...(work ? { work } : {}), ...(ownerName ? { ownerName } : {}),
+      ...(job.panel === true && !guest ? { officePanel: true, proposals: [], ...(job.officeAuto === true ? { officeAuto: true } : {}) } : {}) }; // 패널 턴 — 쓰기는 확인 카드로(chat.mjs officeTool → panelWriteGate)
     const orgMemory = await crewMemoryCached(db, job.crewId, job.channelId); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널, 유건 결정 2026-09-24)
     ctx.roomIds = [...ctxRows.map((r) => r.id), ...(job.replyTo ? [job.replyTo] : [])]; // 방 문맥·답글 대상에 이미 든 글 — 주인 1:1 턴의 '대화 밖에서 보낸 최근 글' 구획이 같은 글을 두 번 싣지 않게(chat.mjs, self-posts.mjs)
     const execution = await beginMessengerExecution(wsId, db, job, executionMeta);
@@ -1956,7 +1976,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const stopHeartbeat = executionHeartbeat(wsId, db, job, { onStopRequested: () => { interruptTurn(wsId, job.slug, { source: 'messenger', tag: job.msgId }).catch((e) => console.error(`[argo] msgr 심박 중단 처리 실패(${wsId}/${job.slug}/${job.msgId}):`, e.message)); } });
     activeCtx.set(ctxKey, ctx);
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId, topic: early?.full === (ch.kind === 'public') ? early : null }); if (!early) stageLog(job, 'broadcast', now()); // 받음 방송에 쓴 방 토픽을 그대로 잇는다(방 채널을 두 번 열지 않는다). 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
-    let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {};
+    let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {}; let officeResult = null;
     try {
       // 주인 혼자 1:1 방 확인(구성원 조회 1건)은 실행권을 잡은 뒤에만 — 다른 프로세스가 실행 중인 잡이 3초마다 DEFER로 다시 집힐 때 조회를 되풀이하지 않게(재검수 LOW 2026-10-08).
       const solo = soloCandidate && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
@@ -1973,6 +1993,13 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       text = text.slice(0, roomAt) + await roomSection(local?.size ? ctxRows.filter((r) => !local.has(String(msgrRowTurn(r) ?? ''))) : ctxRows) + text.slice(roomAt);
       // DM은 뿌리마다 새로 허가한 문맥만, 채널은 그 채널 세션만 잇는다(전역 세션 = 주인의 데스크톱 대화). 기억 안 남김 채널은 세션도 없이
       const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, job.slug), job.channelId).sessionId;
+      // 확인 카드 [실행] — 모델을 거치지 않고 답 글의 제안을 인자 그대로 실행한 뒤 결과를 이 턴에 넘겨 알리게 한다. 실행 기록이 이미 시작된 뒤라
+      // 실행 뒤 게시 전에 꺼져도 다시 실행하지 않는다(끊긴 턴은 위 interrupted 갈래가 실패로 닫는다 — D25)
+      if (job.officeConfirm && ctx.officePanel === true) {
+        const done = await runOfficeConfirm(db, { wsId, job, ctx, uid, lang, crewName: clean(crewName(job.crewId), 40) });
+        if (done.result) officeResult = { reply: job.officeConfirm.reply, pid: job.officeConfirm.pid };
+        text += done.note;
+      }
       stageLog(job, 'turn-start', now());
       const turn = await runChat(wsId, job.slug, text, sessionId, {
         source: 'messenger', attachments, mirrorCtx: ctx, abortTag: job.msgId, ...(job.fromCrewId || job.relayVia ? { notOwnerDirect: handoffLabel(orgPeers, job.fromCrewId ?? job.relayVia, job.fromCrewId ? null : job.relayViaName) } : {}), // 크루가 넘긴 턴(DM 전달 포함) — 풀 오토만 끈다(넘긴 크루를 잇는다) // abortTag — 중단은 이 원본 메시지의 실행만(검수 2026-09-26 M-1: 같은 크루의 텔레그램·결재 후속 턴도 source:'messenger'다)
@@ -2028,7 +2055,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // 링크 미리보기 — 보내기 전에 첫 링크를 한 번 가져와 같은 insert에 싣는다(읽는 사람마다 다시 가져오지 않는다). 실패·중단 답은 대상 밖, 실패하면 카드 없음.
     // 게시가 재시도되면 큐 파일에 보존된 replyRow(카드 포함)를 그대로 쓴다 — 다시 가져오지 않는다.
     const linkCard = failed || aborted ? null : await Promise.resolve().then(() => linkPreview(replyRow.body)).catch(() => null);
-    const metaBase = { ...replyMeta, hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}), ...(aborted ? { stopped: true } : {}), ...(linkCard ? { link_preview: linkCard } : {}) }; // hop/origin=연쇄 상한·정책 기준
+    const metaBase = { ...replyMeta, ...(officeResult ? { office_result: officeResult } : {}), hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}), ...(aborted ? { stopped: true } : {}), ...(linkCard ? { link_preview: linkCard } : {}) }; // hop/origin=연쇄 상한·정책 기준
     try {
       row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: metaBase }, executionMeta); // 궤적은 저장하지 않는다(유건 결정 2026-09-24 — 메신저엔 '답변 준비 중'만)
     } catch (e) {

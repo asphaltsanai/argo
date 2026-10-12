@@ -50,6 +50,13 @@ html.agent-open .main { margin-right: var(--agent-w); }
 .agent-ctx { flex: 1; min-width: 0; font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .agent-send { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--mark); color: var(--mark-fg); box-shadow: 0 0 0 1px rgb(0 0 0 / 0.2); }
 .agent-send:disabled { background: var(--bg); color: var(--fg-3); box-shadow: none; }
+.agent-props { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.agent-prop { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--rc); background: var(--card); font-size: 12.5px; }
+.agent-prop.settled { background: var(--bg); color: var(--fg-2); }
+.agent-prop-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.agent-prop-act { display: flex; gap: 6px; flex: none; }
+.agent-auto { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--fg-2); cursor: pointer; }
+.agent-auto input { margin: 0; }
 @media (max-width: 767px) {
   html.agent-open .main { margin-right: 0; }
   .agent-dock { width: 100%; border-left: 0; }

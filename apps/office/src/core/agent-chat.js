@@ -98,3 +98,29 @@ export function panelTransport(sb, { orgId, channel, uid, personal }, prepare) {
   };
 }
 
+
+/* ── 쓰기 확인 카드(2단계 PR1) — 게이트웨이가 패널 턴의 오피스 쓰기를 실행하지 않고 답 글 meta.office_proposals로 올린다(src/gateway/office-proposals.mjs).
+   [실행]은 같은 대화에 확인 글(meta.office_confirm)을 넣고, 게이트웨이가 그 답 글의 제안을 다시 읽어 인자 그대로 실행한 뒤 답에 meta.office_result를 단다.
+   취소는 이 기기에만 남긴다(서버 쓰기 없음). */
+export const proposalsOf = (row) => (row?.author_kind === 'crew' && Array.isArray(row.meta?.office_proposals)
+  ? row.meta.office_proposals.filter((p) => p && /^p[1-9]$/.test(p.pid) && typeof p.summary === 'string') : []);
+
+/** 카드 상태 — 'done'(실행 결과가 왔다) | 'sent'(확인 글을 보냈다) | 'open'. thread = 이 대화의 글 */
+export function proposalState(thread, replyId, pid) {
+  const same = (c) => c && Number(c.reply) === replyId && c.pid === pid;
+  if (thread.some((r) => r.author_kind === 'crew' && same(r.meta?.office_result))) return 'done';
+  if (thread.some((r) => r.author_kind === 'user' && same(r.meta?.office_confirm))) return 'sent';
+  return 'open';
+}
+
+/** 확인 글 쓰기 — 같은 카드를 두 번 눌러도 한 건(client_msg_id 고정, 이미 있으면 그 글 번호) */
+export async function sendConfirm(sb, { channel, uid, root, replyId, pid, body }) {
+  const clientId = `oc:${replyId}:${pid}`;
+  const row = { channel_id: channel, author_kind: 'user', author_user_id: uid, body, client_msg_id: clientId,
+    meta: { source: PANEL_SOURCE, office_confirm: { reply: replyId, pid } }, reply_to: root, thread_root: root };
+  const { data, error } = await sb.from('msgr_messages').insert(row).select('id').single();
+  if (!error) return data.id;
+  const found = await sb.from('msgr_messages').select('id').eq('channel_id', channel).eq('author_user_id', uid).eq('client_msg_id', clientId).maybeSingle();
+  if (!found.error && found.data) return found.data.id;
+  throw Object.assign(new Error(error.message), { code: error.code });
+}
