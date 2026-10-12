@@ -6,7 +6,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { openSync, writeSync, closeSync } from 'node:fs'; // setup-token 코드 왕복 fifo(동기 fd — 이벤트 핸들러에서 사용)
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { exec, execP, exists, maskKeyLike, mergePath } from './shared.mjs';
 import { RUNNER_AUTH } from './catalog.mjs';
 import { codexInstalledBin } from './codex.mjs';
@@ -227,14 +227,20 @@ export function extractSetupAuthUrl(text) {
 /** 내장 SDK 네이티브 claude CLI 경로 — 앱/서버가 이미 품고 있는 바이너리(stage-sidecar 3.4가 보장).
     실측: setup-token 서브커맨드 지원. 터미널 무경험 초보자도 설치 0으로 원클릭(브라우저 승인) 연결이
     되게 하는 핵심 폴백이다(유건 지시 2026-07-19: 초보자 여정에서 터미널 요구 제거).
+    실행 파일 위치(process.argv[1] — 사이드카 server/server.js, 상주 node_modules/next/dist/bin/next, CLI bin/argo.mjs)에서 위로 찾는다.
+    import.meta.url은 쓰지 않는다 — Next 번들이 빌드 기기 경로(file:///Users/runner/…)로 굳혀 설치본에서 항상 null이었다(0.1.101 청크 실측 2026-10-11).
+    cwd도 보지 않는다 — 사용자가 연 폴더(남의 레포)에 심은 node_modules/…/claude가 설치본보다 먼저 잡혀 실행된다(커밋 보안 검수 재현 2026-10-11).
+    Windows 패키지 안 파일은 claude.exe다(winpc 설치본 실측) — 패키지 위치를 package.json으로 찾고 파일 이름은 플랫폼별로 붙인다.
     (export: 회귀 테스트용) */
-export async function bundledClaudeCli() {
+export async function bundledClaudeCli({ argv1 = process.argv[1], platform = process.platform, arch = process.arch } = {}) {
+  if (!argv1) return null;
+  const pkg = `@anthropic-ai/claude-agent-sdk-${platform}-${arch}/package.json`;
+  const bin = platform === 'win32' ? 'claude.exe' : 'claude';
   try {
     const { createRequire } = await import('node:module');
-    const req = createRequire(import.meta.url);
-    const p = req.resolve(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude`);
+    const p = join(dirname(createRequire(resolve(argv1)).resolve(pkg)), bin);
     if (await exists(p)) return p;
-  } catch { /* 플랫폼 패키지 미포함 — 아래 null */ }
+  } catch { /* 실행 파일 쪽에 플랫폼 패키지 없음 — 아래 null */ }
   return null;
 }
 
