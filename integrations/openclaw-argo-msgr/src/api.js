@@ -11,7 +11,8 @@ export class ArgoMsgrError extends Error {
 }
 export const MAX_LEN = 20000;                 // 서버 본문 상한(msgr_messages.body)
 export const POLL_TIMEOUT_S = 20;             // 서버 상한 25초
-export const MAX_FILE_BYTES = 26_214_400;     // 파일당 25MB — 서버(msgr_bot_attach_prepare)·저장소 버킷 한도와 같다
+export const MAX_FILE_BYTES = 26_214_400;     // 받기(사람이 올린 첨부 내려받기) 파일당 25MB
+export const MAX_UPLOAD_BYTES = 524_288_000;  // 보내기 전역 천장 500MB(저장소 버킷 한도) — 플랜별 상한(무료 25MB · Pro 500MB)은 서버(msgr_bot_attach_prepare)가 주인 기준으로 판정한다(20261012120000). 25MB로 미리 거절하면 Pro 주인의 큰 파일이 여기서 막힌다
 export const MAX_FILES_PER_MESSAGE = 10;      // 글당 첨부 수(서버 상한)
 // 전송 중인 outbox 파일 → 그 전송 promise. 답장 경로(send)와 폴 전 재전송(flush)이 같은 파일을 동시에 보내 같은 답장 RPC가 두 번 나가던
 // 경합(검수 M1)을 막는다. makeApi는 호출마다 새로 만들고 플러그인 모듈 사본도 여럿일 수 있어 프로세스 전체에서 하나(globalThis 고정 키)로 둔다.
@@ -103,10 +104,10 @@ export function makeApi({ url, token, fetchImpl = globalThis.fetch, outboxDir = 
     getFile: (fileId) => call('getFile', { file_id: fileId }),
     fetchFile: (fileUrl) => fetchImpl(fileUrl, { method: 'GET', signal: AbortSignal.timeout(120_000) }),
     // 파일 보내기 — createUpload(서버가 대상 글·크기 판정) → 서명 주소로 저장소에 직접 PUT(엣지 함수를 거치지 않는다) → attachFile(등록).
-    // messageId는 이 봇이 1시간 안에 쓴 자기 글이어야 한다(서버 판정: 403 자기 글 아님·방 밖, 409 1시간 지남·글당 10개 초과·업로드 안 됨, 413 25MB 초과).
+    // messageId는 이 봇이 1시간 안에 쓴 자기 글이어야 한다(서버 판정: 403 자기 글 아님·방 밖, 409 1시간 지남·글당 10개 초과·업로드 안 됨, 413 플랜 상한 초과 — 무료 25MB · Pro 500MB).
     uploadFile: async (messageId, { name, data, mime }) => {
       const bytes = data.length ?? data.byteLength;
-      if (bytes > MAX_FILE_BYTES) throw new ArgoMsgrError(413, 'files are limited to 25 MB');
+      if (bytes > MAX_UPLOAD_BYTES) throw new ArgoMsgrError(413, 'files are limited to 500 MB');
       const contentType = mime || 'application/octet-stream';
       const up = await call('createUpload', { message_id: Number(messageId), file_name: name, file_size: bytes }, { post: true });
       const put = await fetchImpl(String(up?.upload_url ?? ''), { method: up?.method || 'PUT', headers: { 'Content-Type': contentType, 'x-upsert': 'false' }, body: data, signal: AbortSignal.timeout(300_000) });
@@ -247,7 +248,7 @@ export function relayReply(text, message) {
 
 // ── 파일 받기·보내기 (2026-09-30, 플러그인 0.3.2) ───────────────────────────────────────────────────────────
 // 받기: getUpdates 메시지의 attachments → getFile(서명 URL) → 스트리밍으로 ~/.argo-msgr/files/<메시지 id>/ 에 저장(Hermes 어댑터와 같은 자리, 25MB 상한).
-// 보내기: 아래 deliverFiles가 붙일 글을 정하고(요청의 답글 → 없으면 먼저 마감 → 맥락 없으면 새 글) api.uploadFile로 올린다. 판정(방 권한·25MB·개수)은 서버가 한다.
+// 보내기: 아래 deliverFiles가 붙일 글을 정하고(요청의 답글 → 없으면 먼저 마감 → 맥락 없으면 새 글) api.uploadFile로 올린다. 판정(방 권한·플랜별 크기·개수)은 서버가 한다.
 export const filesDir = () => process.env.ARGO_MSGR_FILES_DIR || join(homedir(), '.argo-msgr', 'files');
 
 export function safeFileName(raw, fallback = 'file') {
@@ -300,9 +301,9 @@ const hangulJosa = (name, withBatchim, without) => { // 은/는·을/를 — 한
   if (/[0-9]/.test(c)) return '013678'.includes(c) ? withBatchim : without;
   return `${withBatchim}(${without})`;
 };
-/** 방에 올리는 한 줄 안내. 25MB 초과는 이유를 분명히, 그 밖은 서버·저장소가 준 사유를 짧게. */
+/** 방에 올리는 한 줄 안내. 크기 초과(천장 500MB·서버의 플랜 거절 413)는 이유를 분명히, 그 밖은 서버·저장소가 준 사유를 짧게. */
 export function fileNotice(name, error) {
-  if (error instanceof ArgoMsgrError && error.status === 413) return `파일 ${name}${hangulJosa(name, '은', '는')} 25MB를 넘어 올리지 못했습니다.`;
+  if (error instanceof ArgoMsgrError && error.status === 413) return `파일 ${name}${hangulJosa(name, '은', '는')} 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.`;
   return `파일 ${name}${hangulJosa(name, '을', '를')} 올리지 못했습니다. (${redactSecrets(String(error?.description ?? error?.message ?? error)).slice(0, 160)})`;
 }
 
@@ -333,14 +334,14 @@ async function postNotices(api, chatId, notices, log) { // 실패 안내는 요�
 /**
  * 요청이 아직 답하지 않았을 때 에이전트가 보낸 파일(sendMedia)을 그 요청에 대기시킨다. 최종 답이 게시된 뒤 그 답글에 붙는다(turn.pending) —
  * 파일 때문에 요청을 먼저 마감하면 뒤에 온 진짜 답의 넘김(handoff)·멘션이 사라지기 때문이다. 바이트는 호스트가 준 읽기 권한이 살아 있는 지금 읽어 둔다.
- * 25MB 초과·읽기 실패는 여기서 바로 방에 새 글 한 줄로 알린다(대기시키지 않는다).
+ * 천장(500MB) 초과·읽기 실패는 여기서 바로 방에 새 글 한 줄로 알린다(대기시키지 않는다).
  */
 export async function deferTurnFile({ api, chatId, turn, file, text = '', log = () => {} }) {
   try {
     // 글당 첨부 상한(서버 10개)과 같다 — 넘치는 파일은 읽지도 대기시키지도 않고 안내한다
     if (turn.pending.length >= MAX_FILES_PER_MESSAGE) throw new ArgoMsgrError(409, `한 글에는 파일을 ${MAX_FILES_PER_MESSAGE}개까지 붙일 수 있습니다`);
     const loaded = await file.load();
-    if (loaded.data.length > MAX_FILE_BYTES) throw new ArgoMsgrError(413, 'files are limited to 25 MB');
+    if (loaded.data.length > MAX_UPLOAD_BYTES) throw new ArgoMsgrError(413, 'files are limited to 500 MB');
     turn.pending.push({ name: loaded.name || file.name, load: async () => loaded });
     if (String(text).trim()) turn.captions.push(String(text).trim());
     return { queued: true, noticeId: null };
@@ -367,7 +368,7 @@ export async function settlePendingFiles({ api, accountId, chatId, turn, log = (
 /**
  * 파일들을 메신저 글에 붙인다. files = [{ name, load: async () => ({ data: Buffer, mime?, name? }) }].
  * 붙일 글: ① 요청(turn)에 이미 보낸 답글 ② 아직이면 text(없으면 파일 이름)로 최종 답을 먼저 보내 마감한 뒤 그 글 ③ 요청 맥락이 없으면 새 글
- * (text 없이 바로 이어 오는 같은 전송의 파일은 방금 쓴 그 새 글에). 25MB 초과·읽기 실패·서버 거절은 파일별로 모아 방에 새 글 한 줄로 알린다(요청을 마감하지 않는다).
+ * (text 없이 바로 이어 오는 같은 전송의 파일은 방금 쓴 그 새 글에). 천장 초과·읽기 실패·서버 거절(플랜 상한 413 포함)은 파일별로 모아 방에 새 글 한 줄로 알린다(요청을 마감하지 않는다).
  * 로드·크기 검사를 붙일 글 정하기보다 먼저 해서, 못 올릴 파일 때문에 요청이 헛되이 마감되지 않게 한다.
  */
 export async function deliverFiles({ api, accountId, chatId, files, text = '', turn = null, log = () => {} }) {
@@ -395,7 +396,7 @@ export async function deliverFiles({ api, accountId, chatId, files, text = '', t
     try {
       const loaded = await f.load();
       const name = loaded.name || f.name;
-      if (loaded.data.length > MAX_FILE_BYTES) throw new ArgoMsgrError(413, 'files are limited to 25 MB');
+      if (loaded.data.length > MAX_UPLOAD_BYTES) throw new ArgoMsgrError(413, 'files are limited to 500 MB');
       target ??= await ensureTarget();
       await api.uploadFile(target, { name, data: loaded.data, mime: loaded.mime });
       if (turn) turn.files++;

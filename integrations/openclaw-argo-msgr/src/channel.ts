@@ -18,7 +18,7 @@ import { registerChannelRuntimeContext } from "openclaw/plugin-sdk/channel-runti
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { ArgoMsgrError, deferTurnFile, deliverFiles, settlePendingFiles, downloadAttachments, findFileTurn, makeApi, MAX_FILE_BYTES, MAX_LEN, openFileTurn, parseMessengerDisposition, pollLoop, relayPrompt, relayReply, recordCcReceipt } from "./api.js";
+import { ArgoMsgrError, deferTurnFile, deliverFiles, settlePendingFiles, downloadAttachments, findFileTurn, makeApi, MAX_UPLOAD_BYTES, MAX_LEN, openFileTurn, parseMessengerDisposition, pollLoop, relayPrompt, relayReply, recordCcReceipt } from "./api.js";
 import { APPROVAL_TOOL, APPROVAL_TOOL_DESCRIPTION, APPROVAL_TOOL_NEXT, APPROVAL_TOOL_PARAMETERS, ApprovalBridge, RoutineMirror, ROUTINES_EVERY_MS } from "./contract.js";
 
 export const CHANNEL_ID = "argo-msgr" as const;
@@ -175,7 +175,7 @@ function mediaFileName(url: string): string {
   const bare = String(url).replace(/^file:\/\//i, "").split(/[?#]/)[0];
   try { return decodeURIComponent(bare.split(/[\\/]/).filter(Boolean).pop() ?? "") || "file"; } catch { return bare.split(/[\\/]/).filter(Boolean).pop() || "file"; }
 }
-/** 파일 하나를 바이트로 읽는 지연 함수. 25MB를 넘으면 413으로 돌려 방에 안내가 나가게 한다(넘는 파일은 끝까지 읽지 않는다). */
+/** 파일 하나를 바이트로 읽는 지연 함수. 전역 천장(500MB)을 넘으면 413으로 돌려 방에 안내가 나가게 한다(넘는 파일은 끝까지 읽지 않는다). */
 function fileFromUrl(url: string, access: MediaAccess & { workspaceDir?: string } = {}) {
   return { name: mediaFileName(url), load: async () => {
     const roots = access.mediaAccess?.localRoots ?? access.mediaLocalRoots;
@@ -183,14 +183,14 @@ function fileFromUrl(url: string, access: MediaAccess & { workspaceDir?: string 
     const workspaceDir = access.mediaAccess?.workspaceDir ?? access.workspaceDir;
     try {
       const m: any = await (core() as any).media.loadWebMedia(url, {
-        maxBytes: MAX_FILE_BYTES + 1, optimizeImages: false,
+        maxBytes: MAX_UPLOAD_BYTES + 1, optimizeImages: false,
         ...(roots && (roots === "any" || roots.length) ? { localRoots: roots } : {}),
         ...(readFile ? { readFile, hostReadCapability: true } : {}),
         ...(workspaceDir ? { workspaceDir } : {}),
       });
       return { data: m.buffer as Buffer, mime: m.contentType as string | undefined, name: m.fileName as string | undefined };
     } catch (e) {
-      if (/exceeds .*limit|exceeds maxBytes|too large/i.test(String((e as any)?.message ?? e))) throw new ArgoMsgrError(413, "files are limited to 25 MB");
+      if (/exceeds .*limit|exceeds maxBytes|too large/i.test(String((e as any)?.message ?? e))) throw new ArgoMsgrError(413, "files are limited to 500 MB");
       throw e;
     }
   } };
