@@ -58,7 +58,7 @@ export function officeMcp({ lang = 'ko' } = {}) {
   const tools = [
     ...specs.map((s) => ({ name: s.name, description: s.description, inputSchema: z.toJSONSchema(z.object({ ...s.shape, org: ORG_ARG })), annotations: READ_ONLY })),
     { name: 'office_orgs', description: say(lang, '내가 속한 아르고 오피스 조직 목록(id·이름·slug·역할).', 'List my Argo Office organizations (id, name, slug, role).'), inputSchema: z.toJSONSchema(z.object({})), annotations: READ_ONLY },
-    { name: 'office_actions', description: say(lang, '내가 올린 대기 변경 목록과 처리 결과(대기 중·실행함·실패·취소). 사용자가 오피스에서 처리했는지 확인할 때.', 'My pending changes and their outcome (pending, done, failed, canceled) — to check whether the user handled them in Office.'), inputSchema: z.toJSONSchema(z.object({})), annotations: READ_ONLY },
+    { name: 'office_actions', description: say(lang, '내가 올린 대기 변경 목록과 처리 상태(대기 중·실행함·실패·취소). 사용자가 오피스에서 처리했는지 확인할 때.', 'My pending changes and their status (pending, done, failed, canceled) — to check whether the user handled them in Office.'), inputSchema: z.toJSONSchema(z.object({})), annotations: READ_ONLY },
   ];
   const text = (t, isError = false) => ({ content: [{ type: 'text', text: t }], ...(isError ? { isError: true } : {}) });
 
@@ -67,7 +67,8 @@ export function officeMcp({ lang = 'ko' } = {}) {
     if (name === 'office_actions') {
       const { data, error } = await c.client.rpc('office_agent_action_list');
       if (error) return text(error.message, true);
-      return text(JSON.stringify((data ?? []).slice(0, 30).map(({ id, tool, action, summary, status, result, created_at }) => ({ id, tool, action, summary, status, ...(result ? { result: String(result).slice(0, 300) } : {}), created_at }))));
+      // 실행 결과 글은 돌려주지 않는다 — 사람이 [실행]한 결과(주인 자리)에는 원격에 내지 않는 값(거래처 사업자번호 등)이 섞일 수 있다(재검수 LOW-1). 처리 여부만
+      return text(JSON.stringify((data ?? []).slice(0, 30).map(({ id, tool, action, summary, status, created_at }) => ({ id, tool, action, summary, status, created_at }))));
     }
     const spec = specs.find((s) => s.name === name);
     if (!spec) return text(`unknown tool: ${name}`, true);

@@ -210,3 +210,10 @@ test('거래처 — 원격 읽기는 계좌·사업자번호를 가리고, 승�
   const approved = await runSpec(spec, { action: 'customers', id: 'cu1' }, { c, org: ORG, approved: true });
   assert.match(approved, /123-456/, approved);
 });
+
+test('office_actions — 처리 여부만 돌려주고 실행 결과 글은 내지 않는다(재검수 LOW-1)', async () => {
+  const { c } = fakeSession({ rpc: { office_agent_action_list: [{ id: 'a1', tool: 'office_deals', action: 'customer_add', summary: '거래처 추가: 한빛', status: 'done', result: '비슷한 거래처: 한빛 · 사업자번호 123-45-67890', created_at: '2026-10-13T00:00:00Z' }] } });
+  const out = (await officeMcp().call('office_actions', {}, { c })).content[0].text;
+  assert.doesNotMatch(out, /123-45-67890|result/);
+  assert.match(out, /"status":"done"/);
+});
