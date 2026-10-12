@@ -82,3 +82,11 @@ export function msgrSetupReason({ st } = {}) {
   if (!st.orgs?.length && s.profile === false) return { reason: 'account', action: 'login' };
   return { reason: 'pending', action: 'connect' };
 }
+
+/** 이유 상자가 있을 때도 실행기 상태를 보일까(#979 검수 2 MEDIUM-2) — 브리지가 이미 켜졌는데 막힌 경우(login·owner·company·offline·reconnecting)는
+    실행기 상태 문구가 원인이다. 그것까지 숨기면 원인이 사라진다. 이유 상자가 없으면 종전대로(showRuntime이 정한다). 'waiting'(아직 아무 응답 없음)은 이유 상자가 대신 말한다. */
+export function msgrRuntimeBesideSetup({ st, setupWhy } = {}) {
+  if (!setupWhy) return true;
+  const state = st?.runtime?.state;
+  return !!st?.setup?.bridge && !!state && state !== 'waiting';
+}

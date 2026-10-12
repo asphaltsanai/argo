@@ -14,7 +14,7 @@ import LocalAssetImport from '../../../components/LocalAssetImport';
 import { accountPlan, trialBadgeState } from '../../../../src/entitlement.mjs';
 
 // Argo Messenger 받기 — 맥·윈도우 설치파일만 걸던 것을 앱 스토어·Play까지 있는 안내 페이지 한 곳으로(CX-12). 오피스 진입 버튼(CX-13)은 오피스가 비공개라 뺐다(유건 2026-10-10).
-import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason } from './msgr-card.mjs';
+import { MESSENGER_PAGE, msgrCardView, runtimeWaitingKey, runtimeAction, pausedLabelKey, personalCardView, msgrSetupReason, msgrRuntimeBesideSetup } from './msgr-card.mjs';
 import { keepChoices, togglePick, pickReady, hereSlugs, sameAsActive, FREE_AGENT_LIMIT } from './keep-choices.mjs'; // 무료 계정이 유지할 에이전트를 고른다(2026-10-12 제보)
 import ArchivedCompaniesCard from '../../../archived-companies'; // 보관한 회사 되돌리기 — 홈에도 같은 카드(UM3)
 import { trashFailKind } from './trash-fail.mjs'; // 보관함 항목이 이미 사라졌는지(2차 M3)
@@ -925,6 +925,7 @@ function MsgrCard({ ws, agents }) {
 
   const personalView = personalCardView({ st, agents }); // 조직이 없는 사용자의 개인 공간 줄(검수 스택 화면 4차)
   const setupWhy = msgrSetupReason({ st }); // 메신저에 내 에이전트가 하나도 없을 때 이유·할 일(2026-10-13 사례) — 있으면 '첫 응답을 기다리는 중' 대신 이것을 보인다
+  const runtimeToo = msgrRuntimeBesideSetup({ st, setupWhy }); // 브리지가 켜졌는데 막혔으면 실행기 상태(원인 문구)도 함께(검수 2 MEDIUM-2)
   // 연결 한 곳 — 조직 카드(scope { orgId })와 개인 공간 카드(scope { personal: true })가 같은 길. 무료 4명이 차 있으면 서버가 미리 알린 멈출 에이전트를
   // 먼저 보이고 확인을 받는다(교체 뒤 같은 단추를 다시 누르면 방금 멈춘 에이전트와 다시 바뀌는 것을 미리 알 수 있게). 미리 알림 실패·빈 목록이면 종전대로 바로 연결.
   async function connectAgents(scope, slugs, confirmed = false) {
@@ -1090,7 +1091,7 @@ function MsgrCard({ ws, agents }) {
       )}
       {st?.signedIn && !st.orgs?.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{personalCount ? t('settings.msgr.personalOnly', { n: personalCount }) : t('settings.msgr.noOrg')}</p>}
       {/* 실행기 연결 상태 — 개인 공간도 이 기기의 실행기가 답한다. 조직이 없어도 보인다(CX-12: 조직 블록 안에만 있어 숨었다) */}
-      {showRuntime && !st.orgs?.length && !setupWhy && (
+      {showRuntime && !st.orgs?.length && runtimeToo && (
         <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
           <div>
             <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
@@ -1146,7 +1147,7 @@ function MsgrCard({ ws, agents }) {
         </div>
         {!agents.length && <p style={{ fontSize: 12, color: 'var(--fg-3)', margin: 0 }}>{t('settings.msgr.noCrews')}</p>}
         {!!agents.length && <>
-          {!setupWhy && <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
+          {runtimeToo && <section className={`msgr-runtime${runtime?.state === 'alive' ? ' on' : ''}`} aria-live="polite">
             <div>
               <span className="microlabel">{t('settings.msgr.runtime.title')}</span>
               <p>{runtimeCopy}</p>

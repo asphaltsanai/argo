@@ -62,3 +62,12 @@ test('[지금 연결] — 해제된 행만 있으면 종전처럼 noCrews(행 0�
   assert.equal(out.body.runtime.state, 'noCrews');
   assert.equal(out.enabled, false);
 });
+
+test('회사 노드(nodeOrgId)는 대상 밖 — GET에 setup이 없고 프로필을 묻지 않으며, [지금 연결]은 종전대로 noCrews(브리지 값을 쓰지 않는다)', () => {
+  const get = run({ method: 'GET', crews: [], agents: ['a'], enabled: false, nodeOrgId: ORG });
+  assert.equal(get.body.setup, null, '자동 켜기·미러가 건너뛰어 행이 늘 0개 — "연결 준비 중"이 영영 남지 않게(#979 검수 2 MEDIUM-1)');
+  assert.ok(!get.log.includes('profile?'), `프로필 조회 0건: ${get.log}`);
+  const post = run({ crews: [], agents: ['a'], enabled: false, nodeOrgId: ORG, body: { reconnect: true } });
+  assert.equal(post.body.runtime.state, 'noCrews');
+  assert.equal(post.enabled, false);
+});

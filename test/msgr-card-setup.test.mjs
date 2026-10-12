@@ -38,3 +38,14 @@ test('행이 0개인 계정의 "지금 연결" — 메신저를 쓰는 계정이
   assert.equal(zeroRowsReconnect({ owner: true, orgCount: 0, profile: null }), 'account', '조회 실패면 켜지 않는다(자동 켜기와 같은 쪽으로 보수적)');
   assert.equal(zeroRowsReconnect({ owner: false, orgCount: 2, profile: true }), 'owner');
 });
+
+test('이유 상자가 있어도 브리지가 켜졌고 막힌 원인이 있으면 실행기 상태를 함께 보인다(#979 검수 2 MEDIUM-2)', async () => {
+  const { msgrRuntimeBesideSetup } = await import('../app/c/[ws]/settings/msgr-card.mjs');
+  const why = { reason: 'pending', action: 'connect' };
+  assert.equal(msgrRuntimeBesideSetup({ st: st({ owner: true, profile: true, bridge: false }) }), true, '이유 상자가 없으면 종전대로');
+  for (const state of ['login', 'owner', 'company', 'offline', 'reconnecting']) {
+    assert.equal(msgrRuntimeBesideSetup({ st: st({ owner: true, profile: true, bridge: true }, { runtime: { state } }), setupWhy: why }), true, state);
+  }
+  assert.equal(msgrRuntimeBesideSetup({ st: st({ owner: true, profile: true, bridge: true }, { runtime: { state: 'waiting' } }), setupWhy: why }), false, 'waiting은 이유 상자가 대신 말한다');
+  assert.equal(msgrRuntimeBesideSetup({ st: st({ owner: true, profile: false, bridge: false }, { runtime: { state: 'offline' } }), setupWhy: why }), false, '브리지가 꺼져 있으면 실행기 상태는 이 상황과 무관(옛 값)');
+});

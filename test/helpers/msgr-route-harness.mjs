@@ -52,7 +52,7 @@ const db = {
   hasPausedCrew: async () => crews.some((r) => r.status === 'paused'), myAgentPause: async () => (await client.rpc('msgr_my_agent_pause')).data,
 };
 const sess = { uid: UID, email: 'me@example.com', client, db };
-let company = { id: WS, ownerId: input.ownerId ?? UID, msgr: { enabled: input.enabled ?? true } };
+let company = { id: WS, ownerId: input.ownerId ?? UID, msgr: { enabled: input.enabled ?? true, ...(input.nodeOrgId ? { nodeOrgId: input.nodeOrgId } : {}) } }; // nodeOrgId — 회사 노드(자동 켜기·미러 대상 밖)
 const update = async (_ws, fn) => { company = { ...company, ...fn(company) }; log.push(`enabled=${company.msgr.enabled}`); return company; };
 
 // namedExports — CI(Node 22)가 아는 이름. Node 24는 exports를 권하지만 둘 다 받는다
