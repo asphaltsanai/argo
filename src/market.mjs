@@ -242,6 +242,9 @@ export const CONNECTOR_CATALOG = [
     id: 'argo-office',
     name: '아르고 오피스',
     url: 'https://argo-office.vercel.app/api/mcp',
+    // 미리 등록한 클라이언트만 받는다(DCR 끔, 총괄 결정 2026-10-13) — Supabase는 redirect_uri를 포트까지 맞추므로 고정 포트. 등록 주소: http://127.0.0.1:47317/callback
+    // TODO(운영 등록 뒤): oauth: { client_id: '<Supabase에 등록한 Argo 공개 클라이언트 id>' } — 없으면 연결이 DCR을 시도해 실패한다
+    redirect_port: 47317,
     note: '일정·할 일·페이지·거래처·거래·문서함·메일을 읽고, 바꾸는 일은 오피스 화면의 확인할 변경으로 올립니다.',
   },
 ];
@@ -265,6 +268,7 @@ export const CONNECTOR_CATALOG_EN = [
     id: 'argo-office',
     name: 'Argo Office',
     url: 'https://argo-office.vercel.app/api/mcp',
+    redirect_port: 47317,
     note: 'Reads calendar, tasks, pages, customers, deals, files and mail; changes are filed as pending changes you run in Office.',
   },
 ];
@@ -292,6 +296,7 @@ export function connectorCatalogItemErrors(item) {
   if (item.note !== undefined && typeof item.note !== 'string') e.push('note');
   if (item.scopes !== undefined && !strList(item.scopes)) e.push('scopes');
   if (item.dangerous !== undefined && !strList(item.dangerous)) e.push('dangerous');
+  if (item.redirect_port !== undefined && !(Number.isInteger(item.redirect_port) && item.redirect_port >= 1024 && item.redirect_port <= 65535)) e.push('redirect_port'); // 고정 콜백 포트(등록한 redirect_uri와 정확히 맞춰야 하는 서버)
   if (item.oauth !== undefined) {
     const o = item.oauth;
     if (!o || typeof o !== 'object' || typeof o.client_id !== 'string' || !o.client_id.trim()) e.push('oauth.client_id');
@@ -318,6 +323,7 @@ export function connectorServerDef(item) {
     id: item.id,
     url: item.url,
     ...(item.scopes?.length ? { scopes: [...item.scopes] } : {}),
+    ...(item.redirect_port !== undefined ? { redirect_port: item.redirect_port } : {}),
     ...(connectorMode(item) === 'fixed'
       ? { oauth: { client_id: item.oauth.client_id, ...resolveClientSecret(item.oauth) } }
       : {}),
