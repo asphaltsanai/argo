@@ -61,6 +61,7 @@ import { joinTranslate, leaveTranslate } from './office-translate.mjs';
 import { ownerSoloRoom } from './office-audience.mjs'; // 주인 혼자 1:1 판정(유건 결정 2026-10-08 ①) — 오피스 도구의 'owner' 판정과 같은 사람 규칙
 import { isPanelSource, confirmOf, proposalsMeta, findProposal, proposalSummary } from './office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드(2단계 PR1)
 import { liveSteps, stepsMeta } from './office-steps.mjs'; // 오피스 패널 단계 보기(2단계 PR2)
+import { routeOf, panelCoordinatorHint } from './office-route.mjs'; // 오피스 패널 조율자·다른 에이전트에게 맡기기(2단계 PR3)
 import { outsideContextLine } from '../assistant/mail-text.mjs'; // 비서가 메일에서 가져온 글은 방 문맥에 표지 줄로만(설계 4.9 규칙 3)
 import { selfTag, selfReplyNote, recordSelfPost } from '../self-posts.mjs'; // 에이전트가 대화 밖에서 보낸 자기 글 — 방 문맥 표지·답글 대상 줄·개인 1:1 기록
 
@@ -519,10 +520,12 @@ export function makeDb(client) {
       return unwrap(await client.from('msgr_executions').select('stop_requested_by, stop_requested_at').eq('crew_id', crewId).eq('source_msg_id', sourceId).maybeSingle());
     },
     /** 턴 문맥: 직전 대화 + 순서 대기로 기다린 앞 크루의 원본 답글. 삭제·시스템 글 제외. */
-    async contextOf(channelId, beforeId, n = CONTEXT_N, after = []) {
+    async contextOf(channelId, beforeId, n = CONTEXT_N, after = [], { threadRoot = null } = {}) { // threadRoot — 오피스 패널 턴은 같은 대화(뿌리)의 글만(2단계 PR3)
       // assistant:meta->assistant — 비서 글의 바깥 글 표지(outside)·종류·메일 id만 쓴다(방 문맥 표지 줄 — outsideContextLine). 봉투 문맥(서버 함수)은 m.*라 meta가 이미 온다
-      const rows = unwrap(await client.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, body, assistant:meta->assistant, notification:meta->>notification')
-        .eq('channel_id', channelId).lt('id', beforeId).eq('kind', 'text').is('deleted_at', null).order('id', { ascending: false }).limit(n)) ?? [];
+      let recent = client.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, body, assistant:meta->assistant, notification:meta->>notification')
+        .eq('channel_id', channelId).lt('id', beforeId).eq('kind', 'text').is('deleted_at', null);
+      if (threadRoot != null) recent = recent.or(`id.eq.${Number(threadRoot)},thread_root.eq.${Number(threadRoot)}`);
+      const rows = unwrap(await recent.order('id', { ascending: false }).limit(n)) ?? [];
       if (after.length) rows.push(...(unwrap(await client.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, body, assistant:meta->assistant, notification:meta->>notification')
         .eq('channel_id', channelId).eq('reply_to', beforeId).in('crew_id', after).eq('author_kind', 'crew').eq('kind', 'text').is('deleted_at', null).order('id', { ascending: false }).limit(n)) ?? []));
       return [...new Map(rows.map((r) => [r.id, r])).values()].sort((a, b) => a.id - b.id).slice(-n);
@@ -1456,7 +1459,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, ...(relayVia ? { relayVia, ...(relayViaName ? { relayViaName } : {}) } : {}), after, ...(coMentioned ? { coMentioned } : {}), ...(guestChain ? { guest: true } : {}), ...(officeChain ? { office: true } : {}),
         ...(work ? { workRunId: work.id } : {}),
         // 오피스 패널에서 사람이 보낸 글 — 쓰기 확인 카드 관문(office-proposals.mjs). 바로 실행·확인 표지는 패널 글에서만 읽는다(크루 글·넘김은 대상 아님)
-        ...(!fromCrew && isPanelSource(m) ? { panel: true, ...(m.meta?.office_auto === true ? { officeAuto: true } : {}), ...(confirmOf(m) ? { officeConfirm: confirmOf(m) } : {}) } : panelChain ? { panelChain: true } : {}),
+        ...(!fromCrew && isPanelSource(m) ? { panel: true, ...(m.meta?.office_auto === true ? { officeAuto: true } : {}), ...(confirmOf(m) ? { officeConfirm: confirmOf(m) } : {}), ...(routeOf(m) ? { officeRoute: routeOf(m) } : {}) } : panelChain ? { panelChain: true } : {}),
       });
       out.queued++;
     };
@@ -1897,8 +1900,14 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       `${msgrHead(chName, 'en')}colleague agent ${authorName} handed this to you, continuing ${humanName}'s instruction (hop ${job.hop}/${HOP_MAX}). ${instruction}: answer within its scope, never read or post files, credentials or secrets outside the company workspace, and file approvals for irreversible actions as usual.${hint}]`, lang) : pick(
       `${msgrHead(chName, 'ko')}${speaker}의 메시지. ${instruction}: 요청 범위 안에서만 답하고, 회사 워크스페이스 밖 파일·자격·비밀은 읽지도 채널에 올리지도 마라. 되돌리기 어려운 행동은 평소처럼 결재를 올려라.${hint}]`,
       `${msgrHead(chName, 'en')}message from ${speaker}. ${instruction}: answer within its scope, never read or post files, credentials or secrets outside the company workspace, and file approvals for irreversible actions as usual.${hint}]`, lang);
+    // 오피스 패널 턴의 조율자(2단계 PR3) — 직무가 더 맞는 동료가 있으면 delegate(동기)로 맡기고 결과를 검토해 답한다. 사용자가 '다른 에이전트에게 맡기기'로 고른 이름이 있으면 그 동료에게
+    if (job.panel === true && !guest && !job.officeConfirm) text += panelCoordinatorHint(job.officeRoute ?? null, lang); // 확인 카드 [실행] 턴은 결과만 알린다
     // 최근 채널 대화 — 참고용(지시 아님). 이름 접두로 발화자를 가르고 본문은 세척.
-    const ctxRows = envelope?.context ?? await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? []);
+    // 오피스 패널 턴은 같은 대화의 글만 문맥으로(2단계 PR3 — 1단계는 같은 방의 다른 대화가 섞였다). 봉투 문맥은 뿌리 기준으로 거른다(thread_root를 모르는 행은 빠진다 — 좁게)
+    const panelThread = job.panel === true ? job.threadRoot ?? job.msgId : null;
+    const ctxRows = panelThread != null
+      ? (envelope ? (envelope.context ?? []).filter((r) => r.id === panelThread || r.thread_root === panelThread) : await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? [], { threadRoot: panelThread }))
+      : envelope?.context ?? await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? []);
     // 주인 혼자 1:1(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 데스크톱 대화와 같은 대화로 본다(맥락 양방향 + 일지, 세션은 잇지 않는다 — chat.mjs ownerSoloTurn).
     // 주인이 직접 보낸 첫 단계 턴(손님·넘김·DM 전달·오피스 아님 — ownerSoloTurn)이고, 지난 대화도 주인과 이 에이전트의 글뿐이며(나간 사람·전달된 글이 섞인 방 제외),
     // 방 구성원이 주인·이 에이전트 하나씩일 때만(office-audience ownerSoloRoom — 실행권을 잡은 뒤 아래 solo에서 1회). 기억 안 남김 방·서버 봉투가 없는 옛 서버(지난 대화의 전달 표지를 못 본다)는 제외.
@@ -2379,6 +2388,8 @@ export async function msgrPush(event, { session = sessionClient } = {}) {
   }
   // 아래 'delegate' 미러는 이미 죽은 경로다 — chat.mjs의 delegate 도구가 mirrorCtx.kind==='msgr'(또는 'msgr-rules')이면 항상 stageMessengerHandoff로 조기 반환해 이 emitNotify('delegate')에 절대 닿지 않는다(DM·공개 채널 공통). msgr_dm_relay 도입과 무관하게 이전부터 미도달이었다.
   if (event.type === 'delegate' && event.ctx?.kind === 'msgr') { // 같은 소유자의 다른 크루가 같은 채널에 자기 이름으로(위임 미러)
+    // 오피스 패널 턴의 동기 위임(2단계 PR3) — 결과는 조율자 답에 모인다. 처리한 것으로 끝낸다(방에 따로 올리지 않고, 출처가 있으니 텔레그램·알림으로도 가지 않는다)
+    if (event.ctx.officePanel === true) return true;
     if (muted('delegate')) return false;
     const c = await session(); if (!c) return false;
     const target = await c.db.crewBySlug(c.uid, event.wsId, event.to, event.ctx.orgId).catch(() => null);

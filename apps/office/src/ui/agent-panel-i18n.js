@@ -151,4 +151,7 @@ export const AGENT_DICT = {
   'agent.tool.start_long_task': ['긴 작업 시작', 'Long task'],
   'agent.tool.schedule_task': ['예약', 'Schedule'],
   'agent.tool.use_connector': ['연결 서비스', 'Connected service'],
+  'agent.route.by': ['맡은 동료: {names}', 'Handled by: {names}'],
+  'agent.route.pick': ['다른 에이전트에게 맡기기', 'Hand to another agent'],
+  'agent.route.body': ['{name}에게 맡겨 줘: {text}', 'Hand this to {name}: {text}'],
 };

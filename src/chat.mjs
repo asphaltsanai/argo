@@ -631,7 +631,7 @@ async function turnColleagues(wsId, agentSlug, hop, chain, mirrorCtx, lim = DELE
   return (await listAgents(wsId)).filter((a) => {
     if (!(a.slug !== agentSlug && (!chain.includes(a.slug) || (a.slug === lastSender && replyAllowed)))) return false;
     if (mirrorCtx?.kind === 'msgr-rules') return false;
-    if (mirrorCtx?.kind !== 'msgr') return true;
+    if (mirrorCtx?.kind !== 'msgr' || mirrorCtx.officePanel === true) return true; // 오피스 패널 턴 — 조율자가 같은 워크스페이스 동료를 동기 위임으로 부른다(2단계 PR3)
     return mirrorCtx.peers?.some((peer) => peer.slug === a.slug
       && peer.owner_user_id === mirrorCtx.uid && peer.ws_id === wsId) ?? false;
   });
@@ -675,7 +675,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
   // (SDK 서버 객체는 도구를 내보내지 않는다). sink가 없으면 종전과 동일.
   // sink는 **최종 등재 배열**(아래 createSdkMcpServer tools)과 같은 원천에서 채운다 — tool() 호출 시점에 모으면 동료 0·커넥터 0에서도
   // delegate·send_to_crew·use_connector가 광고된다(분리 검수 HIGH-1: 유령 도구 3종, 설계서 §2-2 위반).
-  const handoffColleagues = mirrorCtx?.kind === 'msgr' ? messengerColleagues(mirrorCtx, hop) : colleagues;
+  const handoffColleagues = mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanel !== true ? messengerColleagues(mirrorCtx, hop) : colleagues; // 패널 턴은 데스크톱처럼 동기 위임(2단계 PR3)
   const defs = new WeakMap();
   const tool = (name, description, shape, handler) => { const t = sdkTool(name, description, shape, handler); if (sink) defs.set(t, { name, description, shape, handler }); return t; };
   // 위임 체인의 직전 크루 — 이 크루가 올리는 결재에 "누구의 위임으로 온 요청인지"를 실어 흐름을 보이게 한다
@@ -787,7 +787,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
           ? `Delegation limit (${lim.delegate} per turn) reached. Don't start more delegations this turn: report what is done and what remains, and ask the user "Shall I continue?" — their reply continues in a new turn.`
           : `위임 상한(${lim.delegate}회)에 닿았다. 이번 턴은 더 위임하지 말고, 끝낸 일과 남은 일을 알린 뒤 사용자에게 "계속할까요?"라고 물어라 — 사용자가 이어서 보내면 새 턴으로 계속된다.`);
       }
-      if (mirrorCtx?.kind === 'msgr' || mirrorCtx?.kind === 'msgr-rules') {
+      if ((mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanel !== true) || mirrorCtx?.kind === 'msgr-rules') { // 오피스 패널 턴은 아래 동기 위임 — 결과를 받아 패널 답에 모은다(2단계 PR3)
         try {
           stageMessengerHandoff(mirrorCtx, { to, message: task });
           cnt.delegate += 1;
@@ -819,7 +819,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
         // 그룹 대화 미러 — 메신저 그룹에서 시작된 턴이면 상대 크루 봇이 같은 방에 결과를 발화한다(게이트웨이가 수신)
         // mirrorCtx를 이벤트에 직접 실어 보낸다 — 전역 맵 조회(동시 턴 오배달 위험)를 없앤다
         const { emitNotify } = await import('./notify.mjs');
-        emitNotify({ type: 'delegate', wsId, from: fromSlug, fromName, to: target.slug, toName: target.name, task, reply: r.reply, artifacts: r.artifacts, ctx: mirrorCtx }); // artifacts — 회의실 미러가 방 메시지에 싣는다(room.mjs)
+        emitNotify({ type: 'delegate', wsId, from: fromSlug, fromName, to: target.slug, toName: target.name, task, reply: r.reply, artifacts: r.artifacts, ctx: mirrorCtx }); // 패널 턴의 위임은 메신저 미러가 조용히 끝낸다(msgr.mjs — 결과는 조율자 답에 모인다) · artifacts — 회의실 미러가 방 메시지에 싣는다(room.mjs)
         return text(`[${target.name}의 작업 결과]\n${r.reply}`);
       } catch (e) {
         return text(`위임 실패(${target.name}): ${String(e.message || e)}`);
@@ -1789,7 +1789,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       const cliTools = !!crewBridge;
       const cliMcpServers = MCP_CLI_RUNNERS.has(runner) ? { ...scoped, argo_browser: browserBridge.server, ...(crewBridge ? { crew: crewBridge.server } : {}) } : null;
       const cliMcp = cliMcpServers ? Object.keys(cliMcpServers).filter((k) => k !== 'crew') : []; // 안내 목록은 외부 MCP만(SDK connectedMcp와 같게 — crew는 도구 안내로 따로 나간다)
-      const cliRoster = cliTools ? (mirrorCtx?.kind === 'msgr' ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : cliColleagues.length ? rosterPrompt(cliColleagues, lang, false, lim) : hopCapNote) : ''; // SDK 턴과 같은 식
+      const cliRoster = cliTools ? (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanel !== true ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : cliColleagues.length ? rosterPrompt(cliColleagues, lang, false, lim) : hopCapNote) : ''; // SDK 턴과 같은 식
       // 안내 문장으로 시작 — 카드 frontmatter('---')가 맨 앞이면 CLI 인자 파서가 플래그로 오해한다. ctx = 스레드 맥락 구획(아래에서 정한다)
       const cliSelfNote = await selfNoteFor(); // CLI 러너는 세션을 잇지 않고 맥락을 매번 다시 싣는다 — 최근 글 그대로
       const promptWith = (ctx) => `${lang === 'en' ? 'Below are your persona card and operating rules.' : '다음은 너의 페르소나 카드와 운영 규칙이다.'}
@@ -2239,7 +2239,7 @@ ${lang === 'en'
   await setTurnStatus(wsId, agentSlug, 'boot', '', undefined, turnSource, undefined, undefined, traceRec.id); // 즉시 — SDK 부팅 전에도 살아있음을 보인다(클라가 번역)
   // 시스템 프롬프트 꼬리·모델 선택은 SDK·네이티브 두 엔진이 **같은 값**을 쓴다(한 곳 정의 — 갈라지면 러너 차등).
   const sysTail = orgRules // 조직 규칙집(팀 메신저 채널 턴) — SDK·네이티브 두 엔진이 같은 꼬리를 쓴다
-    + (mirrorCtx?.kind === 'msgr' ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : colleagues.length ? rosterPrompt(colleagues, lang, false, lim) : hopCapNote)
+    + (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanel !== true ? rosterPrompt(messengerColleagues(mirrorCtx, hop), lang, true) : colleagues.length ? rosterPrompt(colleagues, lang, false, lim) : hopCapNote)
     + commonDirectives({ caps, connectedMcp, connectors, hasTools: true, lang, workRoots, pinnedFolder, source: turnSource, fullAuto })
     + (browserBridge ? browserMcpDirective(lang) : '')
     + messengerNote

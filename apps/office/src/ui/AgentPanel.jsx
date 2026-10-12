@@ -18,7 +18,7 @@ import { createComposerDelivery } from '../../../../src/composer-delivery.mjs';
 import { acceptFiles, withoutFile, chipSize } from '../../../messenger/src/attach-files.mjs';
 import { formatBytes } from '../../../../src/media-kind.mjs';
 import { previewFor } from '../../../messenger/src/media-actions.mjs';
-import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm, liveSteps, keptSteps } from '../core/agent-chat.js';
+import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm, liveSteps, keptSteps, delegatedTo, sendRoute } from '../core/agent-chat.js';
 import { AGENT_DICT } from './agent-panel-i18n.js';
 import './agent-panel.css';
 
@@ -121,7 +121,22 @@ function Steps({ steps, n, open: initial = false }) {
   );
 }
 
-function Message({ row, files, crewName, fence, cards }) {
+// 배분 줄 — 이 답에서 조율자가 맡긴 동료, 그리고 같은 요청을 다른 에이전트에게 맡기기(직무별 배분의 안전장치, 2단계 PR3)
+function RouteBar({ row, others, onRoute }) {
+  const names = delegatedTo(row);
+  if (!names.length && !others.length) return null;
+  return (
+    <div className="agent-route dim small">
+      {names.length > 0 && <span>{t('agent.route.by', { names: names.join(', ') })}</span>}
+      {others.length > 0 && <select className="agent-pick" aria-label={t('agent.route.pick')} value="" onChange={(e) => { if (e.target.value) onRoute(e.target.value); }}>
+        <option value="">{t('agent.route.pick')}</option>
+        {others.map((c) => <option key={c.id} value={c.name}>{c.name}{c.role ? ` · ${c.role}` : ''}</option>)}
+      </select>}
+    </div>
+  );
+}
+
+function Message({ row, files, crewName, fence, cards, route }) {
   const mine = row.author_kind === 'user';
   const own = files.filter((f) => f.message_id === row.id);
   const items = mine ? row.meta?.office_items ?? [] : [];
@@ -135,6 +150,7 @@ function Message({ row, files, crewName, fence, cards }) {
       {!mine && <LinkCard row={row} />}
       {cards}
       {!mine && (() => { const k = keptSteps(row); return k ? <Steps steps={k.steps} n={k.n} /> : null; })()}
+      {!mine && row.kind !== 'system' && route}
     </div>
   );
 }
@@ -241,6 +257,15 @@ export default function AgentPanel({ path, space, onClose }) {
   const agree = () => rpc('msgr_set_ai_consent', { consent: true }).then(() => setAgain((n) => n + 1), () => {});
   const toggleAuto = (on) => { setAuto(on); writeLocal(autoKey(), on); };
   const cancelProp = (key) => { const next = [...canceled.filter((k) => k !== key), key].slice(-200); setCanceled(next); writeLocal(cancelKey(), next); }; // 이 기기에만 — 오래된 것부터 200개 유지
+  const routeTo = async (asked, name) => { // 같은 요청을 고른 동료에게 — 조율자가 그 동료에게 맡기고 결과를 검토해 답한다
+    if (!room?.channel || !root) return;
+    try {
+      const id = await sendRoute(sbRef.current, { channel: room.channel, uid: ME.id, root, name, clientId: `or:${asked.id}:${Date.now()}`,
+        body: t('agent.route.body', { name, text: shownBody(asked.body, fence).slice(0, 2000) }) });
+      setSentAt(Date.now());
+      loadRow(sbRef.current, id).then((r) => { if (r) setRows((rs) => [r, ...rs.filter((x) => x.id !== r.id)]); }, () => {});
+    } catch { showToast(t('agent.sendFail')); }
+  };
   const runProp = async (row, p) => {
     if (!room?.channel || !root) return;
     try {
@@ -277,7 +302,9 @@ export default function AgentPanel({ path, space, onClose }) {
           const key = `${r.id}:${p.pid}`, st = proposalState(thread, r.id, p.pid);
           return <ProposalCard key={p.pid} p={p} state={st === 'open' && canceled.includes(key) ? 'canceled' : st} onRun={() => runProp(r, p)} onCancel={() => cancelProp(key)} />;
         })}</div>;
-        return <Message key={r.id} row={r} files={files} crewName={crew.name} fence={fence} cards={cards} />;
+        const asked = r.author_kind === 'crew' ? thread.find((x) => x.id === r.reply_to && x.author_kind === 'user') : null;
+        const route = asked && <RouteBar row={r} others={crews.filter((c) => c.id !== crew.id)} onRoute={(name) => routeTo(asked, name)} />;
+        return <Message key={r.id} row={r} files={files} crewName={crew.name} fence={fence} cards={cards} route={route} />;
       })}
       {busyTurn && <div className="agent-progress dim small"><span className="agent-spin" />{t('agent.preparing', { crew: crew.name, sec: Math.max(0, Math.round((now - progress.startedAt) / 1000)) })}
         {progress.source && <button type="button" className="btn sm" onClick={() => stopTurn(sbRef.current, progress.crew, progress.source).then((ok) => { setProgress(null); if (ok) showToast(t('agent.stopped')); }, () => showToast(t('crew.fail.generic')))}>{t('agent.stop')}</button>}</div>}

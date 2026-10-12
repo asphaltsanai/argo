@@ -152,3 +152,18 @@ export function keptSteps(row) {
   const n = Number.isSafeInteger(o.n) && o.n > 0 ? o.n : steps.length;
   return steps.length ? { n, steps } : null;
 }
+
+/* ── 직무별 배분(2단계 PR3) — 답 글의 단계 요약에서 '동료에게 맡김' 단계의 대상을 모으고, '다른 에이전트에게 맡기기'는 같은 대화에 맡길 동료 이름을 실은 글을 넣는다 ── */
+export function delegatedTo(row) {
+  const k = keptSteps(row);
+  return k ? [...new Set(k.steps.filter((s) => s.stage === 'delegate' && s.detail).map((s) => s.detail))] : [];
+}
+
+/** 맡길 동료를 고른 글 — 같은 대화 뿌리에 붙인다. 반환: 글 번호 */
+export async function sendRoute(sb, { channel, uid, root, name, body, clientId }) {
+  const row = { channel_id: channel, author_kind: 'user', author_user_id: uid, body, client_msg_id: clientId,
+    meta: { source: PANEL_SOURCE, office_route: name }, reply_to: root, thread_root: root };
+  const { data, error } = await sb.from('msgr_messages').insert(row).select('id').single();
+  if (error) throw Object.assign(new Error(error.message), { code: error.code });
+  return data.id;
+}

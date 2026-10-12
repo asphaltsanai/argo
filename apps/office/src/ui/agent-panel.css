@@ -68,6 +68,7 @@ html.agent-open .main { margin-right: var(--agent-w); }
 .agent-steps-list { margin: 6px 0 0; padding: 8px 10px 8px 26px; border-radius: var(--rc); background: var(--bg); display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 1.45; }
 .agent-steps-list b { font-weight: 500; }
 .agent-steps-list span { overflow-wrap: anywhere; }
+.agent-route { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 @media (max-width: 767px) {
   html.agent-open .main { margin-right: 0; }
   .agent-dock { width: 100%; border-left: 0; }
