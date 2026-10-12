@@ -29,7 +29,7 @@ process.env.PATH = `${BIN}:${process.env.PATH}`;
 let bodies = []; let call = null;
 const sse = (res, evs) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); for (const [e, d] of evs) res.write(`event: ${e}\ndata: ${JSON.stringify(d)}\n\n`); res.end(); };
 const start = () => ({ type: 'message_start', message: { id: 'm', type: 'message', role: 'assistant', model: 'claude-x', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } });
-const srv = http.createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+const srv = http.createServer((req, res) => { let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
   if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
     bodies.push(b); const last = (JSON.parse(b || '{}').messages ?? []).at(-1);
     const hasResult = Array.isArray(last?.content) && last.content.some((c) => c.type === 'tool_result');

@@ -21,6 +21,7 @@
 //    구분되는 1급 분류(OpenRouter 402/429와 대칭). AUTH_ERR_RE 자가치유를 오발동시키지 않는다.
 import { terminateOwnedProcessTree, watchOwnedProcessTree } from './process-tree.mjs';
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,8 +124,11 @@ export function runAppServerSession({ input, output, prompt, model = '', unsetMo
     if (signal) signal.addEventListener('abort', () => finish(rejectP, Object.assign(new Error('중단됨'), { aborted: true })), { once: true });
 
     let buf = '';
+    // StringDecoder — 조각(Buffer)마다 toString으로 이으면 한글 한 글자(3바이트)가 조각 경계에 걸릴 때 U+FFFD 세 개로 깨져 답에 "���"가 섞였다
+    // (2026-10-13 전수 수색 — #981 시험 가짜 서버와 같은 결함). 문자열 조각(시험의 PassThrough 등)은 그대로 잇는다.
+    const dec = new StringDecoder('utf8');
     output.on('data', (d) => {
-      buf += d.toString();
+      buf += typeof d === 'string' ? d : dec.write(d);
       let i;
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i).trim();

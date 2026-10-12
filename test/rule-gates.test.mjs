@@ -117,6 +117,28 @@ test('PR 본문 검사: 판정 경계(오탐·누락)', () => {
   assert.deepEqual(checkPr({ body, files: ['src/a.mjs'], added: [{ file: 'src/a.mjs', line: 'setTimeout(close, 0)' }], shared }), [], '짧은 일회성 setTimeout은 주기 호출이 아니다');
 });
 
+test('PR 본문 검사: ## 절 안의 ### 소제목은 그 절에 합친다(#961 검수 LOW-1)', () => {
+  const files = ['src/sync.mjs'];
+  const body = '## 영향 반경\n### 축\n| 맥 | 검증함(npm test) |\n### 산출물\n기능 브랜치뿐\n## 경우 표\n### 첫 실행\n기대 … 근거 test/x\n## 검수\n분리 검수: MEDIUM 1 고침';
+  assert.deepEqual(checkPr({ body, files, shared }), [], '소제목 아래 내용이 상위 절의 내용으로 세지지 않았다');
+  assert.deepEqual(Object.keys(sections(body)), ['영향 반경', '경우 표', '검수'], '### 소제목이 새 절이 됐다');
+  // 소제목 글자만 있고 내용이 없으면 여전히 빈 절이다
+  assert.match(checkPr({ body: '## 영향 반경\n### 축\n## 검수\n분리 검수: 지적 0', files, shared }).join('\n'), /영향 반경/);
+  // 위에 ## 절이 없으면 ### 도 절로 읽는다(제목 단계를 하나씩 내려 쓴 본문)
+  assert.deepEqual(checkPr({ body: '### 영향 반경\n맥 검증함\n### 경우 표\n기대 … 근거\n### 검수\n지적 0', files, shared }), []);
+});
+test('PR 본문 검사: "대기·pending·TBD"만 있는 절은 빈 절로 본다(#961 검수 LOW-2)', () => {
+  const ok = '## 영향 반경\n맥 검증함\n## 검수\n분리 검수: MEDIUM 1 고침';
+  assert.deepEqual(checkPr({ body: ok, files: ['src/a.mjs'], shared }), []);
+  for (const t of ['분리 검수: 대기', '대기 중', '- 분리 검수: pending', 'TBD', '분리 검수: 대기\n도달 지점: TBD', '검수: 예정']) {
+    assert.match(checkPr({ body: ok.replace('분리 검수: MEDIUM 1 고침', t), files: ['src/a.mjs'], shared }).join('\n'), /분리 검수/, JSON.stringify(t));
+  }
+  // 자리 표시와 실제 내용이 섞이면 채운 것이다(대기 중인 축이 있어도 다른 축의 근거는 내용)
+  assert.deepEqual(checkPr({ body: ok.replace('분리 검수: MEDIUM 1 고침', '분리 검수: 대기\n자체 확인: 변이 red 2종'), files: ['src/a.mjs'], shared }), []);
+  // "대기"가 낱말 일부인 내용은 자리 표시가 아니다
+  assert.deepEqual(checkPr({ body: ok.replace('분리 검수: MEDIUM 1 고침', '분리 검수: 대기열 경합 MEDIUM 고침'), files: ['src/a.mjs'], shared }), []);
+});
+
 // 머신 표 — 라이브 DB 적용·iOS 발행은 맥 two(홈 /Users/leankim)에서 거부한다(다른 홈과 시험용 임시 레포는 기존 msgr-live-apply-*.test.mjs가 본다).
 test('맥 two에서는 라이브 DB 적용·iOS 발행을 거부한다', { skip: process.platform === 'win32' && 'Windows의 homedir()는 HOME이 아니라 USERPROFILE을 본다 — 맥 전용 규칙' }, () => {
   const env = { ...process.env, HOME: '/Users/leankim' };

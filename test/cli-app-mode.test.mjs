@@ -104,7 +104,7 @@ const HOME = join(base, 'home'); mkdirSync(HOME, { recursive: true });
 const CLIH = join(base, 'cli');
 const ROOT = appDataRoot({ env: { HOME }, platform: process.platform, home: HOME });
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => (b += c)); req.on('end', () => {
     if (!(req.method === 'POST' && req.url.startsWith('/v1/messages'))) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}'); }
     const body = JSON.parse(b || '{}');
     if (!body.stream) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 't', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'title' }], stop_reason: 'end_turn', usage: { input_tokens: 0, output_tokens: 0 } })); }
@@ -280,7 +280,7 @@ test('앱이 꺼진 상태에서 세션 없는 앱 폴더에 argo login — 저�
   try {
     let url; for (let i = 0; i < 100 && !url; i++) { url = out.match(/http:\/\/127\.0\.0\.1:\d+\/\?k=[0-9a-f]+/)?.[0]; if (!url) await new Promise((r) => setTimeout(r, 100)); }
     assert.ok(url, `로그인 주소가 나와야 한다\n${out}${err}`);
-    const get = (u) => new Promise((resolve, reject) => http.get(u, (res) => { let b = ''; res.on('data', (c) => (b += c)); res.on('end', () => resolve(b)); }).on('error', reject));
+    const get = (u) => new Promise((resolve, reject) => http.get(u, (res) => { let b = ''; res.setEncoding('utf8'); res.on('data', (c) => (b += c)); res.on('end', () => resolve(b)); }).on('error', reject));
     const html = await get(url);
     const nonce = decodeURIComponent(html.match(/redirect_to=([^"&]+)/)[1]).match(/cli=([0-9a-f]+)/)[1];
     const u = new URL(url);
@@ -473,7 +473,7 @@ test('앱이 꺼진 상태에서 시작한 로그인을 기다리는 동안 앱�
   try {
     let url; for (let i = 0; i < 100 && !url; i++) { url = out.match(/http:\/\/127\.0\.0\.1:\d+\/\?k=[0-9a-f]+/)?.[0]; if (!url) await new Promise((r) => setTimeout(r, 100)); }
     assert.ok(url, `로그인 주소\n${out}${err}`);
-    const get = (u) => new Promise((resolve, reject) => http.get(u, (res) => { let b = ''; res.on('data', (c) => (b += c)); res.on('end', () => resolve(b)); }).on('error', reject));
+    const get = (u) => new Promise((resolve, reject) => http.get(u, (res) => { let b = ''; res.setEncoding('utf8'); res.on('data', (c) => (b += c)); res.on('end', () => resolve(b)); }).on('error', reject));
     const nonce = decodeURIComponent((await get(url)).match(/redirect_to=([^"&]+)/)[1]).match(/cli=([0-9a-f]+)/)[1];
     writePresence(root, { pid: process.pid }); // 기다리는 사이 앱이 켜졌다
     const status = await new Promise((resolve, reject) => {

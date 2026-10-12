@@ -226,11 +226,12 @@ test('회전 — 이름이 같으면 이름 때문에 파일을 다시 쓰지 �
   for (const [label, display, rewritten] of [['같은 이름', '유건', false], ['바뀐 이름', '김유건', true]]) {
     await writeSession({ id: 'u-1', email: 'u-1@b.c', name: '유건', nameAt: 0 }, { expiresIn: -10 });
     let atQuery = null;
-    const c = fakeClient({ refresh: rotate, profile: () => ({ data: { display_name: display }, error: null }), onQuery: () => { const st = statSync(SESSION_FILE); atQuery = { ino: st.ino, mtimeMs: st.mtimeMs }; } });
+    const c = fakeClient({ refresh: rotate, profile: () => ({ data: { display_name: display }, error: null }), onQuery: () => { const st = statSync(SESSION_FILE, { bigint: true }); atQuery = { ino: st.ino, mtimeNs: st.mtimeNs }; } });
     await getFreshDeviceSession({ _mkClient: c.mk });
-    const st = statSync(SESSION_FILE);
+    // bigint — Windows의 파일 번호(64비트)는 Number로 받으면 2^53을 넘는 자리가 뭉개져 다른 파일이 같은 ino로 보인다(10/12 windows-latest 실패: 재기록인데 같은 inode·mtime)
+    const st = statSync(SESSION_FILE, { bigint: true });
     assert.ok(atQuery, label);
-    assert.equal(st.ino === atQuery.ino && st.mtimeMs === atQuery.mtimeMs, !rewritten, `${label}: 재기록 ${rewritten}`);
+    assert.equal(st.ino === atQuery.ino && st.mtimeNs === atQuery.mtimeNs, !rewritten, `${label}: 재기록 ${rewritten}`);
     assert.equal((await readSession()).user.name, display, label);
   }
   await clearDeviceSession();
@@ -247,7 +248,7 @@ test('상주·워커(ARGO_TENANT_OWNER) — 로그인·회전에서 msgr_profile
 
 // ── 턴 10회 동안 msgr_profiles 조회 0, 매 턴 지시문에 이름 ──
 const supa = { profiles: 0, total: 0 };
-const listen = (handler) => new Promise((r) => { const s = http.createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => handler(req, res, b)); }); s.listen(0, '127.0.0.1', () => r(s)); });
+const listen = (handler) => new Promise((r) => { const s = http.createServer((req, res) => { let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => handler(req, res, b)); }); s.listen(0, '127.0.0.1', () => r(s)); });
 const supaServer = await listen((req, res) => { supa.total++; if (req.url.includes('msgr_profiles')) supa.profiles++; res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"display_name":"다른이름"}'); });
 const systems = [];
 const vendor = await listen((req, res, b) => {

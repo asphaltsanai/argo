@@ -21,7 +21,7 @@ for (const key of ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 
 // ── 가짜 서버 셋 — 받은 시스템 글을 러너 이름별로 모은다 ──
 const seen = {}; // runner → [시스템 글]
 let current = '?';
-const listen = (handler) => new Promise((r) => { const s = http.createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => handler(req, res, JSON.parse(b || '{}'))); }); s.listen(0, '127.0.0.1', () => r(s)); });
+const listen = (handler) => new Promise((r) => { const s = http.createServer((req, res) => { let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => handler(req, res, JSON.parse(b || '{}'))); }); s.listen(0, '127.0.0.1', () => r(s)); });
 const textOf = (sys) => (Array.isArray(sys) ? sys.map((s) => s.text ?? '').join('\n') : String(sys ?? ''));
 const messages = await listen((req, res, body) => {
   if ((body.tools ?? []).length) (seen[current] ??= []).push({ via: 'messages', text: textOf(body.system) }); // 도구 없는 요청 = SDK 세션 제목 생성 — 턴이 아니다

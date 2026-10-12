@@ -4,6 +4,14 @@
   "ignoreCommand": "git diff --quiet HEAD^ HEAD -- . ../messenger/src/crew-face.mjs",
   "rewrites": [
     {
+      "source": "/.well-known/oauth-protected-resource",
+      "destination": "/api/oauth-resource"
+    },
+    {
+      "source": "/.well-known/oauth-protected-resource/:path*",
+      "destination": "/api/oauth-resource"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
@@ -43,6 +51,12 @@
     },
     "api/files/[op].js": {
       "maxDuration": 300
+    },
+    "api/mcp.js": {
+      "maxDuration": 120
+    },
+    "api/agent/actions.js": {
+      "maxDuration": 120
     }
   },
   "crons": [

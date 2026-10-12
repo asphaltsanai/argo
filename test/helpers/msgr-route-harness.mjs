@@ -1,6 +1,6 @@
 // 본체 설정 '메신저 연결' 라우트(app/api/companies/[ws]/msgr/route.js)를 실제로 돌리는 자식 프로세스 — 세션·회사 설정·DB만 대역으로 바꾼다.
 // 실행: node --experimental-test-module-mocks --no-warnings test/helpers/msgr-route-harness.mjs  (입력은 env ARGO_MSGR_HARNESS = JSON)
-// 입력 { ownerId(회사 소유자 — 기본 이 계정), pauseRpcFail(msgr_my_agent_pause 실패), crews: [행], agents: [이 회사 에이전트 slug — 행이 없는 것까지], pauseReason, minApp: 'new'|'old', enabled, method, body, auto: true(이어서 진짜 autoEnableMsgr 한 번) }
+// 입력 { ownerId(회사 소유자 — 기본 이 계정), profile(이 계정의 메신저 프로필 — 기본 true, 'fail'이면 조회 실패), pauseRpcFail(msgr_my_agent_pause 실패), crews: [행], agents: [이 회사 에이전트 slug — 행이 없는 것까지], pauseReason, minApp: 'new'|'old', enabled, method, body, auto: true(이어서 진짜 autoEnableMsgr 한 번) }
 // 출력(stdout 마지막 줄 JSON) { status, body(응답 JSON), enabled, rows: ['slug:status'], auto, log }
 // DB 대역은 PostgREST가 select 열 목록대로만 돌려주는 것까지 흉내 내지 않는다 — 라우트가 읽는 열(id·org_id·slug·status·hosting)은 행에 늘 있다.
 import { mock } from 'node:test';
@@ -47,11 +47,12 @@ const client = {
 };
 const db = {
   heartbeat: async () => { log.push('heartbeat'); if (input.minApp !== 'old') { pauseReason = null; crews.filter((r) => r.status === 'paused').slice(0, 4).forEach((r) => { r.status = 'active'; }); } },
-  myOrgIds: async () => [...new Set(crews.map((r) => r.org_id).filter(Boolean))], hasAnyCrew: async () => crews.length > 0, hasMsgrProfile: async () => true,
+  myOrgIds: async () => [...new Set(crews.map((r) => r.org_id).filter(Boolean))], hasAnyCrew: async () => crews.length > 0,
+  hasMsgrProfile: async () => { log.push('profile?'); if (input.profile === 'fail') throw new Error('fetch failed'); return input.profile ?? true; },
   hasPausedCrew: async () => crews.some((r) => r.status === 'paused'), myAgentPause: async () => (await client.rpc('msgr_my_agent_pause')).data,
 };
-const sess = { uid: UID, client, db };
-let company = { id: WS, ownerId: input.ownerId ?? UID, msgr: { enabled: input.enabled ?? true } };
+const sess = { uid: UID, email: 'me@example.com', client, db };
+let company = { id: WS, ownerId: input.ownerId ?? UID, msgr: { enabled: input.enabled ?? true, ...(input.nodeOrgId ? { nodeOrgId: input.nodeOrgId } : {}) } }; // nodeOrgId — 회사 노드(자동 켜기·미러 대상 밖)
 const update = async (_ws, fn) => { company = { ...company, ...fn(company) }; log.push(`enabled=${company.msgr.enabled}`); return company; };
 
 // namedExports — CI(Node 22)가 아는 이름. Node 24는 exports를 권하지만 둘 다 받는다
@@ -63,7 +64,7 @@ mock.module(at('src/connections.mjs'), { namedExports: { msgrGatewayStatus: asyn
 mock.module(at('src/gateway.mjs'), { namedExports: { nudgeGateway: () => {} } });
 
 const route = await import(at('app/api/companies/[ws]/msgr/route.js'));
-const res = await route[input.method ?? 'POST'](new Request('http://127.0.0.1/api', { method: input.method ?? 'POST', body: JSON.stringify(input.body ?? {}), headers: { 'content-type': 'application/json' } }), { params: Promise.resolve({ ws: WS }) });
+const res = await route[input.method ?? 'POST'](new Request('http://127.0.0.1/api', { method: input.method ?? 'POST', ...(input.method === 'GET' ? {} : { body: JSON.stringify(input.body ?? {}) }), headers: { 'content-type': 'application/json' } }) /* GET은 본문을 가질 수 없다 */, { params: Promise.resolve({ ws: WS }) });
 let auto = null;
 if (input.auto) { // 게이트웨이의 10분 자동 켜기 한 번(진짜 함수) — 꺼진 브리지를 되살리는가
   let t = 0;
