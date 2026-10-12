@@ -220,7 +220,10 @@ test('LOW-5 — 풀 오토 표지는 모델에게 가는 글을 바꾸지 않는
     for (const [withFlag, without] of pairs) {
       const x = await capture(withFlag); const y = await capture(without);
       assert.ok(x.length && y.length, '턴이 돌았다');
-      assert.deepEqual(x, y, '표지가 있어도 시스템 프롬프트·메시지가 같다');
+      // 실패 메시지에 첫 차이 자리를 싣는다 — deepEqual 기본 출력은 앞부분만 남기고 잘려(… N more characters) CI 실패 2회(10/9·10/10 macos-15)의 원인 줄이 기록에 없었다
+      const xs = JSON.stringify(x); const ys = JSON.stringify(y);
+      let at = 0; while (at < xs.length && xs[at] === ys[at]) at++;
+      assert.equal(xs, ys, `표지가 있어도 시스템 프롬프트·메시지가 같다 — 첫 차이 ${at}자(길이 ${xs.length}/${ys.length}): 있음 …${xs.slice(Math.max(0, at - 160), at + 160)}… / 없음 …${ys.slice(Math.max(0, at - 160), at + 160)}…`);
     }
   } finally { await updateCompany(ws, { fullAuto: true }); }
 });
