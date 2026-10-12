@@ -2027,7 +2027,7 @@ ${lang === 'en'
             const healed = await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, ownerSeat, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners: tried });
             return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선 — 안쪽이 이미 표식했으면 유지(P2)
           } catch (e2) {
-            if (authCause && e2 && typeof e2 === 'object' && !e2.aborted && !e2.authFailedRunner) e2.authFailedRunner = runner; // 첫 원인(인증 만료 러너) 보존 — 마지막 오류는 대체 러너의 것이라
+            if (authCause && e2 && typeof e2 === 'object' && !e2.aborted) e2.authFailedRunner = runner; // 첫 원인(인증 만료 러너) 보존 — 마지막 오류는 대체 러너의 것이라. 늘 덮는다: 바깥 프레임이 더 먼저 시도한 러너다(3단 사슬 claude → codex → gemini에서 안쪽이 붙인 codex를 claude로, #980 검수 2 LOW-1)
             e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리(공유 노트 복원 포함)로 낙하. 재시도 중 중단도 중단으로 기록
           }
         }
@@ -2537,7 +2537,7 @@ ${lang === 'en'
           const healed = await chat(wsId, agentSlug, userMsg, null, { __turnControl, from, source, ownerSeat, __downgradedFrom: null, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __freshRetry: true, __seedNotes: sharedNotes, __excludeRunners: tried });
           return { ...healed, fellBack: healed.fellBack ?? { from: runner, to: alt.runner, reason: 'auth' } }; // 첫 원인 우선(P2) — CLI 갈래와 같은 계약
         } catch (e2) {
-          if (e2 && typeof e2 === 'object' && !e2.aborted && !e2.authFailedRunner) e2.authFailedRunner = runner; // 첫 원인(인증 만료 러너) 보존 — CLI 갈래와 같다
+          if (e2 && typeof e2 === 'object' && !e2.aborted) e2.authFailedRunner = runner; // 첫 원인(인증 만료 러너) 보존 — CLI 갈래와 같다(바깥 프레임이 늘 덮는다)
           e = e2; if (e2?.aborted) aborted = true; // 재시도도 실패 — 아래 공통 실패 처리로 낙하
         }
       }

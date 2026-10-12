@@ -24,9 +24,11 @@ const wrappers = new Map();
 for (const [relative, replacements] of [
   // 러너 해석만 고정 — gemini가 먼저, gemini를 빼면 codex(자가치유 대체). 턴 전 자격 게이트·자가치유 판정은 실제 함수.
   ['./runners.mjs', `
-    export const resolveRunner = async (_ws, _want, { exclude = [] } = {}) => (exclude ?? []).includes('gemini')
-      ? ((exclude ?? []).includes('codex') ? { runner: 'gemini', available: false } : { runner: 'codex', available: true, fellBack: true })
-      : { runner: 'gemini', available: true, fellBack: false };
+    export const resolveRunner = async (_ws, _want, { exclude = [] } = {}) => { // 사슬 순서대로 아직 안 뺀 첫 러너(globalThis.__argoAuthChain — 기본 gemini → codex)
+      const chain = globalThis.__argoAuthChain ?? ['gemini', 'codex'];
+      const next = chain.find((r) => !(exclude ?? []).includes(r));
+      return next ? { runner: next, available: true, fellBack: next !== chain[0] } : { runner: chain[0], available: false };
+    };
     export const isBilledRunner = async () => false;
     export const externalExec = (...args) => globalThis.__argoAuthReasonExec(...args);
   `],
@@ -44,6 +46,7 @@ after(() => { hooks.deregister(); globalThis.fetch = realFetch; delete globalThi
 
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { saveRunnerCred } = await import('../src/runners/creds.mjs');
+after(() => { delete globalThis.__argoAuthChain; });
 const { readEvents } = await import('../src/events.mjs');
 const { chat } = await import('../src/chat.mjs');
 const { roomAuthRunner, roomTurnFailureFor, roomTurnFailure } = await import('../src/gateway/msgr-room-errors.mjs');
@@ -84,6 +87,25 @@ test('① 인증 만료 → 다른 러너로 재시도 → 그 러너도 실패:
   assert.match(room, /실행기 주인/);
   assert.doesNotMatch(room, /OAuth session|gpt-x|AIza|sk-proj|\/login/, `원문·자격이 방에 샜다: ${room}`);
   assert.match(roomTurnFailureFor(err, 'en'), /Gemini login on the runner behind this agent has expired/);
+});
+
+test('①-b 3단 사슬(gemini 만료 → codex도 만료 → antigravity 다른 실패) — 방 글은 처음 만료된 러너(gemini)를 말한다(#980 검수 2 LOW-1)', async () => {
+  const ws = 'auth-reason-chain3';
+  await company(ws);
+  await saveRunnerCred(ws, 'antigravity', 'oauth', `ya29.${'z'.repeat(60)}`); // 형식만 맞춘 가짜 — 세 번째 CLI 러너
+  globalThis.__argoAuthChain = ['gemini', 'codex', 'antigravity'];
+  const calls = [];
+  globalThis.__argoAuthReasonExec = async (runner) => {
+    calls.push(runner);
+    if (calls.length <= 2) throw new Error('Failed to authenticate: OAuth session expired. Please run /login'); // 첫째·둘째 모두 만료
+    throw new Error('antigravity process returned an unexpected payload'); // 셋째는 인증이 아닌 실패
+  };
+  let err = null;
+  try { await chat(ws, 'g', '안녕', null, {}).catch((e) => { err = e; }); } finally { delete globalThis.__argoAuthChain; }
+  assert.ok(err);
+  assert.equal(calls.length, 3, `세 러너를 차례로 시도했다(${calls.length}회)`);
+  assert.equal(err.authFailedRunner, 'gemini', `처음 만료된 러너여야 한다 — 안쪽 프레임이 붙인 codex가 남으면 안 된다(${err.authFailedRunner})`);
+  assert.match(roomTurnFailureFor(err, 'ko'), /Gemini 로그인이 만료/);
 });
 
 test('② 메신저 방 글 판정 — 필드만 본다(원문 재판정 없음), 인증이 아니면 일반 문구', () => {
