@@ -65,6 +65,24 @@ for (const full of [false, true]) test(`progress(${full ? '공개' : '비공개'
   rt.delete('ws:O');
 });
 
+// 오피스 패널 단계 보기(2단계 PR2) — 게이트웨이가 패널 턴·주인 혼자 1:1에서만 steps 함수를 넘긴다. 넘긴 경우에만 그 목록을 싣고, 상태 파일 값은 여전히 싣지 않는다
+test('progress: steps 함수를 받은 턴만 그 단계 목록을 싣는다(상태 파일의 사고·본문은 여전히 안 싣는다)', async () => {
+  const { setTurnStatus } = await import('../src/turn-status.mjs');
+  const { mkdir } = await import('node:fs/promises');
+  const { paths } = await import('../src/workspace.mjs');
+  await mkdir(paths('ws').chats, { recursive: true });
+  await setTurnStatus('ws', 'pepper', 'shell', 'cat ~/secret', 'OWNER-PRIVATE-PARTIAL', 'messenger', 'OWNER-PRIVATE-THOUGHT', [{ stage: 'shell', detail: 'cat ~/secret' }]);
+  const f = fakeClient(); rt.set('ws:O', f.org);
+  const stop = startTyping('ws', 'O', 'C-x', 'crew-1', 'pepper', { full: false, sourceMsgId: 910, steps: () => [{ stage: 'memory', detail: '견적.md' }] });
+  await new Promise((r) => setTimeout(r, 1700));
+  stop();
+  const prog = f.sent.filter((m) => m.event === 'progress');
+  assert.ok(prog.length >= 1);
+  assert.deepEqual(prog[0].payload.steps, [{ stage: 'memory', detail: '견적.md' }]);
+  assert.ok(!JSON.stringify(f.sent).includes('OWNER-PRIVATE') && !JSON.stringify(f.sent).includes('secret'));
+  rt.delete('ws:O');
+});
+
 test('App.jsx 배선: 개인 공간의 방과 조직의 비공개 방(공개 채널 아님)은 dm:<채널>을 구독해 typing·progress를 받는다 — 열린 방만이 아니라 전부(목록의 답변 중, 2026-09-23)', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync(new URL('../apps/messenger/src/App.jsx', import.meta.url), 'utf8');

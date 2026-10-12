@@ -1409,7 +1409,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, opts = {}
     // 같은 크루의 다른 턴·위임받은 동료 턴은 control이 달라 따로 쌓인다(크루당 하나인 상태 파일이 섞이던 문제를 기록에서는 끊는다).
     // 끝내기·저장은 기록을 만든 바깥 프레임만 한다. 저장 대상(1:1·회의실)이면 traceId를 결과·오류에 싣는다 — 대화 줄이 이 기기의 기록을 가리킨다.
     const own = !control.trace;
-    if (own) control.trace = createTrace({ wsId, slug: agentSlug, source });
+    if (own) { control.trace = createTrace({ wsId, slug: agentSlug, source }); opts.onTrace?.(control.trace); } // onTrace — 이 턴의 기록기를 부른 쪽에 알린다(오피스 패널 단계 보기, gateway/office-steps.mjs)
     if (opts.goalTurn && !control.goalTurn) control.goalTurn = opts.goalTurn; // 목표 하트비트 회차(goal-heartbeat.mjs runCheck) — goal_checkin이 결과를 적는 자리
     const trace = control.trace;
     try {

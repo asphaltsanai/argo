@@ -27,9 +27,11 @@ test('서버: chat.mjs가 steps를 상태 파일에 싣고 trace를 반환(데�
   assert.doesNotMatch(bridge, /if \(key === last\) return;/, '바뀐 것만 거르는 dedupe를 없앴다(고쳤다는 증거 — 되돌아가면 이 단언이 잡는다)');
   assert.match(bridge, /const PROGRESS_MIN_GAP_MS = 4_000;/, '실제 방송은 크루당 최소 4초 간격(재검수 2026-09-26 L-b)');
   assert.match(bridge, /if \(now - lastSentAt < PROGRESS_MIN_GAP_MS\) return;/, '4초 안 지났으면 보내지 않는다');
-  assert.match(bridge, /const payload = \{ channel_id: channelId, crew_id: crewId, startedAt: s\.startedAt, source_msg_id: sourceMsgId \};.*\n\s*lastSentAt = now;\n\s*await ch\.send\(\{ type: 'broadcast', event: 'progress', payload \}\)/, '4초 지나면 무조건 다시 방송(값이 그대로여도)');
+  // 오피스 패널 턴(주인 혼자 1:1)만 steps를 싣는다(2단계 PR2 — steps 함수를 받은 턴만, msgr-private-typing.test.mjs). 그 밖의 방은 신호 네 칸 그대로
+  assert.match(bridge, /const payload = \{ channel_id: channelId, crew_id: crewId, startedAt: s\.startedAt, source_msg_id: sourceMsgId, \.\.\.\(list\?\.length \? \{ steps: list \} : \{\}\) \};.*\n\s*lastSentAt = now;\n\s*await ch\.send\(\{ type: 'broadcast', event: 'progress', payload \}\)/, '4초 지나면 무조건 다시 방송(값이 그대로여도)');
+  assert.match(bridge, /const list = steps \? steps\(\) : null;/, '단계는 steps 함수를 받은 턴만');
   assert.match(bridge, /if \(stopped \|\| !s \|\| s\.source !== 'messenger'\) return;/, '상태 파일 source 게이트(검수 M-6)');
-  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public', sourceMsgId: job\.msgId(, topic: [^}]*)? \}\)/, 'slug·원본 메시지 id 전달(id는 크루 작업 중단 버튼의 대상) + 본문·사고 방송은 공개 채널만(검수 C-1)');
+  assert.match(bridge, /startTyping\(wsId, job\.orgId, job\.channelId, job\.crewId, job\.slug, \{ full: ch\.kind === 'public', sourceMsgId: job\.msgId(, topic: [^,}]*)?(, \.\.\.\(panelSolo \? \{ steps: [^}]*\} : \{\}\))? \}\)/, 'slug·원본 메시지 id 전달(id는 크루 작업 중단 버튼의 대상) + 본문·사고 방송은 공개 채널만(검수 C-1) + 단계는 패널 턴·주인 혼자 1:1(panelSolo)만');
   assert.doesNotMatch(bridge, /turnTrace = ch\.kind === 'public'/, '메신저 답글에는 궤적을 저장하지 않는다(유건 결정 2026-09-24)');
   assert.match(read('supabase/migrations/20260909003000_msgr_message_meta.sql'), /add column if not exists meta jsonb not null default '\{\}'::jsonb/, 'meta 열');
 });

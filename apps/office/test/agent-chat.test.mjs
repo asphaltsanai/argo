@@ -147,3 +147,15 @@ test('카드 칸 이름 — 오피스 도구의 모든 인자 칸에 ko·en 이�
   assert.equal(AGENT_DICT['agent.field.office_mail.account'][0], '메일 계정');
   assert.equal(fieldLabelKey({ tool: 'office_work', key: 'title' }, has), 'agent.field.title');
 });
+
+// 단계 보기(2단계 PR2) — 방송·답 글의 단계를 모양만 맞춰 받는다
+import { liveSteps, keptSteps } from '../src/core/agent-chat.js';
+
+test('단계 — 모르는 단계 코드는 작업으로, 에이전트 답의 요약만, 비면 없음', () => {
+  assert.deepEqual(liveSteps({ steps: [{ stage: 'memory', detail: '견적.md' }, { stage: 'hack', detail: 'x' }, null, 'y'] }), [{ stage: 'memory', detail: '견적.md' }, { stage: 'work', detail: 'x' }]);
+  assert.deepEqual(liveSteps({}), []);
+  assert.deepEqual(keptSteps({ author_kind: 'crew', meta: { office_steps: { n: 30, steps: [{ stage: 'shell', detail: 'ls' }] } } }), { n: 30, steps: [{ stage: 'shell', detail: 'ls' }] });
+  assert.equal(keptSteps({ author_kind: 'user', meta: { office_steps: { n: 1, steps: [{ stage: 'shell' }] } } }), null, '사람 글의 단계는 보이지 않는다');
+  assert.equal(keptSteps({ author_kind: 'crew', meta: { office_steps: { n: 2, steps: [] } } }), null);
+  assert.deepEqual(keptSteps({ author_kind: 'crew', meta: { office_steps: { n: -1, steps: [{ stage: 'web', detail: 'a.com' }] } } }), { n: 1, steps: [{ stage: 'web', detail: 'a.com' }] });
+});

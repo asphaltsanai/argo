@@ -1865,6 +1865,29 @@ test('오피스 패널 사슬: 넘김·전달·이어 실행이 표지를 잇고
   assert.equal(cont[1].officePanelChain, undefined, '대조군');
 });
 
+// 오피스 패널 단계 보기(2단계 PR2) — 주인 혼자 1:1 패널 턴의 답 글에만 단계 요약(meta.office_steps)이 실린다
+test('오피스 패널: 주인 혼자 1:1이면 답 글에 단계 요약, 아니면 싣지 않는다', async () => {
+  const { createTrace } = await import('../src/turn-trace.mjs');
+  M._autoLogForTest.clear();
+  const drainJobs = async (messages) => { const db = fakeDb({ messages }); const enq = fakeEnqueue(); await M.drain(WS, { db, uid: OWNER, enqueue: enq }); return jobsOf(enq); };
+  const [p] = await drainJobs([msg(320, { author_user_id: OWNER, mentions: [{ kind: 'crew', id: CREW }], meta: { source: 'office_panel' } })]);
+  const members = (rows) => ({ from: () => ({ select: () => ({ eq: async () => ({ data: rows, error: null }) }) }) });
+  const runChat = async (_ws, _slug, _t, _sid, opts) => {
+    const tr = createTrace({ source: 'messenger' }); opts.onTrace?.(tr);
+    tr.toolStart({ id: 'a', name: 'Read', input: { file_path: '/w/견적.md' } }); tr.toolEnd('a', { result: 'x' });
+    return { reply: '정리했습니다', sessionId: null, artifacts: [] };
+  };
+  const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }];
+  for (const [name, rows, want] of [['주인 혼자', [{ member_kind: 'user', member_id: OWNER }, { member_kind: 'crew', member_id: CREW }], true],
+    ['다른 사람이 있는 방', [{ member_kind: 'user', member_id: OWNER }, { member_kind: 'user', member_id: MEMBER }, { member_kind: 'crew', member_id: CREW }], false]]) {
+    const db = fakeDb({ peers }); db.channelOverride = { kind: 'dm', name: 'dm:서윤' }; // 패널 방 = 1:1
+    await M.makeMsgrHandler(WS, { session: async () => ({ db, uid: OWNER, client: members(rows) }), runChat })({ ...p, after: [] });
+    const meta = (db.calls.find((c) => c[0] === 'insertMessage') ?? [])[1]?.meta;
+    if (want) assert.deepEqual(meta?.office_steps, { n: 1, steps: [{ stage: 'memory', detail: '견적.md' }] }, name);
+    else assert.equal(meta?.office_steps, undefined, name);
+  }
+});
+
 // 서버 트리거 msgr_dm_relay는 비멤버 크루 멘션을 새 1:1 방에 사람 명의로 옮겨 적으며 meta를 {relay}로 새로 만든다 — 오피스 표지가 빠진다(분리 검수 HIGH, 9/29).
 test('오피스 출처: 다른 1:1 방으로 전달된 글(meta.relay)도 출처 글을 보고 표지를 잇는다 · 출처를 못 읽으면 내리는 쪽', async () => {
   M._autoLogForTest.clear();
