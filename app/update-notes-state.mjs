@@ -22,6 +22,12 @@ export const UPDATE_NOTES = Object.freeze({
   // 근거 PR — contextBudget: #880 / chatImages: #882 / macFirst: #884 / gpt55Retire: #887
   // #874(재시동 직후 앱이 상주 자리를 먼저 차지)는 소스 설치 상주(LaunchAgent next start)에만 생겨 일반 사용자 안내에서 뺐다(분리 검수 2026-10-09)
   '0.1.100': Object.freeze(['updates.note.contextBudget', 'updates.note.chatImages', 'updates.note.macFirst', 'updates.note.gpt55Retire', 'updates.note.assistantOnce']),
+  // 0.1.101 발행에 들어가는 안내 — heartbeatName: 비서 → 하트비트 이름 변경(화면·에이전트 안내·알림 글 머리). 같은 버전의 다른 안내는 각 PR이 이 줄에 더한다
+  '0.1.101': Object.freeze(['updates.note.heartbeatName', 'updates.note.heartbeatRoutine', 'updates.note.goalHeartbeat', 'updates.note.agentSelf', 'updates.note.turnTrace']), // heartbeatRoutine: 하트비트 관리 → 루틴 '내 하트비트'(확인 주기) · goalHeartbeat: 목표 하트비트(이룰 때까지 확인하고 꺼짐)
+  // 0.1.102 — freeAgents: 무료 계정도 최신 앱이면 메신저 에이전트 4명(#945) · msgrPro: 메신저에서 Pro 결제(#944) · attachLimit: 무료 첨부 1GB(#946) · msgrQuiet: 게이트웨이 쉬는 동안 조회 감소(#943) · syncFaster: 동기화 속도·50MB 제외(#938)
+  '0.1.102': Object.freeze(['updates.note.freeAgents', 'updates.note.msgrPro', 'updates.note.attachLimit', 'updates.note.msgrQuiet', 'updates.note.syncFaster']),
+  // 0.1.103 — agentConnect: 설치본에서 에이전트 원클릭 연결이 안 되던 것 수정(#951) · versionStamp: 설치본이 버전을 0.0.0으로 알리던 것 수정(#949)
+  '0.1.103': Object.freeze(['updates.note.agentConnect', 'updates.note.versionStamp']),
 });
 
 export function stableVersion(value) {

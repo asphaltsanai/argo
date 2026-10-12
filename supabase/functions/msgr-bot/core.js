@@ -33,6 +33,8 @@ const ERR = {
   msgr_bot_bad_body: [400, 'Bad Request: body must contain 1 to 20000 characters'],
   msgr_bot_handoff_limit: [409, 'Conflict: conversation handoff limit reached'],
   msgr_bot_unauthorized: [401, 'Unauthorized: bad or revoked bot token'],
+  // 2026-10-10 에이전트 주인이 Pro가 아니면 외부 봇 수신 중지(판정 msgr_bot_gate). 401 금지 — 연결 도구(Hermes·OpenClaw)가 401만 '영구 중지·토큰 회전'으로 읽는다.
+  msgr_bot_plan_required: [403, 'Forbidden: external agent connections need Argo Pro for the agent owner — upgrade in Argo Messenger'],
   msgr_org_unentitled: [403, 'Forbidden: this organization free period has ended, crew work is paused'], // 2026-09-27 M3 — DB 트리거(msgr_message_entitlement_gate)가 막을 때 500이 아니라 의미 있는 응답
   msgr_not_allowed: [403, 'Forbidden: crew allow policy or channel policy rejects this author'],
   msgr_bot_not_member: [403, 'Forbidden: add the bot to this channel first'],
@@ -49,10 +51,13 @@ const ERR = {
   msgr_bot_attach_expired: [409, 'Conflict: attach files within 1 hour of posting the message'],
   msgr_bot_bad_file_name: [400, 'Bad Request: file_name must contain 1 to 200 characters'],
   msgr_bot_bad_file_size: [400, 'Bad Request: file_size must be a positive byte count'],
-  msgr_bot_file_too_large: [413, 'Payload Too Large: files are limited to 25 MB'],
+  msgr_bot_file_too_large: [413, 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)'],
+  msgr_file_too_large: [413, 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)'], // 게이트(_msgr_upload_gate) 이름 — 봇 경로는 prepare가 msgr_bot_file_too_large로 먼저 내므로 여기서는 방어용
   msgr_bot_too_many_files: [409, 'Conflict: at most 10 files per message'],
   msgr_bot_bad_attach_path: [400, 'Bad Request: storage_path must come from createUpload for this message'],
   msgr_bot_upload_missing: [409, 'Conflict: upload the file to upload_url before attachFile'],
+  // 20261011150000 — 무료 계정 첨부 저장 한도(에이전트 주인 몫). 413이면 설치된 연결 도구가 '25MB 초과'로 바꿔 안내해서 403 + 원문 사유(#946 M4). 결제 유도 문구 없음(방에 실린다)
+  msgr_storage_limit: [403, 'Forbidden: the agent owner\'s attachment storage on the free plan is full; existing files are kept'],
   msgr_approval_conflict: [409, 'Conflict: this approval_id already exists with a different command or source'],
 };
 
@@ -107,7 +112,7 @@ const reply = (status, result) => ({ status, body: { ok: true, result } });
 const fail = (status, description) => ({ status, body: { ok: false, error_code: status, description } });
 
 // rpc(fn, args) → JSON. PostgREST 오류는 {message, code, details}를 throw.
-export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null } = {}) {
+export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null, planGate = null } = {}) {
   if (!token) return fail(401, 'Unauthorized: token missing (use /bot<token>/<method> or Authorization: Bearer)');
   if (!METHODS.includes(method)) return fail(404, `Not Found: method ${method || '(none)'} — supported: ${METHODS.join(', ')}`);
   try {
@@ -121,6 +126,16 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       const waitMs = Math.min(maxWaitMs, Math.max(0, Number(params.timeout) || 0) * 1000);
       const start = now();
       const deadline = start + waitMs;
+      // 무료 계정 봇(2026-10-10): 판정 1회 → 롱폴 시간만큼 DB 조회 없이 붙잡았다가 403. 연결 도구는 403을 1→30초 사다리로 다시 오므로 간격 = 대기 + 사다리.
+      // 판정 실패(옛 DB에 함수 없음·시간 초과)는 막지 않는다 — 5xx를 주면 Hermes가 3초 간격으로 다시 온다. 토큰 오류는 종전처럼 401.
+      if (planGate) {
+        const verdict = await planGate(token).catch((e) => {
+          if (/msgr_bot_unauthorized/.test(String(e?.message ?? ''))) throw e;
+          console.warn('[msgr-bot] plan gate skipped:', String(e?.message ?? '').slice(0, 200));
+          return 'ok';
+        });
+        if (verdict === 'plan_required') { await sleep(Math.max(0, deadline - now())); return fail(...ERR.msgr_bot_plan_required); }
+      }
       // 이벤트(루틴 편집·결재 결정)는 옵트인(events=1)한 어댑터에게만, 요청당 한 번 조회한다. update_id·offset과 무관하고
       // 서버가 60초 임대로 중복을 막는다. 이벤트 조회는 선택 기능 — 어떤 오류든(옛 서버의 RPC 없음, 시간 초과, 교착) 메시지 수신을
       // 막지 않게 빈 목록으로 넘긴다(검수 M-5). 서버가 닫힐 때까지 다시 보내므로 유실은 없다. 토큰 오류는 아래 메시지 조회가 401로 알린다.
@@ -152,7 +167,7 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
         if (purgeUploads && Array.isArray(up.purge) && up.purge.length) await purgeUploads(up.purge).catch((e) => console.warn('[msgr-bot] purge skipped:', String(e?.message ?? e).slice(0, 200)));
         const url = signUpload ? await signUpload(up.storage_path) : null;
         if (!url) return fail(500, 'Internal: upload signing unavailable');
-        return reply(200, { storage_path: up.storage_path, upload_url: url, method: 'PUT', max_bytes: 26214400 });
+        return reply(200, { storage_path: up.storage_path, upload_url: url, method: 'PUT', max_bytes: 524288000 }); // 전역 천장 — 플랜별 상한은 prepare RPC가 거절한다(20261012120000)
       }
       const id = await rpc('msgr_bot_attach_commit', { token, p_message: mid, p_path: String(params.storage_path ?? ''), p_name: String(params.file_name ?? ''),
         p_mime: params.mime_type == null ? null : String(params.mime_type) });

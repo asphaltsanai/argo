@@ -27,9 +27,10 @@
 // WKWebView를 몰아 호출, 리눅스에서 세션을 새로 만들고 표지 env까지 지운 고아(setsid + env -i). 근본 대책은 기동 비밀·OS 샌드박스(후속).
 // 운영자 끄기: ARGO_AGENT_PEER_CHECK=off(부팅 때 읽음). Windows는 반대로 ARGO_AGENT_PEER_CHECK=on이어야 켜진다.
 // 비용: 연결(소켓)·종류(읽기/변경)당 한 번 판정하고 소켓에 묶는다(keep-alive 재사용). 변경 판정은 새 연결마다 lsof·ps 각 1~2회(실측 median 107ms),
-//   읽기 판정은 자손만 조회(실측 새 연결 +88ms, 캐시 히트는 0).
+//   읽기 판정은 자손만 조회(실측 새 연결 +88ms, 캐시 히트는 0). 살아 있는 자식이 하나도 없으면(유휴) 읽기는 조회 없이 통과한다(trackChildren).
+//   시간 캐시(1~2초)는 쓰지 않는다 — 표를 찍은 뒤 뜬 curl은 그 표에 없어서, 캐시가 사는 동안 그 curl의 읽기가 통과한다.
 import http from 'node:http';
-import { execFile } from 'node:child_process';
+import { execFile, ChildProcess } from 'node:child_process';
 import { readdir, readFile, readlink } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 
@@ -51,6 +52,28 @@ const run = (cmd, args) => new Promise((resolve, reject) => {
     resolve(String(stdout ?? ''));
   });
 });
+
+// 살아 있는 자식 프로세스 수 — 자손은 살아 있는 자식 밑에만 있으므로(부모가 죽은 손주는 launchd·init에 입양돼 자손이 아니다) 0이면 읽기 판정의
+// ps 조회(실측 중앙값 50ms, 새 연결마다)를 건너뛴다. 유휴 상주는 자손 0(관찰 2026-10-10, :3001). child_process의 spawn·exec·execFile·fork는
+// 모두 ChildProcess.prototype.spawn을 지나 여기서 센다. spawnSync는 끝날 때까지 이벤트 루프를 막아 그동안 요청이 없다.
+// 판정 자신의 ps·lsof도 끝날 때까지는 센다 — 그동안 들어온 읽기가 조회를 한 번 더 할 뿐이다.
+// ponytail: worker_threads 안에서 띄운 자식과 네이티브 애드온(node-pty 등)의 fork는 못 센다 — 지금 그런 경로 없음(grep). 놓쳐도 읽기만 통과(읽기는 원래 fail-open), 변경은 아래 classifyPeer 그대로.
+const kids = { tracking: false, live: 0 };
+function trackChildren() {
+  if (kids.tracking) return;
+  kids.tracking = true;
+  const spawn = ChildProcess.prototype.spawn;
+  ChildProcess.prototype.spawn = function trackedSpawn(...args) {
+    const r = spawn.apply(this, args);
+    if (this.pid) { kids.live++; this.once('exit', () => { kids.live--; }); }
+    return r;
+  };
+}
+/** 읽기 조회를 건너뛰어도 되는가(순수). 서버가 PID 1(컨테이너에서 `node server.js`를 init 없이)이면 부모가 끝난 손주가 서버 밑으로
+    입양돼 자식 수 밖의 자손이 된다 — 그때는 건너뛰지 않는다(검수 #920 재현: node:22 컨테이너에서 고아 GET 200). */
+export const readSkipOk = ({ tracking, live, pid }) => tracking && live === 0 && pid !== 1;
+/** 판정이 센 살아 있는 자식 수(시험·진단용). 추적 전이면 null. */
+export const liveChildCount = () => (kids.tracking ? kids.live : null);
 
 /* ─── 순수 판정 재료 ─────────────────────────────────────────────────────── */
 
@@ -211,6 +234,44 @@ async function markedAmong(platform, pids) {
   return out;
 }
 
+/** 이 프로세스의 조상 중 에이전트 표지 env(AGENT_MARK·ARGO_AGENT_TURN)가 보이는 프로세스의 pid, 없으면 0 — argo office CLI·MCP의 자기 판정.
+    에이전트 셸은 자기 env의 표지를 지울 수 있지만(unset·env -u) 이미 떠 있는 조상(SDK·Codex·Gemini 러너 CLI)의 처음 env는 못 바꾼다.
+    판정 실패(ps 실행 불가·출력 초과·environ 읽기 오류)는 던진다 — 호출부가 거절한다(fail-closed, 분리 검수 H2: 출력 초과를 '표지 없음'으로 삼키던 것).
+    env만 본다(분리 검수 L1): macOS ps -E 줄은 "명령줄 + env"라 명령줄 글자(grep ARGO_AGENT_TURN= …)를 표지로 착각하지 않게 ps(−E 없이) 줄만큼 앞을 잘라 낸다.
+    ⚠ 방지턱이다 — 같은 OS 계정의 에이전트가 사람용 CLI를 부르는 것을 어렵게 할 뿐, 막지 못하는 경우(정직 표기):
+      ① 고아 프로세스 — `( cmd & )`·별도 tmux·launchctl submit처럼 조상 사슬을 끊는 한 줄(분리 검수 M2)
+      ② 네이티브 러너(openrouter·glm·kimi·grok·gemini 네이티브) — 서버가 /bin/sh를 바로 띄우는데, macOS에서 /bin/sh의 env는 안 보이고
+         서버는 표지를 실행 중에 심어(installAgentPeerGuard) ps -E의 처음 env에 없다(분리 검수 H1)
+    근본 대책은 에이전트 셸의 OS 샌드박스(후속)다. Windows는 판정하지 않는다(0). */
+export async function markedAncestor({ pid = process.pid, platform = process.platform, keys = [AGENT_MARK, 'ARGO_AGENT_TURN'] } = {}) {
+  if (platform === 'win32') return 0;
+  const table = platform === 'linux' ? await procTable() : parseTable(await run('ps', MAC_PS));
+  if (!table.has(pid)) throw Object.assign(new Error('self not in process table'), { code: 'SELF_GONE' });
+  const chain = [];
+  for (let p = table.get(pid).ppid; p > 1 && table.has(p) && !chain.includes(p); p = table.get(p).ppid) chain.push(p);
+  if (!chain.length) return 0;
+  const hasKey = (pairs) => pairs.some((kv) => keys.some((k) => kv.startsWith(`${k}=`)));
+  if (platform === 'linux') {
+    for (const p of chain) {
+      let raw;
+      try { raw = await readFile(`/proc/${p}/environ`, 'utf8'); }
+      catch (e) { if (e?.code === 'EACCES' || e?.code === 'EPERM') continue; throw e; } // 다른 계정(sshd 등)의 프로세스는 위협 모델 밖
+      if (hasKey(raw.split('\0'))) return p;
+    }
+    return 0;
+  }
+  const ids = chain.join(',');
+  const rows = (out) => new Map(out.split('\n').map((l) => /^\s*(\d+)\s(.*)$/.exec(l)).filter(Boolean).map((m) => [Number(m[1]), m[2]]));
+  const [full, bare] = (await Promise.all([run('ps', ['-E', '-ww', '-o', 'pid=,command=', '-p', ids]), run('ps', ['-ww', '-o', 'pid=,command=', '-p', ids])])).map(rows);
+  for (const p of chain) {
+    const line = full.get(p); if (line == null) continue; // 그 사이 끝난 조상
+    const cmd = bare.get(p) ?? '';
+    const envPart = line.startsWith(cmd) ? line.slice(cmd.length) : line;
+    if (hasKey(envPart.trim().split(/\s+/))) return p;
+  }
+  return 0;
+}
+
 /** 읽기용 가벼운 판정 — 상대가 이 서버의 자손이면 그 pid, 아니면 0. 실패는 0(읽기는 fail-open). */
 export async function descendantPeerPid(peer, { platform = process.platform } = {}) {
   if (platform === 'win32') return 0;
@@ -297,6 +358,7 @@ export async function denyAgentPeer(req, res, opts = {}) {
   if (!isLocalAddr(peer.addr)) return false; // 원격(클라우드·리버스 프록시 뒤 사용자) — 이 컴퓨터의 프로세스가 아니다
   let slot = verdicts.get(s); if (!slot) { slot = {}; verdicts.set(s, slot); }
   if (!write) {
+    if (!opts.descendant && readSkipOk({ ...kids, pid: process.pid })) return false; // 자식이 없으면 자손도 없다 — ps 없이 통과(판정을 소켓에 묶지 않는다: 같은 연결의 다음 요청 때 자식이 생겼을 수 있다)
     slot.read ??= (opts.descendant ?? descendantPeerPid)(peer, opts)
       .catch((e) => { console.warn('[argo] 요청 상대 프로세스 판정 실패(읽기 — 통과):', e?.code ?? e?.message ?? e); return 0; });
     const pid = await slot.read;
@@ -319,6 +381,7 @@ export function installAgentPeerGuard(env = process.env) {
   if (flag === 'off') { console.warn('[argo] ARGO_AGENT_PEER_CHECK=off — 에이전트 프로세스의 로컬 API 호출 판정을 끔'); return; }
   if (process.platform === 'win32' && flag !== 'on') { console.warn('[argo] Windows에서는 에이전트 프로세스 판정이 기본 꺼짐 — 켜려면 ARGO_AGENT_PEER_CHECK=on'); return; } // 요청마다 async 훅을 걸지 않는다
   env[AGENT_MARK] = String(process.pid);
+  trackChildren();
   const emit = http.Server.prototype.emit;
   http.Server.prototype.emit = function guardedEmit(ev, req, res, ...rest) {
     if (ev !== 'request' || !req || !res || this[PEER_GUARD_EXEMPT]) return emit.call(this, ev, req, res, ...rest); // 중계 서버(crew/browser MCP)는 제외

@@ -43,14 +43,18 @@
   --side-line: var(--dark-line); --side-hover: var(--dark-hover); --side-active: var(--dark-active); --side-mark: var(--mark);
   --info: #3a6ea5; --info-soft: rgba(58, 110, 165, 0.1); --overlay: rgba(20, 19, 17, 0.42);
 }
-/* 린넨 라이트 미색(유건 10/9 "기본 린넨 테마에서는 흰색 대신 미색, 투명도 더") — 오피스만. 메신저 정본(tokens.css의 --card #fbfaf7)은 그대로 두고 여기서 덮는다.
-   카드색을 아이보리로, 표면은 바탕이 더 비치게(85% → 72%). 떠 있는 층(--float)은 같은 비율을 --bg 위에 섞은 단색 — 불투명이고 캔버스 위 --surface와 같은 색.
-   셸 버튼 hover(--card-2)는 미색 카드보다 한 단계 짙게 — 카드와의 면 차이·그 위 글자 대비는 test/themes.test.mjs '린넨 라이트 hover 면'이 잰다. 시스템 다크(.dark-emul)·린넨 다크는 그대로 */
+/* 린넨 라이트 표면(유건 10/9 미색 → 10/10 "다시 흰색 계열로, 투명도를 더 올려 배경과 구분은 되지만 너무 두드러지지 않게") — 오피스만.
+   카드색은 메신저 정본(tokens.css --card #fbfaf7·--card-2)을 그대로 쓰고, 표면만 바탕이 더 비치게(85% → 56%). 떠 있는 층(--float)은 같은 비율을 --bg 위에 섞은 단색 — 불투명이고 캔버스 위 --surface와 같은 색.
+   셸 버튼 hover(--card-2)는 불투명 카드 면 — 면 차이·글자 대비는 test/themes.test.mjs '린넨 라이트 hover 면'이 잰다. 시스템 다크(.dark-emul)·린넨 다크는 그대로 */
 :root[data-theme='linen-light'], :root[data-theme='linen']:not(.dark-emul) {
-  --card: #faf4e6; --card-2: #ede6d6;
-  --surface: color-mix(in srgb, var(--card) 72%, transparent); --float: color-mix(in srgb, var(--card) 72%, var(--bg));
+  --surface: color-mix(in srgb, var(--card) 56%, transparent); --float: color-mix(in srgb, var(--card) 56%, var(--bg));
+  --t-on-bg: color-mix(in srgb, var(--card) 92%, var(--bg)); /* 고른 자리 바탕(아래) — 비치지 않는 흰 면 */
+  --card-2: var(--card); /* 셸 버튼 hover — 56% 카드 위에서는 정본 hover(#f1efe9)가 묻힌다. 비치지 않는 흰 면으로 한 단계 밝힌다 */
 }
-/* window 셸의 공간 표시 알약(--t-space-bg, themes.css는 --surface)은 차콜 사이드바 위에 놓인다 — 72% 표면이면 차콜이 비쳐 보조 글자가 3.7:1로 떨어진다.
+/* 고른 자리(10/10 "활성화 영역 색이 배경과 너무 겹친다") — 폴더 줄의 고른 항목(--secondary)·가로 탭의 고른 칸(--surface)이 린넨 바탕과 거의 같은 색이었다.
+   린넨 라이트 + plain 셸만 비치지 않는 카드 면 + 옅은 그림자로 띄운다(다른 색·셸은 각자의 활성 모양 그대로) */
+:is(:root[data-shell='plain']:is([data-theme='linen-light'], [data-theme='linen']:not(.dark-emul))) :is(.fold-item.on, .seg-btn.on) { /* plain 셸만(#925 검수 HIGH — float 셸은 고른 탭을 반전(글자 --bg)하는데 바탕만 덮어 글자가 안 보였다, 리퀴드·글래스의 고유 활성 모양도 지웠다). 아래 .fold-item.on·.seg-btn.on보다 높게 */ background: var(--t-on-bg); box-shadow: 0 1px 2px rgba(38, 36, 31, 0.1), 0 0 0 1px var(--border-soft); }
+/* window 셸의 공간 표시 알약(--t-space-bg, themes.css는 --surface)은 차콜 사이드바 위에 놓인다 — 반투명 표면이면 차콜이 비쳐 보조 글자가 3.7:1로 떨어진다(72%에서 잰 값).
    이 자리만 비치지 않는 단색(예전 85% 표면이 차콜 위에서 보이던 색)으로. 특이도 (0,4,0)이라 themes.css의 셸 기본값(0,2,0)을 이긴다. 다른 색·셸은 그대로 */
 :root[data-shell='window']:is([data-theme='linen-light'], [data-theme='linen']:not(.dark-emul)) { --t-space-bg: color-mix(in srgb, var(--card) 85%, var(--side-bg)); }
 :root[data-theme='graphite'], :root[data-theme='graphite-light'] {
@@ -72,14 +76,10 @@
 * { box-sizing: border-box; }
 /* 스크롤 바 — 레일 없이 얇은 선만(유건 2026-09-26). 선 색은 놓인 영역의 글자색에서 만들어
    차콜 사이드바에서는 밝게, 밝은 본문에서는 어둡게 — 두 톤이 스크롤 바 때문에 깨지지 않는다. */
-:root { --scroll: color-mix(in srgb, var(--fg) 20%, transparent); --scroll-hover: color-mix(in srgb, var(--fg) 38%, transparent); }
-.side { --scroll: color-mix(in srgb, var(--side-fg) 22%, transparent); --scroll-hover: color-mix(in srgb, var(--side-fg) 40%, transparent); }
-::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
-::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--scroll); background-clip: padding-box; border: 3px solid transparent; border-radius: 999px; min-height: 32px; }
-::-webkit-scrollbar-thumb:active { background: var(--scroll-hover); background-clip: padding-box; }
-@media (hover: hover) { ::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: padding-box; } }
-@supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; } }
+/* 스크롤 막대 없음(유건 10/10 "스크롤바리스로 가보자") — 막대만 숨기고 스크롤(휠·트랙패드·키보드·터치)은 그대로. 본문·사이드바·모달·표의 가로 스크롤 모두 같은 규칙
+   (같은 날 앞선 '바탕과 같은 톤으로 옅게' 단계 다음). scrollbar-width는 Firefox·Chrome 121+, ::-webkit-scrollbar는 Safari·Tauri 웹뷰 */
+* { scrollbar-width: none; }
+::-webkit-scrollbar { display: none; }
 html, body, #root { height: 100%; }
 html.scroll-locked { overflow: hidden; }
 body {
@@ -202,9 +202,8 @@ html.nav-collapsed .side { visibility: hidden; }
 .search-btn span { flex: 1; }
 .search-btn kbd { color: var(--side-fg-3); box-shadow: inset 0 0 0 1px var(--side-line); }
 @media (hover: none) { .search-btn kbd { display: none; } } /* 손가락 기기에는 누를 수 없는 ⌘K 표시를 두지 않는다(UX-O07) */
-.side-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 4px 0 20px 8px; overscroll-behavior: contain; scrollbar-gutter: stable; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); } /* 모듈 보관함 구분선 위는 은은하게 사라진다(유건 10/2) — 끝까지 내리면 마지막 줄이 페이드 위로 */ /* 가로 스크롤 금지(9/30) — 긴 이름은 줄임표 */
+.side-scroll { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 4px 8px 20px; overscroll-behavior: contain; /* 오른쪽 여백은 예전엔 스크롤 막대 자리(gutter)였다 — 막대가 없으니 직접(10/10) */ -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); } /* 모듈 보관함 구분선 위는 은은하게 사라진다(유건 10/2) — 끝까지 내리면 마지막 줄이 페이드 위로 */ /* 가로 스크롤 금지(9/30) — 긴 이름은 줄임표 */
 /* 오른쪽 여백 = 스크롤 막대 자리(8px)를 늘 비워 둔다 — 막대가 생겨도 없어도 메뉴 줄 오른쪽 끝이 같다(유건 10/1 밤 6차). 막대가 겹쳐 뜨는 터치 기기는 여백 8px */
-.side-scroll::-webkit-scrollbar { width: 8px; } .side-scroll::-webkit-scrollbar-thumb { border-width: 2px; }
 @media (hover: none) { .side-scroll { padding-right: 8px; scrollbar-gutter: auto; } }
 .nav-group { display: grid; gap: 1px; }
 .nav-item { display: flex; align-items: center; gap: 9px; height: var(--ctl); padding: 0 9px; border-radius: var(--rs); color: var(--side-fg-2); width: 100%; text-align: left; }
@@ -771,7 +770,7 @@ input[role='switch']:checked::after { transform: translateX(14px); background: v
 .login { min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); }
 .login-card { width: min(380px, 100%); display: grid; gap: 10px; padding: 28px 24px; border-radius: var(--rs); background: var(--surface); }
 .login-card h1 { font-size: 20px; font-weight: 680; letter-spacing: -0.02em; }
-.login-mark { width: 34px; height: 34px; font-size: 15px; background: var(--primary); color: var(--primary-fg); border-radius: var(--rc); }
+.login-mark { width: 44px; height: 44px; border-radius: 22%; } /* 오피스 로고(public/icon-192.png — scripts/office-icon.mjs 원본, 유건 10/10 'A' 대신 로고) */
 .login-buttons { display: grid; gap: 8px; margin-top: 8px; }
 .login-buttons .btn { height: 40px; }
 .login-dev { display: grid; gap: 8px; margin-top: 12px; padding-top: 14px; border-top: 1px solid var(--border-soft); }

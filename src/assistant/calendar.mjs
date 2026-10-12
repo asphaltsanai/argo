@@ -3,7 +3,7 @@
 import { occurrences, kstDateOf } from '../gateway/office-calendar.mjs';
 import { addDays, instantIn } from './rules.mjs';
 
-export const CAL_READ_MS = 15 * 60_000;     // 전체 읽기 간격(설계 3.2 확인 주기)
+export const CAL_READ_MS = 15 * 60_000;     // 읽기 실패 뒤 다시 읽기까지의 최대 간격(tick.mjs) — 전체 읽기 간격은 설정 intervalMinutes(config.mjs readIntervalMs, 10·15·30·60분, 기본 15)
 export const CAL_SPAN_MS = 26 * 3_600_000;  // 앞 26시간 — 잠든 사이·조용한 시간 뒤 첫 읽기의 뒤로 보기 상한도 같다
 export const CONFIRM_PAD_MS = 60_000;       // 확인 읽기 범위 = [가장 이른 회차 − 1분, 가장 늦은 회차 + 1분]
 
@@ -21,12 +21,13 @@ export const ownEvents = (events, uid) => (events ?? []).filter((ev) => ev && ev
 
 const one = (s, n) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
 
-/** 일정 → 회차 목록(순수, 시작 순). [fromMs, toMs)에 걸치는 회차만. */
-export function expand(events, fromMs, toMs) {
+/** 일정 → 회차 목록(순수, 시작 순). [fromMs, toMs)에 걸치는 회차만. uid를 주면 own = 주인이 만든 일정인가(제목·장소를 주인이 썼다 — 참석자로 받은 남의 일정은 false).
+    own은 자기 글 기록(self-posts.mjs)이 하트비트 글 본문을 남길지 정하는 근거다 — 남이 쓴 제목은 주인 1:1 맥락에 본문으로 넣지 않는다. */
+export function expand(events, fromMs, toMs, uid = null) {
   const out = [];
   for (const ev of events) {
     for (const o of occurrences(ev, fromMs, toMs)) {
-      out.push({ id: String(ev.id), title: one(ev.title, 120), location: one(ev.location, 80), allDay: !!ev.all_day, start: o.start, end: o.end });
+      out.push({ id: String(ev.id), title: one(ev.title, 120), location: one(ev.location, 80), allDay: !!ev.all_day, start: o.start, end: o.end, ...(uid != null ? { own: ev.owner === uid } : {}) });
     }
   }
   return out.sort((a, b) => a.start - b.start || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -79,7 +80,7 @@ export async function confirmDue(c, due, uid) {
   const from = Math.min(...due.map((o) => o.start)) - CONFIRM_PAD_MS;
   const to = Math.max(...due.map((o) => o.start)) + CONFIRM_PAD_MS;
   const { events } = await readCalendar(c, from, to);
-  const live = new Map(expand(ownEvents(events, uid), from, to).filter((o) => !o.allDay).map((o) => [preKey(o), o]));
+  const live = new Map(expand(ownEvents(events, uid), from, to, uid).filter((o) => !o.allDay).map((o) => [preKey(o), o]));
   return { kept: due.filter((o) => live.has(preKey(o))).map((o) => live.get(preKey(o))), gone: due.filter((o) => !live.has(preKey(o))) };
 }
 

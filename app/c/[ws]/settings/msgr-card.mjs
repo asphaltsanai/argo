@@ -3,7 +3,6 @@
 // '연결 필요' + '조직을 만들거나 초대받으세요'를 보이고 연결 상태(실행기)를 숨겼다.
 
 export const MESSENGER_PAGE = 'https://argo.ceo/messenger'; // 맥·윈도우·iOS·Android 받기 안내(앱 스토어 포함) 한 곳
-export const OFFICE_URL = 'https://argo-office.vercel.app'; // 아르고 오피스(웹) — 설치를 전제하지 않는다(CX-13)
 
 /** 머리 칩 — 'connected'(조직에 등록됨) · 'personal'(조직은 없지만 개인 공간에 연결됨) · 'notConnected' */
 export function msgrConnectionChip({ regCount = 0, personalCount = 0 } = {}) {
@@ -30,6 +29,32 @@ export function msgrCardView({ st, orgId = '', agents = [] } = {}) {
     showRuntime: msgrShowRuntime({ signedIn: st?.signedIn, agentCount: agents.length }),
     polling: !!st?.signedIn && crews.some((r) => r.status === 'active'),
   };
+}
+
+/** 무료 계정 한도로 서버가 멈춘 행(status paused)의 줄 문구 — 사람이 해제한 '파견 해제됨'과 구별한다(화면 검수 B, 2026-10-11).
+    reason = GET 응답 pauseReason(서버 msgr_my_agent_pause의 이유): limit 4명 한도 · app/off 최신 앱이 켜져 있지 않음 · room 새 앱 켜짐 + 자리 남음(지금 연결할 수 있음)
+    · 그 밖(모름·Pro로 바뀌는 중) 멈춤만 */
+export function pausedLabelKey(reason) {
+  if (reason === 'limit') return 'settings.msgr.paused.limit';
+  if (reason === 'app' || reason === 'off') return 'settings.msgr.paused.app';
+  if (reason === 'room') return 'settings.msgr.paused.room';
+  return 'settings.msgr.paused';
+}
+
+/** 조직이 없는(개인 공간만 쓰는) 사용자의 개인 공간 줄(검수 스택 화면 4차, 2026-10-11) — 무료 4명 한도로 멈춘 다섯 번째를 켤 곳이 없었다.
+    rows = 에이전트마다 개인 행 상태 문구 키(연결 'settings.msgr.connection.personal' · 멈춤 pausedLabelKey · 해제 notRegistered · 행 없음 notInMessenger),
+    missing = 연결할 것(멈춘 개인 행만 — 메신저에서 사람이 해제한 available은 묶지 않는다, 재검수 LOW-1), show = 조직이 없고 멈춘 개인 행이 있고 무료 한도 이유가 있을 때만
+    (pauseReason이 없으면 Pro·관문 꺼짐 — 종전 카드 그대로, 재검수 LOW-2). */
+export function personalCardView({ st, agents = [] } = {}) {
+  const rowsAll = Array.isArray(st?.personal) ? st.personal : [];
+  const rows = agents.map((a) => {
+    const row = rowsAll.find((r) => r.slug === a.slug) ?? null;
+    const labelKey = !row ? 'settings.msgr.notInMessenger' : row.status === 'active' ? 'settings.msgr.connection.personal'
+      : row.status === 'paused' ? pausedLabelKey(st?.pauseReason) : 'settings.msgr.notRegistered';
+    return { slug: a.slug, row, labelKey };
+  });
+  const missing = rows.filter((r) => r.row?.status === 'paused').map((r) => r.slug);
+  return { rows, missing, connected: rows.filter((r) => r.row?.status === 'active').length, show: !!st?.signedIn && !st?.orgs?.length && missing.length > 0 && !!st?.pauseReason };
 }
 
 /** 첫 응답 대기 문구 — 폴이 도는 때만 "자동으로 다시 확인"을 말한다. 안 돌면 사용자가 '다시 확인'을 누르라고 한다(폴을 늘리지 않는다 — DB·서버 부하). */

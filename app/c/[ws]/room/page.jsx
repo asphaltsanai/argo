@@ -652,7 +652,7 @@ export default function Room({ params }) {
                         <span key={sp.slug} style={{ border: '1px solid var(--border)', borderRadius: 999, padding: '1px 8px' }}>{nameOf(sp.slug)} · {t('room.queued')}</span>
                       ))}
                       {turn.speakers.filter((sp) => sp.state === 'failed').map((sp) => (
-                        <span key={sp.slug} style={{ border: '1px solid var(--danger, #c0392b)', color: 'var(--danger, #c0392b)', borderRadius: 999, padding: '1px 8px' }}>{nameOf(sp.slug)} · {t('room.failedChip')}</span>
+                        <span key={sp.slug} style={{ border: '1px solid var(--danger)', color: 'var(--danger)', borderRadius: 999, padding: '1px 8px' }}>{nameOf(sp.slug)} · {t('room.failedChip')}</span>
                       ))}
                     </div>
                   )}
@@ -702,7 +702,7 @@ export default function Room({ params }) {
         </div>
         {unseen && !viewing && (
           <button type="button" onClick={jumpToLatest} className="btn btn-primary sm"
-            style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', boxShadow: '0 6px 18px rgba(0,0,0,.18)', zIndex: 5 }}>
+            style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)', boxShadow: 'var(--shadow-float)', zIndex: 5 }}>
             {t('room.newMsgs')}
           </button>
         )}
@@ -727,7 +727,7 @@ export default function Room({ params }) {
                   position: 'absolute', bottom: 'calc(100% + 6px)', left: mentionClamp.shift, zIndex: 40,
                   minWidth: mentionClamp.maxW ? Math.min(280, mentionClamp.maxW) : 280,
                   maxWidth: mentionClamp.maxW ? Math.min(mentionClamp.maxW, 420) : undefined, maxHeight: 300, overflowY: 'auto', padding: 6,
-                  boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+                  boxShadow: 'var(--shadow-float)',
                 }}>
                   <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('room.mention')}</div>
                   {/* @all — 전 크루 호출(서버 runRoomTurn이 @all/@전체를 전원 발언으로 해석). 항상 첫 후보 = Enter 완성 대상 */}
@@ -754,7 +754,7 @@ export default function Room({ params }) {
                   position: 'absolute', bottom: 'calc(100% + 6px)', left: slashClamp.shift, zIndex: 40,
                   minWidth: slashClamp.maxW ? Math.min(320, slashClamp.maxW) : 320,
                   maxWidth: slashClamp.maxW ? Math.min(slashClamp.maxW, 480) : undefined, maxHeight: 320, overflowY: 'auto', padding: 6,
-                  boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+                  boxShadow: 'var(--shadow-float)',
                 }}>
                   <div className="microlabel" style={{ padding: '4px 8px 2px' }}>{t('chat.commands')}</div>
                   {slashList.map((c, i) => (

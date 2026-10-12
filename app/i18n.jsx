@@ -140,6 +140,15 @@ const DICT = {
   'common.save': ['저장', 'Save'],
   'common.cancel': ['취소', 'Cancel'],
   'common.close': ['닫기', 'Close'],
+  // 상대 시각(ui.jsx timeAgo) — 목록·기록의 '방금 / n분 전'
+  'time.justNow': ['방금', 'just now'],
+  'time.minAgo': ['{n}분 전', '{n}m ago'],
+  'time.hourAgo': ['{n}시간 전', '{n}h ago'],
+  'time.dayAgo': ['{n}일 전', '{n}d ago'],
+  // 앱 안내 한 줄(ui.jsx appNotice — 훅 밖 DOM 헬퍼라 tr로 읽는다)
+  'notice.billingOpenFail': ['결제 관리 페이지를 열지 못했습니다.', 'Could not open the billing page.'],
+  'notice.saveTooLarge': ['{name} — 파일이 커서 앱에서 바로 저장하지 못했습니다. 회사 폴더의 {where}에 있습니다.', '{name} is too large to save from the app. It is in the company folder at {where}.'],
+  'notice.saveFailed': ['{name} — 저장하지 못했습니다.{why}', 'Could not save {name}.{why}'],
   'common.retry': ['다시 시도', 'Try again'],
   'common.reason.network': ['네트워크 연결을 확인해 주세요', 'Check your network connection'],
   'common.reason.unknown': ['잠시 뒤 다시 시도해 주세요', 'Please try again shortly'],
@@ -304,7 +313,7 @@ const DICT = {
   'updates.note.longChat': ["대화가 길어지면 앞 대화를 요약해 이어 가고, 대화에 '앞 대화를 요약해 이어 갑니다' 줄이 남습니다. Codex·Antigravity 같은 CLI 에이전트와 다른 기기에서 이어받은 대화도 최근 6개가 아니라 더 긴 대화를 이어서 기억합니다.", "When a chat gets long, the agent summarizes the earlier part and keeps going, leaving an 'Earlier conversation was summarized to continue' line. CLI agents such as Codex and Antigravity, and chats picked up on another device, now carry much more than the last six messages."],
   'updates.note.phoneScreen': ["폰처럼 좁은 화면에서 상단바 칩이 넘치지 않게 접히고, 에이전트 대화 입력창이 첫 화면 안에 보입니다. 이 안내는 상단바 '새 소식'을 누를 때만 펼쳐지고 버튼을 덮지 않습니다.", "On narrow screens such as phones, top bar chips fold instead of overflowing, and the agent chat composer fits on the first screen. These notes now open only from 'What's new' in the top bar and never cover buttons."],
   'updates.note.errorText': ["영어 화면에서 오류가 한국어로 나오거나 실패 안내에 서버 원문이 그대로 보이던 문제를 고쳤습니다. 회사 정보를 한 번 못 읽었을 때 '회사를 찾을 수 없습니다' 대신 다시 시도를 보여 줍니다.", "Fixed errors showing in Korean on the English screen and raw server text appearing in failure messages. If company data fails to load once, you now get a retry instead of 'Company not found'."],
-  'updates.note.msgrCard': ["설정의 'Argo 메신저 연결' 카드가 개인 공간 연결을 보여 주고, 조직이 없어도 연결 상태와 다시 연결을 볼 수 있습니다. 카드 아래에서 Argo 오피스를 바로 열 수 있습니다.", "The 'Argo Messenger connection' card in Settings now shows your personal space connection, and shows connection status and reconnect even without an organization. You can open Argo Office right below the card."],
+  'updates.note.msgrCard': ["설정의 'Argo 메신저 연결' 카드가 개인 공간 연결을 보여 주고, 조직이 없어도 연결 상태와 다시 연결을 볼 수 있습니다.", "The 'Argo Messenger connection' card in Settings now shows your personal space connection, and shows connection status and reconnect even without an organization."],
   'updates.note.cliStandalone': ["터미널의 argo 명령을 이제 앱 없이도 맥·윈도우에 설치할 수 있습니다. 지울 때는 argo uninstall, 버전은 argo --version으로 확인합니다.", "You can now install the argo terminal command on Mac and Windows without the app. Remove it with argo uninstall and check the version with argo --version."],
   'updates.note.msgrCommands': ["에이전트의 메신저 '/' 명령 목록이 너무 길면 줄여서 올리고, 올리기에 실패해도 같은 요청을 계속 다시 보내지 않습니다.", "If an agent's messenger '/' command list is too long, it is trimmed before upload, and a failed upload is no longer retried over and over."],
   'updates.note.officeBriefing': ["메신저 1:1 대화에서 에이전트가 Argo 오피스 브리핑을 남기고 읽을 수 있습니다. 브리핑은 받는 사람의 오피스 '내 공간'에 모입니다.", "In a messenger 1:1 chat, an agent can leave and read Argo Office briefings. Briefings collect in the recipient's My space in Office."],
@@ -319,6 +328,18 @@ const DICT = {
   'updates.note.macFirst': ["서버에도 같은 계정으로 로그인하고 AI를 연결한 뒤 argo service install --standby로 설치하면, 이 컴퓨터가 켜져 있을 때는 이 컴퓨터가, 꺼지면 서버가 메신저와 루틴을 실행합니다.", "Sign in to the same account on a server, connect an AI there, and install with argo service install --standby: Messenger and routines run on this computer while it's on, and on the server when it's off."],
   'updates.note.gpt55Retire': ["GPT-5.5 종료(10월 14일)에 맞춰 Codex 모델 목록에서 뺐습니다. GPT-5.5를 쓰던 에이전트는 GPT-5.6 Sol로 실행하고, 강도를 비워 뒀다면 예전과 같은 medium으로 실행합니다.", "With GPT-5.5 retiring on October 14, it has been removed from the Codex model list. Agents that used GPT-5.5 now run on GPT-5.6 Sol, at medium effort as before if the effort was left empty."],
   'updates.note.assistantOnce': ["비서가 앱을 다시 켜거나 다른 기기가 실행을 맡아도 이미 보낸 일정 알림을 다시 보내지 않습니다. 비서 탭에서 오늘 보낸 알림 수와 하루 한도를 볼 수 있습니다.", "The assistant no longer re-sends calendar alerts it already sent when the app restarts or another device takes over. The Assistant tab now shows how many alerts went out today and the daily limit."],
+  'updates.note.heartbeatRoutine': ["하트비트는 이제 루틴 화면 맨 위 '내 하트비트'에서 켜고 끕니다. 무엇을·언제·얼마나 자주(10·15·30·60분)·누가 알려 줄지 한 화면에서 고르고, 에이전트 카드의 하트비트 탭에서는 지금 현황을 봅니다.", "Heartbeat now lives at the top of the Routines screen as 'My heartbeat'. Turn it on or off and choose what, when, how often (10, 15, 30, or 60 min), and who tells you — all on one screen. The Heartbeat tab on agent cards shows the current status."],
+  'updates.note.goalHeartbeat': ["에이전트에게 '○○ 공연 티켓 오픈 시간 확인해서 예매해 줘'처럼 끝이 있는 일을 부탁하면, 이룰 때까지 확인하다가 알릴 것이 있을 때만 개인 1:1 방으로 알리고 이루면 스스로 꺼집니다(목표 하트비트). 결제·예매 확정은 결재로 묻고, 목록은 루틴 화면 '내 하트비트' 아래에 있습니다.", "Ask an agent for something with an end, like 'find out when the concert tickets open and book them': it keeps checking, messages your personal 1:1 room only when there is news, and turns itself off once done (goal heartbeat). Payment or confirming a booking is asked via approval; the list is under 'My heartbeat' on the Routines screen."],
+  'updates.note.agentSelf': ["에이전트가 Argo 기능과 자기 설정을 압니다. \"네 설정 알려 줘\", \"확인 주기 30분으로 바꿔 줘\"처럼 물으면 화면과 같은 값으로 답하고, 1:1에서 부탁한 설정은 바로 바꿉니다(지시문 규칙·루틴 내용은 결재로 묻습니다). 자기가 하트비트·루틴으로 보낸 글도 자기 글로 알아봅니다.", "Agents now know Argo's features and their own settings. Ask \"what are your settings?\" or \"change the check interval to 30 minutes\" and they answer with the same values as the screen and change what you ask in your 1:1 (working rules and routine instructions go to approval). They also recognize messages they sent through heartbeat or routines as their own."],
+  'updates.note.turnTrace': ["1:1 대화와 회의실에서 에이전트가 일하는 과정(생각·도구·실행 단계)이 보이고, 끝나면 답 아래 '작업 과정'으로 접혀 남습니다(이 기기에만 저장).", "In 1:1 chats and the meeting room you can watch how an agent works (thinking, tools, steps); when it finishes, the steps fold into 'Work process' under the reply (saved on this device only)."],
+  'updates.note.freeAgents': ["무료 계정도 이 버전부터 메신저에서 에이전트 4명까지 쓸 수 있습니다. 최근에 대화한 에이전트부터 다시 연결되고, 다른 에이전트를 쓰려면 설정 → 메신저 연결에서 바꿉니다(무엇이 멈추는지 먼저 알려 줍니다). Pro는 제한이 없습니다.", "Free accounts can now use up to 4 agents in Messenger with this version. Your most recently used agents reconnect first; to use a different one, switch it in Settings → Messenger connection (you'll see which agent pauses first). Pro has no limit."],
+  'updates.note.msgrPro': ["메신저 설정의 '내 플랜'에서도 Argo Pro로 바꿀 수 있습니다. 본체와 같은 결제라 어디서 결제해도 같은 Pro입니다.", "You can now upgrade to Argo Pro from 'My plan' in Messenger settings. It's the same payment as the desktop app, so Pro is the same wherever you pay."],
+  'updates.note.attachLimit': ["무료 계정의 메신저 첨부는 합계 1GB까지 저장됩니다. 이미 올린 파일은 그대로 있고, 파일 하나는 지금처럼 25MB까지입니다.", "Messenger attachments on free accounts can total up to 1 GB. Files you already sent stay, and each file is still limited to 25 MB."],
+  'updates.note.agentConnect': ["설치한 앱에서 에이전트 원클릭 연결이 동작하지 않던 문제를 고쳤습니다. 터미널 없이도 에이전트 연결이 됩니다.", "Fixed agent one-click connect not working in the installed app. Agents now connect without a terminal."],
+  'updates.note.versionStamp': ["앱이 자기 버전을 올바르게 알립니다(일부에서 0.0.0으로 표시되던 문제).", "The app now reports its own version correctly (some installs showed 0.0.0)."],
+  'updates.note.msgrQuiet': ["에이전트가 쉬는 동안 서버에 보내는 확인을 크게 줄였습니다. 새 조직·채널에 올라온 글에는 더 빨리 반응합니다.", "Agents now check the server far less while idle, and respond faster to messages in new organizations and channels."],
+  'updates.note.syncFaster': ["기기 사이 동기화가 빨라졌습니다. 50MB가 넘는 파일은 동기화하지 않고 이 기기에만 둡니다.", "Syncing between devices is faster. Files over 50 MB are no longer synced and stay on this device."],
+  'updates.note.heartbeatName': ["'비서' 기능의 이름이 '하트비트'로 바뀌었습니다. 에이전트 카드의 '비서' 탭은 '하트비트' 탭이 됐고, 일정·메일 알림 글 머리도 [하트비트]로 나옵니다. 하트비트 탭은 지금 현황을 보여 주고, 켜고 끄기와 설정은 루틴 화면에서 합니다.", "The 'Assistant' feature is now called 'Heartbeat'. The Assistant tab on agent cards is now the Heartbeat tab, and its calendar and mail messages start with [Heartbeat]. The Heartbeat tab shows the current status; turning it on or off and its settings are on the Routines screen."],
   'topbar.monthCost': ['이번 달 사용액', 'This month'],
   'topbar.monthSubUse': ['이번 달 사용량 — 구독 연결이라 추가 청구가 없습니다', 'This month — on your subscription, no extra charge'],
   'topbar.monthTurns': ['{n}턴', '{n} turns'],
@@ -510,43 +531,34 @@ const DICT = {
   'chat.card.tab.overview': ['개요', 'Overview'],
   'chat.card.tab.ability': ['능력', 'Abilities'],
   'chat.card.tab.style': ['방식', 'Working style'],
-  'chat.card.tab.assistant': ['비서', 'Assistant'],
+  'chat.card.tab.assistant': ['하트비트', 'Heartbeat'],
   'chat.card.tab.link': ['연결·원문', 'Links & raw'],
   'chat.card.tab.label': ['에이전트 카드 구획', 'Agent card sections'],
-  // ── 에이전트 카드 "비서" 탭(능동 비서 설정 — app/c/[ws]/crew/[slug]/assistant-section.jsx, 설계 13절)
-  'assistant.desc': ['비서로 정한 에이전트가 일정을 읽기만 하며 지켜보다가, 일정 시작 전과 아침·저녁에 개인 공간 1:1 방으로 먼저 알려 줍니다. 비서는 계정마다 한 명입니다.', 'Your assistant agent watches your calendar (read only) and messages you first in your personal 1:1 room — before events start, and in the morning and evening. One assistant per account.'],
+  // ── 에이전트 카드 "하트비트" 탭(능동 하트비트 설정 — app/c/[ws]/crew/[slug]/assistant-section.jsx, 설계 13절)
   'assistant.on': ['켜짐', 'On'],
   'assistant.off': ['꺼짐', 'Off'],
-  'assistant.turnOn': ['비서 켜기', 'Turn on assistant'],
-  'assistant.turnOff': ['비서 끄기', 'Turn off assistant'],
-  'assistant.current': ['지금 비서: {company} · {name}', 'Current assistant: {company} · {name}'],
-  'assistant.switch': ['이 에이전트로 바꾸기', 'Use this agent instead'],
-  'assistant.switchHint': ['바꾸면 지금 비서는 꺼집니다.', 'The current assistant will be turned off.'],
+  'assistant.current': ['지금 하트비트: {company} · {name}', 'Current heartbeat: {company} · {name}'],
+  'assistant.switchHint': ['여기서 켜면 지금 하트비트는 꺼집니다(계정마다 하나).', 'Turning it on here turns the current heartbeat off (one per account).'],
   'assistant.settings': ['알림 설정', 'Notification settings'],
   'assistant.lead': ['일정 알림', 'Event reminder'],
   'assistant.leadOpt': ['{n}분 전', '{n} min before'],
   'assistant.evening': ['내일 일정 요약', "Tomorrow's summary"],
   'assistant.quiet': ['조용한 시간', 'Quiet hours'],
   'assistant.quietFrom': ['조용한 시간 시작', 'Quiet hours start'],
-  'assistant.quietTo': ['조용한 시간 끝', 'Quiet hours end'],
-  'assistant.quietHint': ['이 시간에는 알리지 않고 모아 두었다가, 끝나는 {to}에 아침 정리로 한 번에 보냅니다.', 'Nothing is sent during these hours — it is collected and sent as the morning summary at {to}.'],
   'assistant.quietAlerts': ['조용한 시간에도 일정 알림은 보내기', 'Still send event reminders during quiet hours'],
   'assistant.watch': ['보는 것', 'Watches'],
   'assistant.watchCalendar': ['일정', 'Calendar'],
   'assistant.mail': ['메일', 'Mail'],
-  'assistant.mail.off': ['안 봄', 'Off'],
-  'assistant.mail.shadow': ['미리 보기(알리지 않고 기록만)', 'Preview (record only, no messages)'],
-  'assistant.mail.live': ['알림', 'Notify'],
-  'assistant.mailHint': ['오피스에 연결한 메일함을 10분마다(업무 시간 밖에는 30분) 확인해 답장이 필요한 메일과 확인할 것을 1:1 방으로 알립니다. 답장 초안은 이 에이전트가 만들고, 코덱스 에이전트는 클로드가 연결돼 있으면 클로드로 만듭니다. 명령줄 실행기·무료 모델로 일하는 에이전트는 초안 없이 알림만 보냅니다. 메일을 보내지는 않습니다.', 'Checks the mailbox connected in Office every 10 minutes (30 outside work hours) and tells you in your 1:1 room about mail that needs a reply or a look. This agent writes reply drafts; Codex agents use Claude when it is connected. Agents on CLI runners or free models send the alert without a draft. It never sends mail.'],
+  'assistant.mailHint': ['연결한 메일함을 10분마다(업무 시간 밖에는 30분) 확인해 답장이 필요한 메일과 확인할 것을 1:1 방으로 알립니다. 답장 초안은 이 에이전트가 만들고, 코덱스 에이전트는 클로드가 연결돼 있으면 클로드로 만듭니다. 명령줄 실행기·무료 모델로 일하는 에이전트는 초안 없이 알림만 보냅니다. 메일을 보내지는 않습니다.', 'Checks your connected mailbox every 10 minutes (30 outside work hours) and tells you in your 1:1 room about mail that needs a reply or a look. This agent writes reply drafts; Codex agents use Claude when it is connected. Agents on CLI runners or free models send the alert without a draft. It never sends mail.'],
   'assistant.mailCheck': ['마지막 메일 확인', 'Last mail check'],
   'assistant.mailShadow': ['미리 보기 {days}일째 — 알렸을 메일 {n}건 기록', 'Preview day {days} — {n} mail(s) that would have been sent'],
   'assistant.mailSt.login_required': ['로그인이 필요합니다', 'Sign-in needed'],
-  'assistant.mailSt.mail_no_origin': ['오피스 주소를 찾지 못했습니다', 'Office address not found'],
-  'assistant.mailSt.office_outdated': ['오피스가 옛 버전이라 답장 맥락을 읽지 못합니다', 'Office is on an old version, so reply context can\'t be read'],
+  'assistant.mailSt.mail_no_origin': ['메일을 읽을 주소를 찾지 못했습니다', 'Mail service address not found'],
+  'assistant.mailSt.office_outdated': ['메일 서버가 옛 버전이라 답장 맥락을 읽지 못합니다', 'The mail service is on an old version, so reply context can\'t be read'],
   'assistant.mailSt.mail_rate_limited': ['메일 요청 한도에 걸렸습니다 — 잠시 뒤 다시 확인합니다', 'Gmail rate limit — will check again shortly'],
-  'assistant.mailSt.mail_expired': ['메일 연결이 만료됐습니다 — 오피스에서 메일을 다시 연결해 주세요', 'Mail connection expired — reconnect mail in Office'],
+  'assistant.mailSt.mail_expired': ['메일 연결이 만료됐습니다 — 메일을 다시 연결해 주세요', 'Mail connection expired — reconnect your mail'],
   'assistant.mailSt.mail_error': ['메일을 읽지 못했습니다 — 다음 확인 때 다시 읽습니다', "Couldn't read mail — it will try again at the next check"],
-  'assistant.mailSt.no_mail_account': ['연결된 메일이 없습니다 — 오피스에서 메일을 연결해 주세요', 'No mail connected — connect mail in Office'],
+  'assistant.mailSt.no_mail_account': ['연결된 메일이 없습니다 — 메일을 먼저 연결해 주세요', 'No mail connected — connect your mail first'],
   'assistant.mailSt.deliver_failed': ['알림을 보내지 못해 다시 보내는 중입니다', "Couldn't send — retrying"],
   'assistant.mailSt.personal_room_unavailable': ['개인 공간 1:1 방을 열 수 없습니다', "Can't open your personal 1:1 room"],
   'assistant.dest': ['받는 곳', 'Delivered to'],
@@ -568,13 +580,52 @@ const DICT = {
   'assistant.todayOver': ['{n}건 — 하루 한도 {cap}건 넘음', '{n} — over the daily limit of {cap}'],
   'assistant.todayUnsure': ['{n}건 이상 — 다른 기기에서 보낸 알림 확인 중', '{n} or more — checking alerts sent from other devices'], // 방에서 복구가 실패한 동안
   'assistant.onRunner': ['실행 기기에서 볼 수 있습니다', 'Shown on the running device'],
-  'assistant.loadErr': ['비서 설정을 불러오지 못했습니다', 'Could not load assistant settings'],
+  // 하트비트 관리 → 루틴 화면(유건 10/10). 카드 탭은 보기 전용 + '루틴에서 관리'
+  'assistant.manage': ['루틴에서 관리', 'Manage in Routines'],
+  'assistant.card.mine': ['이 에이전트가 하트비트를 맡고 있습니다.', 'This agent runs your heartbeat.'],
+  'assistant.card.paused': ['하트비트를 꺼 두었습니다(설정은 남아 있습니다) · 담당 {name}', 'Heartbeat is off (settings kept) · agent {name}'],
+  'assistant.card.none': ['하트비트가 꺼져 있습니다.', 'Heartbeat is off.'],
+  'assistant.card.viewOnly': ['켜고 끄기·알림 설정·확인 주기는 루틴 화면에서 바꿉니다.', 'Turn it on or off and change its settings on the Routines screen.'],
+  'assistant.interval': ['확인 주기', 'Check interval'],
+  'assistant.intervalOpt': ['{n}분마다', 'Every {n} min'],
+  'assistant.intervalHint': ['일정을 이 간격으로 확인합니다. 길게 두면 방금 만든 일정은 늦게 알 수 있습니다. 메일은 이와 따로 정해진 간격으로 확인합니다.', 'Your calendar is checked at this interval. With a longer interval, events you just added may be noticed later. Mail is checked on its own schedule.'],
+  'assistant.agent': ['담당 에이전트', 'Agent'],
+  'assistant.quietAlertsOn': ['일정 알림은 보냄', 'reminders still sent'],
+  'assistant.hb.title': ['내 하트비트', 'My heartbeat'],
+  'assistant.hb.personal': ['나에게만 오는 알림', 'Just for you'],
+  'assistant.hb.switch': ['하트비트 켜기·끄기', 'Heartbeat on or off'],
+  'assistant.hb.desc': ['켜 두면 에이전트가 일정과 메일을 지켜보다가, 알릴 일이 있을 때만 개인 공간 1:1 방으로 먼저 알려 줍니다. 알릴 게 없으면 조용히 지나갑니다. 하트비트는 계정마다 한 곳에서만 켤 수 있습니다.', "When on, your agent keeps an eye on your calendar and mail and messages you first in your personal 1:1 room — only when there's something to tell you. Otherwise it stays quiet. Heartbeat runs in one company per account."],
+  'assistant.hb.stPaused': ['꺼 두었습니다 — 설정은 남아 있어 다시 켜면 이어서 알려 줍니다.', "Off — your settings are kept, so turning it back on picks up where it left off."],
+  'assistant.hb.stNone': ['아직 켜지 않았습니다 — 아래를 고른 뒤 켜 주세요.', 'Not on yet — choose below, then turn it on.'],
+  'assistant.hb.noAgents': ['먼저 에이전트를 만들어 주세요.', 'Add an agent first.'],
+  'assistant.hb.what': ['무엇을 알려 줄까요', 'What should it tell you about?'],
+  'assistant.hb.mailHint': ['메일은 답장이 필요한 것과 확인할 것만 알려 주고, 메일을 보내지는 않습니다.', "For mail, it only tells you what needs a reply or a look — it never sends mail."],
+  'assistant.hb.when': ['언제 알려 줄까요', 'When should it tell you?'],
+  'assistant.hb.morning': ['아침 정리', 'Morning summary'],
+  'assistant.hb.quiet': ['방해 금지 시간', 'Do not disturb'],
+  'assistant.hb.quietUntil': ['부터 아침 정리 시각({to})까지', 'until the morning summary ({to})'],
+  'assistant.hb.quietHint': ['이 시간에는 알리지 않고 모아 두었다가 아침 정리로 한 번에 보냅니다.', 'Nothing is sent during these hours — it all comes together in the morning summary.'],
+  'assistant.hb.quietAlerts': ['이 시간에도 일정 알림은 보내기', 'Still send event reminders during these hours'],
+  'assistant.hb.often': ['얼마나 자주 확인할까요', 'How often should it check?'],
+  'assistant.hb.who': ['누가 알려 줄까요', 'Who should tell you?'],
+  'assistant.hb.agentGone': ['{name}(지금 없는 에이전트)', '{name} (no longer here)'],
+  'assistant.hb.otherValues': ['아래 값은 이 회사에 남아 있는 하트비트 설정입니다 — 지금 돌고 있는 하트비트의 값이 아닙니다.', 'The values below are the heartbeat settings kept in this company — not those of the heartbeat running now.'],
+  'assistant.hb.whoHint': ['고른 에이전트의 개인 공간 1:1 방으로 옵니다.', "Messages come in your personal 1:1 room with this agent."],
+  'assistant.hb.chatHint': ['에이전트에게 1:1에서 말해도 바꿀 수 있습니다 — 예: “확인 주기 30분으로 바꿔 줘”.', 'You can also just tell your agent in a 1:1 — e.g. "check every 30 minutes".'],
+  'assistant.hb.advanced': ['고급', 'Advanced'],
+  'assistant.hb.mailPreview': ['메일은 미리 보기만(알리지 않고 무엇을 알렸을지 기록)', 'Mail preview only (record what would be sent, no messages)'],
+  'assistant.hb.previewShort': ['미리 보기', 'preview'],
+  'assistant.hb.clear': ['설정 지우기', 'Delete settings'],
+  'assistant.hb.clearTitle': ['하트비트 설정 지우기', 'Delete heartbeat settings'],
+  'assistant.hb.clearConfirm': ['하트비트를 끄고 이 회사의 하트비트 설정을 지웁니다. 다시 쓰려면 처음부터 고릅니다. 잠시 멈추려면 위의 스위치로 끄기만 하세요.', "This turns heartbeat off and deletes this company's heartbeat settings. To use it again you'll set it up from scratch. To pause for a while, just use the switch above."],
+  'assistant.loadErr': ['하트비트 설정을 불러오지 못했습니다', 'Could not load heartbeat settings'],
   'assistant.saveErr': ['저장하지 못했습니다 — 다시 시도해 주세요', 'Could not save — please try again'],
-  'assistant.st.unsealed': ['비서 설정 파일이 이 화면 밖에서 바뀌어 이 회사의 비서를 멈췄습니다. 이 화면에서 켜거나 바꾸면 새로 저장됩니다.', "The assistant settings file was changed outside this screen, so this company's assistant stopped. Turn it on or switch here to save fresh settings."],
-  'assistant.st.other_company': ['다른 회사의 비서가 맡고 있습니다.', "Another company's assistant is handling this."],
+  'assistant.st.unsealed': ['하트비트 설정 파일이 설정 화면 밖에서 바뀌어 이 회사의 하트비트를 멈췄습니다. 루틴 → 내 하트비트에서 다시 켜면 새로 저장됩니다.', "The heartbeat settings file was changed outside the settings screen, so this company's heartbeat stopped. Turn it on again in Routines → My heartbeat to save fresh settings."],
+  'assistant.st.no_agent': ['맡은 에이전트가 이 회사에 없어 하트비트가 멈춰 있습니다 — "누가 알려 줄까요"에서 다른 에이전트를 골라 주세요.', 'The agent in charge is no longer in this company, so heartbeat is stopped — pick another agent under "Who should tell you?".'],
+  'assistant.st.other_company': ['다른 회사의 하트비트가 맡고 있습니다.', "Another company's heartbeat is handling this."],
   'assistant.st.login_required': ['로그인이 필요합니다 — 이 기기에서 이 회사를 만든 계정으로 로그인해 주세요.', 'Sign-in needed — sign in on this device with the account that created this company.'],
-  'assistant.st.muted': ['메신저 알림 종류에서 비서 알림이 꺼져 있어 보내지 않습니다.', 'Assistant notifications are turned off in the messenger notification types, so nothing is sent.'],
-  'assistant.st.runner_outdated': ['실행 기기가 옛 버전이라 비서가 꺼져 있습니다 — 그 기기의 Argo를 업데이트해 주세요.', 'The running device is on an old version, so the assistant is off — update Argo on that device.'],
+  'assistant.st.muted': ['메신저 알림 종류에서 하트비트 알림이 꺼져 있어 보내지 않습니다.', 'Heartbeat notifications are turned off in the messenger notification types, so nothing is sent.'],
+  'assistant.st.runner_outdated': ['실행 기기가 옛 버전이라 하트비트가 꺼져 있습니다 — 그 기기의 Argo를 업데이트해 주세요.', 'The running device is on an old version, so heartbeat is off — update Argo on that device.'],
   'assistant.st.calendar_error': ['일정을 읽지 못했습니다 — 다음 확인 때 다시 읽습니다.', "Couldn't read the calendar — it will try again at the next check."],
   'assistant.st.deliver_failed': ['알림을 보내지 못해 다시 보내는 중입니다.', "Couldn't send a message — retrying."],
   'assistant.st.personal_room_unavailable': ['개인 공간 1:1 방을 열 수 없습니다 — 메신저 개인 공간에 이 에이전트가 있는지 확인해 주세요.', "Can't open your personal 1:1 room — check that this agent is in your messenger personal space."],
@@ -880,6 +931,7 @@ const DICT = {
   // 카운터는 회수가 실행된 사이클에만 잠깐 보인다(분리 검수 LOW-C) — 문구가 관측을 약속하지 않는다.
   'settings.sync.credOffHelp': ['이 회사의 자격 증명은 각 기기에만 저장됩니다. 클라우드에 있던 사본은 동기화가 실제로 도는 상태(Pro·체험)에서 다음 사이클에 회수되며, 무료 플랜은 클라우드 쓰기가 막혀 있어 회수가 보류됩니다. 새 기기(및 클라우드 워커)에서는 러너·봇을 다시 연결해야 합니다.', 'Credentials for this company stay on each device only. Cloud copies are withdrawn on the next cycle while sync actually runs (Pro/trial); on the free plan cloud writes are blocked, so withdrawal stays pending. New devices (and cloud workers) must reconnect runners and bots.'],
   'settings.sync.credWithdrawn': ['자격 회수 {n}건', 'credentials withdrawn: {n}'],
+  'settings.sync.oversize': ['동기화 제외(크기 초과) {n}개 · {names} — {mb}MB를 넘는 파일은 기기 간에 주고받지 않습니다', 'Not synced (too large): {n} · {names} — files over {mb} MB aren\'t synced between devices'],
   'settings.sync.credErr': ['설정 저장에 실패했습니다', 'Failed to save the setting'],
   // E2EE(종단간 암호화) — 회사 데이터까지 본인만 여는 열쇠 구조
   'settings.e2ee.title': ['종단간 암호화', 'End-to-end encryption'],
@@ -966,8 +1018,6 @@ const DICT = {
   'settings.msgr.personalOnly': ['개인 공간에서 에이전트 {n}명을 쓰고 있습니다. 팀과 함께 쓰려면 메신저에서 조직을 만들거나 초대 링크로 들어오세요.', 'You are using {n} agents in your personal space. To work with a team, create an organization or join via invite link in the messenger.'],
   'settings.msgr.connection.personal': ['개인 공간 연결됨', 'Personal space connected'],
   'settings.msgr.connection.personalHelp': ['메신저 개인 공간에 연결된 에이전트: {n}명. 조직 없이도 메신저에서 이 에이전트들에게 일을 맡길 수 있습니다.', '{n} agents are connected to your personal space in the messenger. You can hand them work there without an organization.'],
-  'settings.office.desc': ['Argo 오피스 — 회사의 할 일·거래처·일정을 웹에서 함께 봅니다. 에이전트가 고친 내용도 여기서 확인합니다.', 'Argo Office — see your company tasks, customers and calendar together on the web, including changes your agents made.'],
-  'settings.office.open': ['Argo 오피스 열기', 'Open Argo Office'],
   'settings.msgr.help': ['조직을 고른 뒤 이 컴퓨터의 에이전트를 연결하면 팀 메신저에서 쓸 수 있습니다. 조직 채널에서 @로 부르면 연결한 에이전트가 해당 대화에서 답합니다.', 'Choose an organization and connect this computer’s agents to use them in the team messenger. Mention a connected agent with @ in an org channel and it replies in that conversation.'],
   'settings.msgr.notSignedIn': ['이 기기가 아르고 계정에 로그인되어 있지 않습니다. 설정의 기기 카드에서 로그인하세요.', 'This device is not signed in to an Argo account. Sign in from the Devices card.'],
   'settings.msgr.noOrg': ['아직 조직이 없습니다. 개인 공간에서는 바로 쓸 수 있고, 팀과 함께 쓰려면 메신저에서 조직을 만들거나 초대 링크로 들어오세요.', 'No organization yet. You can use your personal space right away; to work with a team, create an organization or join via invite link in the messenger.'],
@@ -975,6 +1025,27 @@ const DICT = {
   'settings.msgr.registered': ['파견 중', 'Dispatched'],
   'settings.msgr.notRegistered': ['파견 해제됨', 'Recalled'],
   'settings.msgr.notInMessenger': ['메신저에 아직 없음', 'Not in Messenger yet'],
+  // 무료 계정 한도로 서버가 멈춘 행(status paused, 2026-10-11) — 사람이 해제한 '파견 해제됨'과 구별(화면 검수 B). 고르는 곳: settings/msgr-card.mjs pausedLabelKey
+  'settings.msgr.paused': ['멈춤', 'Paused'],
+  'settings.msgr.paused.limit': ['멈춤 · 무료 4명 한도', 'Paused · Free plan limit of 4'],
+  'settings.msgr.paused.app': ['멈춤 · 무료 계정 최신 앱 필요', 'Paused · Free plan needs the latest app'],
+  'settings.msgr.paused.room': ['멈춤 · 지금 연결할 수 있어요', 'Paused · You can connect it now'],
+  // 개인 공간만 쓰는 사용자의 연결 줄·교체 미리 알림(검수 스택 화면 4차, 2026-10-11)
+  'settings.msgr.personal.title': ['개인 공간 연결', 'Personal space connection'],
+  'settings.msgr.personal.status': ['에이전트 {n}명이 개인 공간에 연결되어 있고, {m}명은 연결되지 않았습니다.', '{n} agents are connected to your personal space and {m} are not.'],
+  'settings.msgr.personal.rosterHelp': ['이 컴퓨터의 에이전트와 개인 공간 연결 상태를 한눈에 확인합니다.', 'Review each agent on this computer and its personal space connection.'],
+  'settings.msgr.personal.count': ['{n} / {total} 연결', '{n} / {total} connected'],
+  'settings.msgr.swap.confirm': ['무료 계정은 에이전트 4명까지라서, 연결하면 {names} 에이전트를 멈춰요. 연결할까요?', 'Free accounts can use up to 4 agents, so connecting will pause {names}. Connect anyway?'],
+  'settings.msgr.swap.go': ['멈추고 연결', 'Pause and connect'],
+  // 무료 계정이 유지할 에이전트를 고른다(유건 2026-10-12 — 일괄 연결이 마지막 4명만 남기던 제보, 메신저 #958과 같은 문구·서버 함수 msgr_free_keep)
+  'settings.msgr.keep.title': ['유지할 {limit}명의 에이전트를 선택해주세요', 'Choose the {limit} agents to keep'],
+  'settings.msgr.keep.help': ['무료 계정은 메신저에 에이전트를 {limit}명까지 연결해요. 고르지 않은 에이전트는 멈추고 대화와 기억은 그대로 남아요. 언제든 다시 바꿀 수 있어요.', 'Free accounts can connect up to {limit} agents to Messenger. Agents you don’t choose are paused, and their conversations and memory stay. You can change this any time.'],
+  'settings.msgr.keep.picked': ['{n}/{limit}명 선택', '{n}/{limit} selected'],
+  'settings.msgr.keep.open': ['유지할 에이전트 바꾸기', 'Change agents to keep'],
+  'settings.msgr.keep.other': ['다른 회사 · {ws}', 'Other company · {ws}'],
+  'settings.msgr.keep.paused': ['멈춤', 'Paused'],
+  'settings.msgr.keep.saved': ['유지할 에이전트를 바꿨어요. 고르지 않은 에이전트는 멈추고 대화 기록은 그대로 둡니다.', 'Updated the agents to keep. Agents you didn’t choose are paused and their history stays.'],
+  'settings.msgr.keep.err.load': ['유지할 에이전트 목록을 불러오지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Could not load your agents. Try again shortly.'],
   'settings.msgr.manage': ['허용 범위(누가 시킬 수 있나)·파견 해제·다시 파견은 팀 메신저 앱의 에이전트 카드에서 합니다.', 'Access scope (who can task it), recall and re-dispatch are done on the agent card in the team messenger app.'],
   'settings.msgr.register': ['등록', 'Register'],
   'settings.msgr.unregister': ['해제', 'Unregister'],
@@ -1012,6 +1083,7 @@ const DICT = {
   'settings.msgr.roster.title': ['연결된 에이전트 보기', 'View connected agents'],
   'settings.msgr.roster.help': ['이 컴퓨터의 에이전트와 조직 연결 상태를 한눈에 확인합니다.', 'Review each agent on this computer and its connection state for this organization.'],
   'settings.msgr.err.activate': ['에이전트를 연결하지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Could not connect agents. Try again shortly.'],
+  'settings.msgr.swapped': ['무료 계정은 에이전트 4명까지라서 {names} 에이전트를 멈췄어요. Pro면 제한이 없어요.', 'Free accounts can use up to 4 agents, so {names} is now paused. Pro has no limit.'], // 무료 4명 교체 안내(2026-10-11, 서버 msgr_agent_swap_notes)
   'settings.msgr.err.reconnect': ['메신저 재연결을 시작하지 못했습니다. 잠시 뒤 다시 시도하세요.', 'Could not start reconnecting Messenger. Try again shortly.'],
   'settings.msgr.runtime.title': ['메신저 응답 상태', 'Messenger response status'],
   'settings.msgr.runtime.alive': ['정상 응답 중 · {s}초 전에 확인', 'Responding normally · checked {s}s ago'],
@@ -1847,6 +1919,38 @@ const DICT = {
   'routines.notifications.loading': ["알림 연결 확인 중…", "Checking notification connections…"],
   'routines.notifications.history': ["실행 결과는 루틴 기록에 남습니다. 선택한 채널의 연결 설정에서 루틴 알림을 끄면 해당 채널에는 전송되지 않습니다.", "Results remain in routine history. Muting routine notifications in a selected channel’s connection settings stops delivery to that channel."],
   'routines.registered': ['등록된 루틴', 'Registered Routines'],
+  // 루틴 화면 "내 하트비트 → 목표 하트비트"(목표 하트비트 — app/c/[ws]/routines/goal-list.jsx)
+  'goals.title': ['목표 하트비트', 'Goal heartbeats'],
+  'goals.chip': ['이룰 때까지 확인하고 꺼짐', 'Checks until done, then stops'],
+  'goals.hint': ['에이전트에게 "○○ 티켓 오픈 시간 확인해서 예매해 줘"처럼 말하면, 이룰 때까지 확인하고 알릴 것이 있을 때만 개인 1:1 방으로 알린 뒤 스스로 꺼집니다. 결제·예매 확정은 결재로 묻습니다.', 'Ask an agent something like "find out when the tickets open and book them" — it keeps checking, messages your personal 1:1 room only when there is news, and turns itself off when done. Payment or confirming a booking is asked via approval.'],
+  'goals.empty': ['아직 목표 하트비트가 없습니다.', 'No goal heartbeats yet.'],
+  'goals.loadFail': ['목표 목록을 불러오지 못했습니다.', 'Could not load goals.'],
+  'goals.actFail': ['바꾸지 못했습니다. 잠시 뒤 다시 시도해 주세요.', 'Could not change it. Please try again shortly.'],
+  'goals.liveCount': ['{n} 진행 중', '{n} active'],
+  'goals.pause': ['일시 정지', 'Pause'],
+  'goals.resume': ['다시 켜기', 'Resume'],
+  'goals.stop': ['끄기', 'Turn off'],
+  'goals.stopTitle': ['목표 하트비트 끄기', 'Turn off goal heartbeat'],
+  'goals.stopConfirm': ['"{title}" 확인을 그만둡니다. 기록은 목록에 남고, 다시 하려면 에이전트에게 새로 부탁해야 합니다.', 'Stop checking "{title}". The record stays in the list; to try again, ask the agent anew.'],
+  'goals.doneWhen': ['끝나는 조건: {v}', 'Done when: {v}'],
+  'goals.next': ['다음 확인 {v}', 'Next check {v}'],
+  'goals.deadline': ['기한 {v}', 'Until {v}'],
+  'goals.ended': ['끝난 때 {v}', 'Ended {v}'],
+  'goals.every': ['{n}분마다', 'every {n} min'],
+  'goals.runs': ['확인 {n}회', '{n} checks'],
+  'goals.last': ['마지막 확인 {v}', 'last checked {v}'],
+  'goals.note': ['최근 메모: {v}', 'Latest note: {v}'],
+  'goals.result': ['결과: {v}', 'Result: {v}'],
+  'goals.showEnded': ['끝난 목표 {n}개 보기', 'Show {n} ended'],
+  'goals.hideEnded': ['끝난 목표 접기', 'Hide ended'],
+  'goals.view.active': ['진행 중', 'Active'],
+  'goals.view.paused': ['일시 정지', 'Paused'],
+  'goals.view.sending': ['끝 — 알림 보내는 중', 'Ended — sending notice'],
+  'goals.view.done': ['달성', 'Reached'],
+  'goals.view.blocked': ['멈춤', 'Blocked'],
+  'goals.view.expired': ['기한 지남', 'Deadline passed'],
+  'goals.view.failed': ['실패로 멈춤', 'Stopped (failures)'],
+  'goals.view.stopped': ['꺼짐', 'Off'],
   'routines.active': ['{n} 가동', '{n} active'],
   'routines.empty': ['아직 루틴이 없습니다. 위 템플릿을 눌러 하나 만들어보세요.', 'No routines yet. Click a template above to create one.'],
   'routines.colTitle': ['제목', 'Title'],
@@ -1978,6 +2082,13 @@ const DICT = {
 /** 사전에 있는 키인가 — 다른 기기의 새 버전이 남긴 실패 코드처럼 이 버전 사전에 없는 키를 화면이 키 글자 그대로 보이지 않게(fail-display.mjs failCodeKey). */
 export const hasMsg = (key) => Object.prototype.hasOwnProperty.call(DICT, key);
 
+/** 사전 조회 한 곳 — 훅 밖(DOM 헬퍼·순수 함수)도 같은 사전을 쓰게. Provider의 t도 이것을 부른다. 없는 키는 키 글자 그대로. */
+export function tr(lang, key, vars) {
+  let s = DICT[key]?.[lang === 'en' ? 1 : 0] ?? key;
+  if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, () => String(v)); // 함수 치환 — 값 안의 $&·$$를 패턴으로 읽지 않는다(파일 이름 a$$b.pdf)
+  return s;
+}
+
 const LangCtx = createContext(null);
 
 // 서버 공통 가드(auth.mjs requestLang)가 401·403 오류 문구를 표시 언어로 내리도록 쿠키로 미러한다.
@@ -2046,11 +2157,7 @@ export function LanguageProvider({ children }) {
     return () => window.removeEventListener('keydown', h);
   }, []);
 
-  const t = useCallback((key, vars) => {
-    let s = DICT[key]?.[lang === 'ko' ? 0 : 1] ?? key;
-    if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, String(v));
-    return s;
-  }, [lang]);
+  const t = useCallback((key, vars) => tr(lang, key, vars), [lang]);
 
   /** USD 내부값 → 표시 통화. ko는 원화 환산(고정 환율 — '약' 표기). */
   const fmtMoney = useCallback((usd, { approx = true } = {}) => {
@@ -2092,5 +2199,4 @@ const STAGE_CODES = new Set(['boot', 'memory', 'write', 'shell', 'web', 'delegat
 export function stageLabel(t, stage, detail = '') {
   if (!stage) return '';
   if (!STAGE_CODES.has(stage)) return stage; // 레거시/미지 — 원문 표시
-  return stage === 'runner' ? t('chat.stage.runner', { name: detail || '' }) : t(`chat.stage.${stage}`);
 }

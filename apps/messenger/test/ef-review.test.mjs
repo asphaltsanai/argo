@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createComposerDelivery, setDeliveryReporter } from '../src/composer-delivery.mjs';
+import { createComposerDelivery, setDeliveryReporter } from '../../../src/composer-delivery.mjs';
 import { fetchSearchRows } from '../src/search-rows.mjs';
 import { searchView } from '../src/search-view.mjs';
 import { deliveryCardView } from '../src/delivery-card.mjs';
@@ -73,6 +73,18 @@ test('deliveryCardView: 카드 제목과 오류 줄 — 보내는 중 / 연결 �
   assert.deepEqual(upd.errorLine, { key: 'dm.delivery.blocked', raw: null, files: [] });
   const other = deliveryCardView({ busy: false, job: job({ error: 'new row violates row-level security policy' }) });
   assert.deepEqual([other.titleKey, other.errorLine], ['msg.delivery.failed', { key: null, raw: 'new row violates row-level security policy', files: [] }]);
+});
+
+// 무료 계정 첨부 저장 한도(20261011150000) — 업로드는 storage-api가 원문을 숨기고 'database error, code: PT402'만, 첨부 행은 'msgr_storage_limit'을 준다.
+// 원문 대신 안내 문구(err.storageLimit)와 못 올린 파일 이름. 다시 보내기는 그대로(Pro로 바꾸면 같은 카드에서 다시 보낸다)
+test('deliveryCardView: 무료 첨부 저장 한도 — 두 모양 모두 안내 문구 + 실패한 파일 이름, 다른 코드는 원문', () => {
+  const job = (o = {}) => ({ messageId: 9, body: '보고서', error: '', errorKey: '', files: [{ file: { name: 'a.pdf' }, done: false }, { file: { name: 'ok.png' }, done: true }], ...o });
+  for (const error of ['a.pdf: database error, code: PT402', 'a.pdf: msgr_storage_limit']) {
+    const v = deliveryCardView({ busy: false, job: job({ error }) });
+    assert.deepEqual([v.titleKey, v.errorLine, v.canRetry], ['msg.delivery.attachFailed', { key: 'err.storageLimit', raw: null, files: ['a.pdf'] }, true], error);
+  }
+  const other = deliveryCardView({ busy: false, job: job({ error: 'a.pdf: database error, code: PT4021' }) });
+  assert.equal(other.errorLine.key, null, '비슷한 다른 코드는 원문 그대로');
 });
 
 test('개인 공간 내 이름: 사람 이름 한 길(resolvePeopleNames, 조직 없음) — msgr_people_names를 한 번에 묻고, 나만 묻는 호출을 따로 두지 않는다', async () => {
@@ -155,8 +167,9 @@ test('App 배선 — 개인 공간: 에이전트 카드 열기·방장 표식·�
   has(/const openers = crewOpeners\(\{ isPersonal, openSheet: setSheet, openDm: dmWithCrew \}\);/, '열기 규칙은 순수 함수');
   has(/onCrew=\{openers\.channel\} onTitle=/, '대화방 메시지의 에이전트 버튼');
   has(/onCrew=\{openers\.search\} onDm=/, '검색 결과의 에이전트');
-  has(/isCrew && crew && onCrew \? <button type="button" className="msgr-avbtn" onClick=\{\(\) => onCrew\(crew\.id\)\}/, 'onCrew가 없으면 아바타 버튼을 그리지 않는다');
-  has(/isCrew && crew && onCrew \? <button type="button" className="msgr-namebtn" onClick=\{\(\) => onCrew\(crew\.id\)\}>/, 'onCrew가 없으면 이름 버튼을 그리지 않는다');
+  has(/const crewBtn = !!\(crew && onCrew && crew\.status !== 'paused'\);/, 'onCrew가 없으면(또는 멈춘 에이전트면 — 2026-10-11) 아바타 버튼을 그리지 않는다');
+  has(/isCrew && crewBtn \? <button type="button" className="msgr-avbtn" onClick=\{\(\) => onCrew\(crew\.id\)\}/, 'onCrew가 없으면 아바타 버튼을 그리지 않는다');
+  has(/isCrew && crewBtn \? <button type="button" className="msgr-namebtn" onClick=\{\(\) => onCrew\(crew\.id\)\}>/, 'onCrew가 없으면 이름 버튼을 그리지 않는다');
   has(/const isCreator = creatorTagVisible\(\{ isCreator: channel\.created_by === m\.user_id, isPersonal, isGroup: !!channel\._personal_group \}\);/, '방장 표식 규칙');
   has(/\{\(isChAdmin \|\| isCreator\) && <span className="msgr-tag">\{isCreator \? t\('ch\.admin\.creator'\) : t\('ch\.admin'\)\}<\/span>\}/, '표식은 isCreator로 그린다');
   has(/const askName = \(id, force = false\) => \{/, '이름은 한 묶음 조회 길(askName → flushNames)로만 묻는다');

@@ -2,7 +2,7 @@
 // 보이고 실행기 연결 상태를 숨겼다. 본체 어디에도 오피스로 가는 길이 없었다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { msgrConnectionChip, msgrShowRuntime, OFFICE_URL, MESSENGER_PAGE } from '../app/c/[ws]/settings/msgr-card.mjs';
+import { msgrConnectionChip, msgrShowRuntime, MESSENGER_PAGE } from '../app/c/[ws]/settings/msgr-card.mjs';
 
 test('조직이 없어도 개인 공간에 연결된 크루가 있으면 "개인 공간 연결됨" — 연결 필요로 보이지 않는다', () => {
   assert.equal(msgrConnectionChip({ regCount: 0, personalCount: 3 }), 'personal');
@@ -16,9 +16,30 @@ test('실행기 연결 상태는 조직 여부와 상관없이 보인다(로그�
   assert.equal(msgrShowRuntime({ signedIn: false, agentCount: 2 }), false);
 });
 
-test('진입 링크는 https 고정 주소 — 오피스(웹)·메신저 받기 안내 한 곳', () => {
-  assert.equal(new URL(OFFICE_URL).protocol, 'https:');
+test('진입 링크는 https 고정 주소 — 메신저 받기 안내 한 곳', () => {
   assert.equal(new URL(MESSENGER_PAGE).protocol, 'https:');
+});
+
+// 오피스는 아직 비공개 — 본체 앱 화면에서 오피스로 바로 가는 링크·버튼을 두지 않는다(유건 2026-10-10).
+// 에이전트 도구가 서버 쪽에서 부르는 주소(src/gateway/office-files.mjs)는 화면 링크가 아니라 대상 밖.
+test('본체 화면(app/)과 에이전트 도움말(src/help)에 오피스로 가는 링크·버튼 안내가 없다', async () => {
+  const { readdir, readFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const hits = [];
+  const walk = async (d) => {
+    for (const e of await readdir(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules' && e.name !== 'api') await walk(p); }
+      else if (/\.(jsx?|mjs)$/.test(e.name)) {
+        const s = await readFile(p, 'utf8');
+        if (/argo-office\.vercel\.app|argo\.ceo\/office|OFFICE_URL|settings\.office\.|오피스 열기|Open Argo Office/.test(s)) hits.push(p);
+      }
+    }
+  };
+  await walk(fileURLToPath(new URL('../app/', import.meta.url)));
+  await walk(fileURLToPath(new URL('../src/help/', import.meta.url)));
+  assert.deepEqual(hits, []);
 });
 
 // UL10·UL7(2026-10-05 분리 검수): 위 테스트는 순수 함수 입력만 만들어 넣었다 — 서버가 실제로 내리는 응답(personalCount 필드)을 카드가 읽는 연결은 안 잠겼다.
@@ -33,7 +54,8 @@ test('라우트가 행을 나눈다 — 조직 행은 crews, 개인 공간 행(o
   const r = splitCardRows([row({ id: '1' }), row({ id: '2', org_id: null, slug: 'b' }), row({ id: '3', org_id: null, slug: 'c', status: 'detached' }), row({ id: '4', org_id: null, slug: 'd' })]);
   assert.deepEqual(r.crews.map((x) => x.id), ['1'], '개인 행은 연결·해제 판정 대상(crews)에서 뺀다');
   assert.equal(r.personalCount, 2, '활성 개인 행만 센다(detached 제외)');
-  assert.deepEqual(splitCardRows(null), { crews: [], personalCount: 0 });
+  assert.deepEqual(splitCardRows(null), { crews: [], personalCount: 0, personal: [] });
+  assert.deepEqual(r.personal.map((x) => x.id), ['2', '3', '4'], '개인 행 목록 — 카드의 개인 공간 줄(검수 스택 4차)');
 });
 
 test('서버 응답 → 카드 판정 — 개인 공간만 있는 사용자: 칩 personal·실행기 영역 보임·자동 확인(폴) 없음', () => {
@@ -76,4 +98,21 @@ test('L6: 상태별 단추 하나 — 문구가 시키는 행동과 단추가 �
     assert.equal(runtimeAction(state, { polling: false }), 'recheck', `${state}: 폴이 없으면 다시 확인`);
     assert.equal(runtimeAction(state, { polling: true }), null, `${state}: 폴이 돌면 단추 없음(자동 확인)`);
   }
+});
+
+// 검수 스택 화면 4차(10/11): 조직이 없는 무료 사용자는 다섯 번째 에이전트(멈춤)를 켤 곳이 없었다 — 카드가 '개인 공간에서 4명' 한 줄만 보였다.
+import { personalCardView } from '../app/c/[ws]/settings/msgr-card.mjs';
+test('개인 공간 줄 — 에이전트마다 개인 행 상태(연결·멈춤+이유·해제·없음), 연결할 것은 멈춤·해제 행만, 다 연결돼 있으면 영역을 보이지 않는다(Pro 카드 그대로)', () => {
+  const agents = [{ slug: 'a' }, { slug: 'b' }, { slug: 'c' }, { slug: 'd' }];
+  const st = { signedIn: true, orgs: [], ...splitCardRows([row({ id: '1', org_id: null, slug: 'a' }), row({ id: '2', org_id: null, slug: 'b', status: 'paused' }), row({ id: '3', org_id: null, slug: 'c', status: 'available' }), row({ id: '9', org_id: 'o1', slug: 'd', status: 'paused' })]), pauseReason: 'limit' };
+  const v = personalCardView({ st, agents });
+  assert.deepEqual(v.rows.map((r) => [r.slug, r.labelKey]), [['a', 'settings.msgr.connection.personal'], ['b', 'settings.msgr.paused.limit'], ['c', 'settings.msgr.notRegistered'], ['d', 'settings.msgr.notInMessenger']], '조직 행(d)은 개인 줄에 쓰지 않는다');
+  assert.deepEqual(v.missing, ['b'], '연결할 것은 멈춘 행만 — 메신저에서 사람이 해제한(available) c는 묶지 않는다(재검수 LOW-1: 다시 켜지며 다른 에이전트를 교체)');
+  assert.equal(v.connected, 1); assert.equal(v.show, true);
+  assert.equal(personalCardView({ st: { ...st, pauseReason: null }, agents }).show, false, 'Pro(이유 없음)는 종전 카드 그대로(재검수 LOW-2)');
+  assert.equal(personalCardView({ st: { signedIn: true, orgs: [], pauseReason: 'limit', ...splitCardRows([row({ org_id: null, slug: 'a' }), row({ id: '3', org_id: null, slug: 'c', status: 'available' })]) }, agents }).show, false, '해제한 행만 있으면 영역 없음');
+  const all = personalCardView({ st: { signedIn: true, orgs: [], ...splitCardRows([row({ org_id: null, slug: 'a' })]) }, agents: [{ slug: 'a' }] });
+  assert.equal(all.show, false, '다 연결돼 있으면(Pro·4명 이하) 종전 카드 그대로');
+  assert.equal(personalCardView({ st: { ...st, orgs: [{ id: 'o1' }] }, agents }).show, false, '조직이 있으면 조직 줄을 쓴다(그대로)');
+  assert.equal(personalCardView({ st: null, agents }).show, false);
 });

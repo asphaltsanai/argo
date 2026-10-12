@@ -397,7 +397,7 @@ export default function Market({ params }) {
   const skillInjection = new Map((data?.installedSkills ?? []).map((s) => [s.id, s.injected ?? 'full']));
   const skillPaths = new Map((data?.installedSkills ?? []).map((s) => [s.id, s.path ?? `skills/${s.id}.md`]));
   const injectionBadge = (state) => state === 'ref' ? (
-    <span className="pill" style={{ color: 'var(--warn, #b5893a)' }} title={t('market.skillRefHint')}>{t('market.skillRefBadge')}</span>
+    <span className="pill" style={{ color: 'var(--warn)' }} title={t('market.skillRefHint')}>{t('market.skillRefBadge')}</span>
   ) : state === 'omitted' ? (
     <span className="pill" style={{ color: 'var(--danger)' }} title={t('market.skillOmittedHint')}>{t('market.skillOmittedBadge')}</span>
   ) : null;

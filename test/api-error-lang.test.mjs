@@ -51,6 +51,9 @@ const EXPECT = {
   msgr_notify_bad_request: { status: 400, ko: '알림 설정 요청이 올바르지 않습니다 — 켜기/끄기 값만 받습니다', en: 'Bad notification setting request — only an on/off value is accepted' },
   msgr_bad_request: { status: 400, ko: '조직 id·에이전트·허용 범위(all|list|owner)를 확인해 주세요', en: 'Check the organization id, agent, and allow scope (all|list|owner)' },
   msgr_crew_not_found: { status: 404, ko: '에이전트가 없습니다', en: 'Agent not found' },
+  msgr_pro_required: { status: 403, ko: '에이전트를 메신저에 연결하려면 Argo Pro가 필요합니다. Pro로 바꾸면 멈춘 에이전트가 바로 다시 연결됩니다.', en: 'Connecting agents to Messenger needs Argo Pro. Paused agents reconnect as soon as you upgrade to Pro.' },
+  msgr_free_agent_limit: { status: 403, ko: '무료 계정은 메신저에 에이전트를 4명까지 연결할 수 있는데, 대신 멈출 에이전트가 없어 연결하지 못했습니다. Pro면 제한이 없습니다.', en: 'Free accounts can connect up to 4 agents to Messenger, and there was no agent to pause in its place. Pro has no limit.' },
+  msgr_app_update_required: { status: 403, ko: '무료 계정의 에이전트는 최신 Argo 앱이 켜져 있을 때 메신저에 연결됩니다. Argo 앱을 업데이트하면 에이전트가 다시 연결됩니다.', en: 'On a free account, agents connect to Messenger while the latest Argo app is running. Update the Argo app and your agents reconnect.' },
   msgr_upstream: { status: 502, ko: '조직 서버 응답 오류 — 잠시 후 다시 시도해 주세요', en: 'Organization server error — please try again shortly' },
   // 회사 정보 읽기 실패(F3, 2026-10-05) — 없음(404 company_not_found)과 갈라 화면이 '찾을 수 없음'으로 바뀌지 않게
   // 엔진 오류 코드(F11) — ko는 엔진이 던지던 문장 그대로
@@ -95,14 +98,23 @@ const EXPECT = {
   upload_too_large: { status: 413, ko: '파일은 하나에 10MB까지 첨부할 수 있어요', en: 'Each file can be up to 10MB' },
   company_load_failed: { status: 500, ko: '회사 정보를 불러오지 못했습니다 — 잠시 후 다시 시도해 주세요', en: "Couldn't load the company — please try again shortly" },
   // 능동 비서 설정(app/api/companies/[ws]/assistant — src/assistant/settings.mjs, 2단계 신규 코드)
-  assistant_bad_request: { status: 400, ko: '비서 설정 요청이 올바르지 않습니다', en: 'Bad assistant settings request' },
-  assistant_agent_not_found: { status: 400, ko: '비서로 정할 에이전트를 찾을 수 없습니다', en: "Couldn't find the agent to use as the assistant" },
+  assistant_bad_request: { status: 400, ko: '하트비트 설정 요청이 올바르지 않습니다', en: 'Bad heartbeat settings request' },
+  assistant_agent_not_found: { status: 400, ko: '하트비트로 정할 에이전트를 찾을 수 없습니다', en: "Couldn't find the agent to use for heartbeat" },
+  assistant_interval_invalid: { status: 400, ko: '확인 주기는 10·15·30·60분 중에서 고를 수 있습니다', en: 'The check interval can be 10, 15, 30 or 60 minutes' },
   assistant_lead_invalid: { status: 400, ko: '일정 알림은 10·15·30·60분 전 중에서 고를 수 있습니다', en: 'Event reminders can be 10, 15, 30 or 60 minutes before' },
   assistant_mail_invalid: { status: 400, ko: '메일은 안 봄·미리 보기·알림 중에서 고를 수 있습니다', en: 'Mail can be off, preview, or notify' },
   assistant_time_invalid: { status: 400, ko: '시각은 HH:MM 형식이어야 합니다', en: 'Times must be in HH:MM format' },
   assistant_quiet_empty: { status: 400, ko: '조용한 시간의 시작과 끝이 같습니다', en: 'Quiet hours start and end at the same time' },
   assistant_evening_in_quiet: { status: 400, ko: '내일 일정 요약 시각이 조용한 시간 안에 있습니다 — 조용한 시간 밖으로 정해 주세요', en: 'The summary time for tomorrow falls in quiet hours — pick a time outside them' },
   assistant_evening_before_morning: { status: 400, ko: '내일 일정 요약은 아침 정리(조용한 시간이 끝나는 시각)보다 늦어야 합니다', en: 'The summary for tomorrow must come after the morning summary (when quiet hours end)' },
+  // 목표 하트비트(src/goal-heartbeat.mjs·/api/companies/[ws]/goals) — 루틴 편집 경로로 목표를 바꾸려 할 때와 목표 목록의 상태 바꾸기
+  routine_is_goal: { status: 400, ko: '목표 하트비트는 루틴 화면의 목표 목록에서 바꿉니다', en: 'Goal heartbeats are changed in the Goals list on the Routines screen' },
+  goal_not_found: { status: 404, ko: '목표 하트비트를 찾을 수 없습니다', en: 'Goal heartbeat not found' },
+  goal_ended: { status: 409, ko: '이미 끝난 목표입니다', en: 'This goal has already ended' },
+  goal_max_active: { status: 409, ko: '목표 하트비트는 동시에 5개까지 켤 수 있습니다', en: 'Up to 5 goal heartbeats can run at once' },
+  goal_deadline_past: { status: 409, ko: '기한이 지난 목표는 다시 켤 수 없습니다', en: 'A goal past its deadline cannot be resumed' },
+  goal_op_invalid: { status: 400, ko: '알 수 없는 동작입니다', en: 'Unknown action' },
+  goal_run_now: { status: 400, ko: '목표 하트비트는 다음 확인 시각에 돕니다 — 바로 확인하려면 에이전트에게 말해 주세요', en: 'Goal heartbeats run at their next check time — to check now, ask the agent' },
 };
 
 test('apiError — ko 문구는 기존 프로덕션 문자열 그대로 + 상태코드 + errorCode 동봉', async () => {

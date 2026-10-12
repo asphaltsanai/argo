@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { SPACE_CREW_STATUSES, splitSpaceCrews, withPaused, crewNameAsker, readPausedCrewNames } from '../src/agent-pause.mjs'; // loadOrg의 크루 나누기(멈춘 에이전트는 이름 표시에만, 2026-10-11)
 import { readFileSync } from 'node:fs';
 import { createRequestGate, createPreferenceQueue, reorderFavorites } from '../src/rail-state.mjs';
-import { stampFetched } from '../src/presence-clock.mjs';
+import { stampFetched } from '../src/presence-clock.mjs'; import { readWithSeen } from '../src/crew-seen.mjs'; // loadOrg의 접속 시각 읽기(기기 단위 심박)
 import { crewOrder, withoutCopies } from '../src/mention-candidates.mjs'; // loadOrg의 크루 목록 순서·충돌 사본 제외
 import { ownRowsReader } from '../src/agent-groups.mjs'; // 내 크루 행 읽기 하나로(분리 검수 2026-10-05 #4)
 
@@ -47,9 +48,9 @@ test('Shell loadOrg ignores late A data, available crews, and errors after switc
     return { select() { return this; }, eq(key, value) { if (key === 'org_id') id = value; return this; }, is() { return this; }, order() { return this; }, in() { return this; }, maybeSingle() { return this; },
       then(resolve, reject) { if (table === 'msgr_channel_members') return Promise.resolve(joinedRows).then(resolve, reject); return new Promise((done, fail) => pending.push({ id, table, done, fail })).then(resolve, reject); } }; // 내 참여 채널은 조직 무관 조회 — 바로 답한다
   } };
-  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((key) => [`set${key}`, (value) => { state[key] = value; }]));
+  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'PausedCrews', 'Ent', 'Policy', 'DmMembers'].map((key) => [`set${key}`, (value) => { state[key] = value; }]));
   const joinedRef = { current: new Set(['A-channel', 'B-channel']) };
-  const deps = { joinedRef, supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, stampFetched, crewOrder, withoutCopies, ...setters, setChId: (f) => { state.chId = f(state.chId); } };
+  const deps = { joinedRef, supabase, q: async (query) => await query, uid: 'me', activeOrg, loadedOrg, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }, { id: 'B' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: 0 }, stampFetched, crewOrder, withoutCopies, readWithSeen, SPACE_CREW_STATUSES, splitSpaceCrews, ...setters, setChId: (f) => { state.chId = f(state.chId); } };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   const settle = (id) => { for (const p of pending.filter((p) => p.id === id)) p.done(p.table === 'msgr_channels' ? [{ id: `${id}-channel`, kind: 'public' }] : p.table === 'msgr_crews' ? [{ id: `${id}-crew`, owner_user_id: 'me', display_name: id, status: 'available' }] : p.table === 'msgr_org_members' ? [{ user_id: `${id}-person` }] : { data: null }); };
   const a = loadOrg('A'); activeOrg.current = 'B'; const b = loadOrg('B');
@@ -75,9 +76,9 @@ test('옛 서버(face 열 없음) 판정은 10분만 기억한다 — 라이브 
         if (table === 'msgr_channels') return Promise.resolve([{ id: 'ch', kind: 'public' }]).then(res, rej);
         if (table === 'msgr_org_members' || table === 'msgr_channel_members') return Promise.resolve([]).then(res, rej);
         return Promise.resolve({ data: null }).then(res, rej); } }; } };
-  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
+  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'PausedCrews', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
   const activeOrg = { current: 'A' }; const faceCol = { missingAt: 0 };
-  const deps = { stampFetched, crewOrder, withoutCopies, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol, ...setters, setChId: () => {} };
+  const deps = { stampFetched, crewOrder, withoutCopies, readWithSeen, SPACE_CREW_STATUSES, splitSpaceCrews, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol, ...setters, setChId: () => {} };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   await loadOrg('A');
   assert.deepEqual(selects, [true, false], '옛 서버: face로 한 번 실패 → face 없이 다시 읽음'); assert.equal(state.Crews[0].face, null);
@@ -106,13 +107,60 @@ test('loadOrg: 충돌 사본은 크루 목록·파견 전 목록에서 빠지고
         if (table === 'msgr_channels') return Promise.resolve([{ id: 'ch', kind: 'public' }]).then(res, rej);
         if (table === 'msgr_org_members' || table === 'msgr_channel_members') return Promise.resolve([]).then(res, rej);
         return Promise.resolve({ data: null }).then(res, rej); } }; } };
-  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
+  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'PausedCrews', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
   const activeOrg = { current: 'A' };
-  const deps = { stampFetched, crewOrder, withoutCopies, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: (c) => (c.id === 'co' ? 'company' : ''), readLastCh: () => null, faceCol: { missingAt: Date.now() }, ...setters, setChId: () => {}, setOrgId: () => {} };
+  const deps = { stampFetched, crewOrder, withoutCopies, readWithSeen, SPACE_CREW_STATUSES, splitSpaceCrews, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: (c) => (c.id === 'co' ? 'company' : ''), readLastCh: () => null, faceCol: { missingAt: Date.now() }, ...setters, setChId: () => {}, setOrgId: () => {} };
   const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
   await loadOrg('A');
   assert.deepEqual(state.Crews.map((c) => c.id), ['co', 'b', 'real'], '사본 빠짐 + 회사 크루 먼저·이름순');
   assert.deepEqual(state.MyAvailable.map((c) => c.id), ['off'], '파견 전 목록에도 사본이 없다(사본을 파견하던 길)');
+});
+
+// #950 분리 검수 — 멈춘(paused) 에이전트: 조직 목록 조회는 active·available만(전송량), 혹시 섞여 와도 연결 목록(state.Crews)에 없고 이름 찾기(PausedCrews)에는 있다.
+// 조직의 모르는 크루 id는 실제 dmBaseName이 그리다 묻고(crewShown → crewNameAsker), 한 번 읽은 뒤 이름을 돌려주며 같은 id는 다시 읽지 않는다.
+test('멈춘 에이전트: loadOrg는 active·available만 묻고 paused는 연결 목록에 섞지 않는다 + 실제 dmBaseName이 이름을 돌려준다(한 번만 읽음)', async () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const start = app.indexOf('const loadOrg = useCallback(') + 'const loadOrg = useCallback('.length;
+  const end = app.indexOf('\n  }, [orgs, uid]);', start) + 4;
+  const state = {}; const statusAsked = [];
+  const row = (id, display_name, status) => ({ id, owner_user_id: 'me', display_name, slug: id, status, role_text: '리서처' });
+  const crews = [row('a', '하람', 'active'), row('p', '도윤', 'paused')]; // 가짜 서버는 필터를 무시한다 — 섞여 와도 나누기가 막는지 본다
+  const supabase = { from(table) {
+    return { select() { return this; }, eq() { return this; }, is() { return this; }, order() { return this; }, in(col, vals) { if (table === 'msgr_crews' && col === 'status') statusAsked.push(vals); return this; }, maybeSingle() { return this; },
+      then(res, rej) {
+        if (table === 'msgr_crews') return Promise.resolve(crews).then(res, rej);
+        if (table === 'msgr_channels') return Promise.resolve([{ id: 'dm1', kind: 'dm', name: 'dm:?' }]).then(res, rej);
+        if (table === 'msgr_org_members' || table === 'msgr_channel_members') return Promise.resolve([]).then(res, rej);
+        return Promise.resolve({ data: null }).then(res, rej); } }; } };
+  const setters = Object.fromEntries(['Channels', 'PreviewChannels', 'Members', 'Crews', 'MyAvailable', 'PausedCrews', 'Ent', 'Policy', 'DmMembers'].map((k) => [`set${k}`, (v) => { state[k] = v; }]));
+  const activeOrg = { current: 'A' };
+  const deps = { stampFetched, crewOrder, withoutCopies, readWithSeen, SPACE_CREW_STATUSES, splitSpaceCrews, joinedRef: { current: new Set() }, supabase, q: async (x) => await x, uid: 'me', activeOrg, loadedOrg: { current: null }, orgRequests: { current: createRequestGate(() => activeOrg.current) }, orgs: [{ id: 'A' }], crewTier: () => '', readLastCh: () => null, faceCol: { missingAt: Date.now() }, ...setters, setChId: () => {}, setOrgId: () => {} };
+  const loadOrg = new Function(...Object.keys(deps), `return (${app.slice(start, end)});`)(...Object.values(deps));
+  await loadOrg('A');
+  assert.ok(statusAsked.length > 0 && statusAsked.every((v) => JSON.stringify(v) === JSON.stringify(['active', 'available'])), `조직 목록 조회 상태 = active·available만(전송량): ${JSON.stringify(statusAsked)}`);
+  assert.deepEqual(state.Crews.map((c) => c.id), ['a'], '연결 목록(레일 숫자·멘션·초대)에 멈춘 에이전트 없음');
+  assert.deepEqual(state.PausedCrews.map((c) => c.id), ['p'], '섞여 온 멈춘 행은 이름 찾기로');
+
+  // 실제 dmBaseName — 조직 1:1(나 + 멈춘 에이전트). 이름은 crewShown(연결 목록 → 멈춘 목록 → 모르면 한 번 묻기)
+  const s = app.indexOf('const dmBaseName = (c) => {'); const e = app.indexOf('|| base; };', s) + '|| base; };'.length;
+  assert.ok(s > 0 && e > s, 'dmBaseName 찾음');
+  const reads = []; let flushNow = null; let known = [];
+  const db = { from(table) { assert.equal(table, 'msgr_crews'); const qy = { cols: null, ids: null, select(c) { qy.cols = c; return qy; }, in(col, ids) { assert.equal(col, 'id'); qy.ids = ids; reads.push({ cols: qy.cols, ids }); return Promise.resolve({ data: [row('p2', '세온', 'paused'), row('gone', '빠짐', 'detached')], error: null }); } }; return qy; } };
+  const asker = crewNameAsker((ids) => readPausedCrewNames(db, ids), (rows) => { known = [...known, ...rows]; }, (f) => { flushNow = f; });
+  const crewOf = (id) => state.Crews.find((c) => c.id === id);
+  const build = () => { const crewShown = withPaused(crewOf, [...state.PausedCrews, ...known], asker.ask);
+    return new Function('dmMembers', 'uid', 'crewShown', 'crewOf', 'crews', 'nameOfUser', 'dmIsGroup', 't', `${app.slice(s, e)}; return dmBaseName;`)(
+      { dm1: [{ member_kind: 'user', member_id: 'me' }, { member_kind: 'crew', member_id: 'p' }], dm2: [{ member_kind: 'user', member_id: 'me' }, { member_kind: 'crew', member_id: 'p2' }] },
+      'me', crewShown, crewOf, state.Crews, () => '나', () => false, (k) => k); };
+  assert.equal(build()({ id: 'dm1', name: 'dm:?' }), '도윤', '목록에 섞여 온 멈춘 에이전트 — 바로 이름');
+  assert.equal(build()({ id: 'dm2', name: 'dm:?' }), '?', '모르는 id — 첫 그림은 종전대로, 한 번 묻기 예약');
+  build()({ id: 'dm2', name: 'dm:?' }); flushNow(); await new Promise((r) => setImmediate(r));
+  assert.equal(reads.length, 1, '같은 id를 두 번 그려도 읽기 1건'); assert.deepEqual(reads[0].ids, ['p2']);
+  assert.equal(reads[0].cols, 'id, owner_user_id, display_name, role_text, status, face, avatar_url', '계산 열(접속 시각)·명령 없이');
+  assert.equal(build()({ id: 'dm2', name: 'dm:?' }), '세온', '읽은 뒤 이름');
+  assert.deepEqual(known.map((c) => c.id), ['p2'], '멈춘 행만 기억(detached는 대체 문구 그대로)');
+  for (let i = 0; i < 3; i++) build()({ id: 'dm2', name: 'dm:?' });
+  assert.equal(flushNow && reads.length, 1, '재조회·다시 그림에도 같은 id 읽기 0건');
 });
 
 // 재검수 #826 NEW-3: 내 에이전트(폰 '에이전트' 탭·설정 '내 에이전트')도 사본을 뺀다 — 실제 loadMyAgents를 돌려 확인한다.
