@@ -27,7 +27,7 @@ const turnOf = (body) => (JSON.stringify(body.messages?.[0] ?? '').includes('TUR
 const mid = { seen: null, gate: null };
 let releaseB = null;
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', async () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', async () => {
     const body = JSON.parse(b || '{}');
     const reply = (content, stop = 'tool_use') => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: body.model, content, stop_reason: stop, usage: { input_tokens: 1, output_tokens: 1 } })); };
     if (!(body.tools ?? []).length) return reply([{ type: 'text', text: '요약' }], 'end_turn');

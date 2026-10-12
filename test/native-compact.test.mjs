@@ -22,7 +22,7 @@ const { createCompany, paths } = await import('../src/workspace.mjs');
 async function fake({ summary = () => ({ status: 200, text: 'SUMMARY-TOKEN 결정: 보고서는 금요일까지' }) } = {}) {
   const calls = [];
   const srv = createServer((req, res) => {
-    let d = ''; req.on('data', (c) => { d += c; });
+    let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; });
     req.on('end', () => {
       const body = JSON.parse(d || '{}');
       const kind = (body.tools ?? []).length ? 'turn' : 'summary';
@@ -300,7 +300,7 @@ test('NC13. 네이티브 압축 — 상태 이벤트 compacting 1회, 요약 실
   const id = await seed(ws, 30);
   const calls = [];
   const srv = createServer((req, res) => {
-    let d = ''; req.on('data', (c) => { d += c; });
+    let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; });
     req.on('end', () => {
       const body = JSON.parse(d || '{}'); const kind = (body.tools ?? []).length ? 'turn' : 'summary'; calls.push(kind);
       res.writeHead(200, { 'content-type': 'application/json' });

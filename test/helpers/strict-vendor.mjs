@@ -86,7 +86,7 @@ export async function startStrictVendor({ vendor = 'xai', reply = null, contextL
   const calls = [];
   const other = OTHER_WIRES[vendor];
   const srv = createServer((req, res) => {
-    let d = ''; req.on('data', (c) => { d += c; });
+    let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; });
     req.on('end', () => {
       let body = {}; try { body = JSON.parse(d || '{}'); } catch { /* 빈 본문 */ }
       const tokens = contextLimit === null ? null : countTokens(d);

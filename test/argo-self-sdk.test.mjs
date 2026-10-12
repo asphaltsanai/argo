@@ -21,7 +21,7 @@ const sse = (res, evs) => { res.writeHead(200, { 'content-type': 'text/event-str
 const start = () => ({ type: 'message_start', message: { id: 'm1', type: 'message', role: 'assistant', model: 'claude-x', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } });
 const textOf = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (b.type === 'text' ? b.text : '')).join('\n') : '');
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
     if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
       const body = JSON.parse(b || '{}');
       const last = body.messages?.[body.messages.length - 1];

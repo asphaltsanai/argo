@@ -61,7 +61,7 @@ test('모드별 데이터 폴더 — 로컬은 이 컴퓨터의 Argo 앱 폴더(
 
 // 가짜 Messages 엔드포인트 — 크루 턴이 실제 SDK로 끝까지 돈다(chat-steer-sdk.test.mjs와 같은 방식)
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => (b += c)); req.on('end', () => {
     if (!(req.method === 'POST' && req.url.startsWith('/v1/messages'))) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}'); }
     const body = JSON.parse(b || '{}');
     if (!body.stream) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 't', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'title' }], stop_reason: 'end_turn', usage: { input_tokens: 0, output_tokens: 0 } })); } // 스트리밍 아닌 요청(제목 생성)은 JSON으로

@@ -19,7 +19,7 @@ const ws = 'steer-sdk';
 const bodies = {}; // 시나리오 → 스트리밍 요청 본문 목록(JSON 문자열)
 let onRequest = async () => ({ text: 'x' });
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => (b += c)); req.on('end', async () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => (b += c)); req.on('end', async () => {
     if (!(req.method === 'POST' && req.url.startsWith('/v1/messages'))) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}'); }
     const body = JSON.parse(b || '{}');
     if (!body.stream) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 'x', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 't' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } })); }

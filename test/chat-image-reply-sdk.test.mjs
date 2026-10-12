@@ -18,7 +18,7 @@ const AVATAR = 'projects/20261002_페퍼-아바타/페퍼-아바타.png';
 let replyText = 'done'; const systems = [];
 const sse = (res, evs) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); for (const [e, d] of evs) res.write(`event: ${e}\ndata: ${JSON.stringify(d)}\n\n`); res.end(); };
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
     if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
       const body = JSON.parse(b || '{}');
       if ((body.tools ?? []).length > 0) systems.push(typeof body.system === 'string' ? body.system : (body.system ?? []).map((x) => x?.text ?? '').join('\n')); // 크루 턴만(제목 생성 같은 도구 없는 요청 제외)

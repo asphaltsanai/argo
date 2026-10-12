@@ -36,7 +36,7 @@ const MODES = { 'MODE-EMPTY': '', 'MODE-NOREPORT': 'NO_REPORT', 'MODE-REPORT': '
 const lastMode = (body) => Object.keys(MODES).reduce((best, k) => (body.lastIndexOf(k) > (best ? body.lastIndexOf(best) : -1) ? k : best), null);
 const pick = (body) => MODES[lastMode(body) ?? 'MODE-REPORT'];
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; });
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; });
   req.on('end', () => {
     if (req.method === 'POST' && req.url.startsWith('/v1/messages')) { sdkSeen.push(b); return sse(res, pick(b)); }
     res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}');
