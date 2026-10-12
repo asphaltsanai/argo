@@ -34,9 +34,13 @@ export function daemonLease(name, { ttl = 15_000, beat = 5_000 } = {}) {
   // 쓰기는 임시 파일 + rename — 덮어쓰기(writeFile)는 파일을 먼저 비우므로 그 순간 다른 프로세스가 빈 내용을 읽었다(2026-10-13 재현: 동시 읽기의 1~8%).
   // rename은 원자적이라 읽는 쪽은 늘 이전 기록이나 새 기록 하나를 본다. fsync는 하지 않는다 — 크래시 뒤 남는 리스는 TTL로 버려지는 값이다.
   // 임시 파일 이름은 .tmp-lease-로 시작한다 — 동기화 EXCLUDE(.tmp-*)에 걸리고, 셸 방어(permission-gate WS_DOT_FILES)에 이 접두로 등재돼 있다(.tmp-devsess-와 같은 규약).
+  // rename 재시도 예산 — 박자 여유 안으로 줄인다. 실패는 catch의 유지 판정(지금 + 박자 < 리더 기한)이 실패 시점 기준이라, 기본 예산 3초를 다 쓰고
+  // 실패하면 박자 +5 + 3 + 다음 박자 5 = 13초 > 기한 12.5초로 리더를 놓았다(배포본 writeFile은 바로 실패해 10초로 유지, #974 검수 1 LOW-1).
+  // 박자의 1/5(운영 1초) — 재시도 백오프의 마지막 대기(최대 400ms)까지 더해도 유지 판정 안에 든다.
+  const renameBudget = Math.min(1_000, beat / 5);
   const writeLease = async (body) => {
     const tmp = join(WS_ROOT, `.tmp-lease-${name}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
-    try { await writeFile(tmp, body); await renameRetry(tmp, file); } // renameRetry: Windows의 일시 잠금(EPERM·EACCES)은 짧게 다시 시도
+    try { await writeFile(tmp, body); await renameRetry(tmp, file, { budgetMs: renameBudget }); } // Windows의 일시 잠금(EPERM·EACCES)은 짧게 다시 시도
     catch (e) { await rm(tmp, { force: true }).catch(() => {}); throw e; }
   };
   const tick = async () => {
