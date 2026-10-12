@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from './helpers/tmp.mjs';
 
@@ -21,8 +21,9 @@ const ROOT = await mkdtemp(join(tmpdir(), 'argo-lease-'));
 process.env.ARGO_ROOT = ROOT;
 const files = new Map(); // 리스 파일 — 진짜 I/O는 가짜 시계 밖에서 끝나 박자 순서를 흔든다
 // 남은 쓰기·읽기 실패 횟수, 다음 읽기 한 번의 지연(ms, 가짜 시계), 멈춤(이후 리스 I/O가 오류 없이 영영 안 끝난다)
-const fault = { write: 0, read: 0, lag: 0, hang: false };
-const isLease = (f) => String(f).startsWith(ROOT) && String(f).endsWith('.lock');
+const fault = { write: 0, read: 0, lag: 0, hang: false, torn: 0, rename: 0 };
+// 리스 파일과 그 임시 파일(.tmp-lease-<이름>-<pid>-<난수> — 임시 파일에 쓰고 rename으로 바꾼다)
+const isLease = (f) => String(f).startsWith(ROOT) && (String(f).endsWith('.lock') || basename(String(f)).startsWith('.tmp-lease-'));
 const ioError = (code) => Object.assign(new Error(`${code}: lease file`), { code });
 const realRead = fsp.readFile; const realWrite = fsp.writeFile;
 fsp.readFile = async (f, ...a) => {
@@ -30,6 +31,7 @@ fsp.readFile = async (f, ...a) => {
   if (fault.hang) return new Promise(() => {});
   if (fault.lag) { const ms = fault.lag; fault.lag = 0; await new Promise((r) => setTimeout(r, ms)); }
   if (fault.read > 0) { fault.read--; throw ioError('EPERM'); }
+  if (fault.torn > 0) { fault.torn--; return ''; } // 쓰는 도중 읽힘 — 덮어쓰기는 파일을 먼저 비운다
   if (!files.has(String(f))) throw ioError('ENOENT');
   return files.get(String(f));
 };
@@ -39,6 +41,15 @@ fsp.writeFile = async (f, data, ...a) => {
   if (fault.write > 0) { fault.write--; throw ioError('EPERM'); }
   files.set(String(f), String(data));
 };
+const realRename = fsp.rename; const realRm = fsp.rm;
+fsp.rename = async (from, to) => {
+  if (!isLease(to)) return realRename(from, to);
+  if (fault.hang) return new Promise(() => {});
+  if (fault.rename > 0) { fault.rename--; throw ioError('EPERM'); } // Windows: 남이 연 파일 위로 rename 불가
+  if (!files.has(String(from))) throw ioError('ENOENT');
+  files.set(String(to), files.get(String(from))); files.delete(String(from));
+};
+fsp.rm = async (f, ...a) => { if (!isLease(f)) return realRm(f, ...a); files.delete(String(f)); };
 syncBuiltinESMExports(); // lock.mjs의 이름 가져오기(readFile·writeFile)가 위 대체본을 보게 한다
 const { daemonLease } = await import('../src/lock.mjs');
 
@@ -52,9 +63,10 @@ async function advanceTo(t, at, check = () => {}) {
   while (now() < at) { t.mock.timers.tick(1); await flush(); check(); }
 }
 const record = (name) => JSON.parse(files.get(join(ROOT, `.${name}.lock`)));
-const start = (t, name) => {
-  Object.assign(fault, { write: 0, read: 0, lag: 0, hang: false });
+const start = (t, name, before = () => {}) => {
+  Object.assign(fault, { write: 0, read: 0, lag: 0, hang: false, torn: 0, rename: 0 });
   t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: T0 });
+  before(); // 리스를 켜기 전 파일 상태(가짜 시계 기준) — 첫 판정은 켜는 순간 바로 돈다
   return daemonLease(name, { ttl: TTL, beat: BEAT }); // 박자: T0 + 5000k
 };
 /** 리더인 동안 내 마지막 기록이 남에게 아직 살아 있어야 한다(만료 = 기록 ts + ttl부터 남이 가져간다). */
@@ -131,4 +143,52 @@ test('살아 있는 남의 리스는 존중한다 — 판정 읽기 오류를 "�
   assert.equal(record('scheduler').owner, 'other-1', '읽기 오류 뒤 남의 리스 기록을 덮어썼다');
   await advanceTo(t, 12500, notLeader); other();
   await advanceTo(t, 20000, notLeader);
+});
+
+test('쓰는 도중 읽힘(빈 내용)으로 살아 있는 남의 리스를 빼앗지 않는다 — 그 박자는 건너뛴다', async (t) => {
+  // 원래 결함(2026-10-13): 빈 문자열의 JSON.parse 실패에는 e.code가 없어 "쓰다 만 내용 → 선점"으로 빠졌다. 남이 갱신하는 순간에 읽으면
+  // 살아 있는 리스를 가져가 1~2초 동안 실행 주체가 0개였다(sync-lock-leader 재시작 경쟁 CI 실패의 끝 상태).
+  const other = () => files.set(join(ROOT, '.torn.lock'), JSON.stringify({ owner: 'other-1', ts: Date.now() }));
+  const lease = start(t, 'torn', other); // 남이 먼저 쥐고 있다
+  await advanceTo(t, 150);
+  await lease.ready;
+  const notLeader = () => assert.equal(lease.isLeader(), false, `+${now()}ms에 남의 살아 있는 리스를 가져갔다`);
+  await advanceTo(t, 2500, notLeader); other();
+  fault.torn = 1; // 다음 판정 읽기(+5000)가 남의 갱신과 겹친다
+  await advanceTo(t, 5200, notLeader);
+  assert.equal(fault.torn, 0, '빈 내용 주입이 실제로 소비됐다');
+  assert.equal(record('torn').owner, 'other-1', '빈 내용을 읽은 뒤 남의 리스 기록을 덮어썼다');
+  await advanceTo(t, 7500, notLeader); other();
+  await advanceTo(t, 12000, notLeader);
+});
+
+test('깨진 리스 내용이 TTL 넘게 그대로면(쓰다 죽은 옛 버전 등) 가져간다 — 영영 아무도 못 잡는 교착 금지', async (t) => {
+  const lease = start(t, 'stuck', () => files.set(join(ROOT, '.stuck.lock'), '{"owner":"old-1","ts":')); // 반쪽 JSON — 이후 아무도 고치지 않는다
+  await advanceTo(t, 150);
+  await lease.ready;
+  assert.equal(lease.isLeader(), false, '깨진 내용을 처음 본 박자에 바로 가져갔다 — 쓰는 도중일 수 있다');
+  await advanceTo(t, TTL - 1);
+  assert.equal(lease.isLeader(), false, 'TTL 전에 가져갔다');
+  await advanceTo(t, TTL + BEAT + 200);
+  assert.equal(lease.isLeader(), true, `깨진 내용이 TTL(${TTL}ms) 넘게 그대로인데 가져가지 않았다 — 교착`);
+  assert.equal(record('stuck').owner !== 'old-1', true);
+});
+
+test('Windows rename이 재시도 예산을 다 쓰고 한 번 실패해도 리더 유지 — 배포본(덮어쓰기 실패는 바로 돌아옴)보다 나빠지지 않는다', async (t) => {
+  // renameRetry는 win32에서만 EPERM을 다시 시도한다 — 이 시험 동안 플랫폼을 win32로 본다(백오프 대기는 가짜 시계).
+  // 원래 결함(#974 검수 1 LOW-1): 기본 예산 3초를 다 쓰고 실패하면 catch가 +13초 > 리더 기한 12.5초로 판정해 리더를 놓았다.
+  const plat = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  t.after(() => Object.defineProperty(process, 'platform', plat));
+  const lease = start(t, 'renamefail');
+  await advanceTo(t, 150);
+  await lease.ready;
+  assert.equal(lease.isLeader(), true);
+  await advanceTo(t, 9000); // +5000 박자는 정상 갱신 — 마지막 성공 기록 +5000
+  fault.rename = 1e9; // +10000 박자의 rename이 예산 내내 실패한다
+  await advanceTo(t, 14500, () => assert.equal(lease.isLeader(), true, `rename 재시도 중·실패 뒤 +${now()}ms에 리더를 놓았다`));
+  assert.ok(fault.rename < 1e9, 'rename 실패 주입이 실제로 소비됐다');
+  fault.rename = 0; // 다음 박자(+15000)에 회복 — 위 관찰은 예산 3초짜리 실패 판정(+13150 무렵)까지 덮는다
+  await advanceTo(t, 15500, () => assert.equal(lease.isLeader(), true, `+${now()}ms에 리더를 놓았다`));
+  assert.equal(record('renamefail').ts - T0, 15000, '회복 박자에 다시 기록했다');
 });

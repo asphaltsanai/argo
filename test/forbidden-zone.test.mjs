@@ -477,7 +477,7 @@ const DOT_ITEMS = [
   ['root', '.device-id'], ['root', '.guest-mode.json'],
   ['root', '.local-assets/key'], ['ws', '.local-assets/staging/file'],
   ['root', '.sync-process.lock'], ['root', '.tombstones/my-co.json'],
-  ['root', '.scheduler.lock'], ['root', '.gateway.lock'],
+  ['root', '.scheduler.lock'], ['root', '.gateway.lock'], ['root', '.tmp-lease-gateway-123-abc'],
   ['root', '.server-presence.json'], // 앱 사이드카 실행 표식(2026-10-01) — 크루가 심으면 argo login이 영구 거절되거나 앱 실행 중 판정이 위조된다
   ['ws', '.assistant/state.json'], // 능동 비서 상태(보낸 키·대기열) — 이름이 흔한 일반어라 경계 있는 형태로만 막는다(permission-gate BASH_DOT_DIR_RE)
 ];
