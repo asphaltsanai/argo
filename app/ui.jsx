@@ -4,7 +4,7 @@ import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } fr
 import { resolveTab } from './tabs-state.mjs';
 import { marked } from 'marked';
 import { labelTableCells } from './md-table.mjs';
-import { useLang } from './i18n';
+import { useLang, tr } from './i18n';
 import { createPortal } from 'react-dom';
 import { dialPercent } from '../src/deck-metrics.mjs'; // 다이얼 글자 = 에이전트 상태 도구가 말하는 % — 한 함수(반올림·0~100 자르기)
 import { rewriteVaultHref, vaultImageSrc, vaultFileRel } from '../src/vault-links.mjs'; // 산출물 링크·그림 재작성(순수 — 테스트는 src 쪽)
@@ -451,16 +451,10 @@ export function timeAgo(input, lang = 'ko') {
   const t = typeof input === 'number' ? input : Date.parse(input);
   if (!t) return '';
   const s = (Date.now() - t) / 1000;
-  if (lang === 'en') {
-    if (s < 60) return 'just now';
-    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-    return `${Math.floor(s / 86400)}d ago`;
-  }
-  if (s < 60) return '방금';
-  if (s < 3600) return `${Math.floor(s / 60)}분 전`;
-  if (s < 86400) return `${Math.floor(s / 3600)}시간 전`;
-  return `${Math.floor(s / 86400)}일 전`;
+  if (s < 60) return tr(lang, 'time.justNow');
+  if (s < 3600) return tr(lang, 'time.minAgo', { n: Math.floor(s / 60) });
+  if (s < 86400) return tr(lang, 'time.hourAgo', { n: Math.floor(s / 3600) });
+  return tr(lang, 'time.dayAgo', { n: Math.floor(s / 86400) });
 }
 
 /** vault 파일명(2026-07-10T03-50-47-yujin.md)에서 시각을 복원한다. */
@@ -673,7 +667,7 @@ export function DropUp({ value, placeholder = '—', groups, onChange, disabled,
           // 스크롤바 폭만큼 새서(실측 1280 vs clientWidth 1264) 상한도 계산부(clientWidth)가 낸다.
           minWidth: clamp.maxW ? Math.min(Math.max(width, 190), clamp.maxW) : Math.max(width, 190),
           maxWidth: clamp.maxW || undefined, maxHeight: 300, overflowY: 'auto', padding: 6,
-          boxShadow: '0 8px 28px rgba(0,0,0,.14)', transformOrigin: `${below ? 'top' : 'bottom'} ${align}`,
+          boxShadow: 'var(--shadow-float)', transformOrigin: `${below ? 'top' : 'bottom'} ${align}`,
           transform: entered ? 'none' : `scale(0.97) translateY(${below ? -4 : 4}px)`, opacity: entered ? 1 : 0,
           transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1), opacity 160ms cubic-bezier(0.23,1,0.32,1)' }}>
           {groups.map((g, gi) => (
@@ -830,23 +824,22 @@ export function openBillingPortal(e) {
 // 앱에서는 창을 라우트로 항해시키지 않는다 — 돌아갈 길이 없는 트랩(2026-09-17 산출물 칩과 같은 모양, 2차 검수 MEDIUM-2). 원인 문구를 받아 안내로.
 function portalFallback(text = '') {
   if (!isTauriApp()) { window.location.href = '/api/me/billing/portal'; return; } // 브라우저는 뒤로가기가 있다
-  appNotice(text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) || (noticeKo() ? '결제 관리 페이지를 열지 못했습니다.' : 'Could not open the billing page.'));
+  appNotice(text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) || tr(noticeLang(), 'notice.billingOpenFail'));
 }
 
 // 앱 안내 한 줄 — 페이지 곳곳(칩·기억·설정·결제)에서 부르는 헬퍼라 훅 없이 DOM으로 띄운다. 닫기 버튼·ESC·10초 자동 닫힘.
 // 언어는 사전 Provider와 같은 저장값(argo-lang) — <html lang>은 ko 고정이라 영어 사용자에게도 한국어가 떴다(2차 검수 LOW).
-const noticeKo = () => { try { return (localStorage.getItem('argo-lang') || 'ko') !== 'en'; } catch { return true; } };
+const noticeLang = () => { try { return localStorage.getItem('argo-lang') === 'en' ? 'en' : 'ko'; } catch { return 'ko'; } };
 function appNotice(text) {
   if (typeof document === 'undefined') return;
-  const ko = noticeKo();
   document.getElementById('argo-download-notice')?.remove();
   const box = document.createElement('div');
   box.id = 'argo-download-notice'; box.setAttribute('role', 'alert');
-  box.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;max-width:min(520px,calc(100vw - 32px));display:flex;gap:12px;align-items:center;padding:10px 12px 10px 16px;border-radius:12px;background:var(--card,#fff);color:var(--fg,#111);border:1px solid var(--border,#ddd);box-shadow:0 8px 24px rgba(0,0,0,.18);font-size:13px';
+  box.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;max-width:min(520px,calc(100vw - 32px));display:flex;gap:12px;align-items:center;padding:10px 12px 10px 16px;border-radius:12px;background:var(--card);color:var(--fg);border:1px solid var(--border);box-shadow:var(--shadow-float);font-size:13px';
   const msg = document.createElement('span');
   msg.textContent = text;
   const close = document.createElement('button');
-  close.type = 'button'; close.textContent = ko ? '닫기' : 'Close'; close.className = 'btn sm';
+  close.type = 'button'; close.textContent = tr(noticeLang(), 'common.close'); close.className = 'btn sm';
   const done = () => { box.remove(); window.removeEventListener('keydown', onKey); clearTimeout(timer); };
   const onKey = (e) => { if (e.key === 'Escape') done(); };
   close.onclick = done; window.addEventListener('keydown', onKey);
@@ -854,11 +847,11 @@ function appNotice(text) {
   box.append(msg, close); document.body.append(box);
 }
 function downloadNotice(name, why, url = '') {
-  const ko = noticeKo();
+  const lang = noticeLang();
   let where = ''; try { where = new URL(url, location.href).searchParams.get('rel') || ''; } catch { /* 경로 없이 안내 */ } // 따를 수 있는 안내 — 파일이 이미 있는 자리(3차 검수)
   appNotice(why === 'too-large'
-    ? (ko ? `${name} — 파일이 커서 앱에서 바로 저장하지 못했습니다. 회사 폴더의 ${where || name}에 있습니다.` : `${name} is too large to save from the app. It is in the company folder at ${where || name}.`)
-    : (ko ? `${name} — 저장하지 못했습니다.${why ? ` (${why.slice(0, 80)})` : ''}` : `Could not save ${name}.${why ? ` (${why.slice(0, 80)})` : ''}`));
+    ? tr(lang, 'notice.saveTooLarge', { name, where: where || name })
+    : tr(lang, 'notice.saveFailed', { name, why: why ? ` (${why.slice(0, 80)})` : '' }));
 }
 
 export function artifactDownload(url, name) {

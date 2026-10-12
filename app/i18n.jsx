@@ -140,6 +140,15 @@ const DICT = {
   'common.save': ['저장', 'Save'],
   'common.cancel': ['취소', 'Cancel'],
   'common.close': ['닫기', 'Close'],
+  // 상대 시각(ui.jsx timeAgo) — 목록·기록의 '방금 / n분 전'
+  'time.justNow': ['방금', 'just now'],
+  'time.minAgo': ['{n}분 전', '{n}m ago'],
+  'time.hourAgo': ['{n}시간 전', '{n}h ago'],
+  'time.dayAgo': ['{n}일 전', '{n}d ago'],
+  // 앱 안내 한 줄(ui.jsx appNotice — 훅 밖 DOM 헬퍼라 tr로 읽는다)
+  'notice.billingOpenFail': ['결제 관리 페이지를 열지 못했습니다.', 'Could not open the billing page.'],
+  'notice.saveTooLarge': ['{name} — 파일이 커서 앱에서 바로 저장하지 못했습니다. 회사 폴더의 {where}에 있습니다.', '{name} is too large to save from the app. It is in the company folder at {where}.'],
+  'notice.saveFailed': ['{name} — 저장하지 못했습니다.{why}', 'Could not save {name}.{why}'],
   'common.retry': ['다시 시도', 'Try again'],
   'common.reason.network': ['네트워크 연결을 확인해 주세요', 'Check your network connection'],
   'common.reason.unknown': ['잠시 뒤 다시 시도해 주세요', 'Please try again shortly'],
@@ -2064,6 +2073,13 @@ const DICT = {
 /** 사전에 있는 키인가 — 다른 기기의 새 버전이 남긴 실패 코드처럼 이 버전 사전에 없는 키를 화면이 키 글자 그대로 보이지 않게(fail-display.mjs failCodeKey). */
 export const hasMsg = (key) => Object.prototype.hasOwnProperty.call(DICT, key);
 
+/** 사전 조회 한 곳 — 훅 밖(DOM 헬퍼·순수 함수)도 같은 사전을 쓰게. Provider의 t도 이것을 부른다. 없는 키는 키 글자 그대로. */
+export function tr(lang, key, vars) {
+  let s = DICT[key]?.[lang === 'en' ? 1 : 0] ?? key;
+  if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, () => String(v)); // 함수 치환 — 값 안의 $&·$$를 패턴으로 읽지 않는다(파일 이름 a$$b.pdf)
+  return s;
+}
+
 const LangCtx = createContext(null);
 
 // 서버 공통 가드(auth.mjs requestLang)가 401·403 오류 문구를 표시 언어로 내리도록 쿠키로 미러한다.
@@ -2132,11 +2148,7 @@ export function LanguageProvider({ children }) {
     return () => window.removeEventListener('keydown', h);
   }, []);
 
-  const t = useCallback((key, vars) => {
-    let s = DICT[key]?.[lang === 'ko' ? 0 : 1] ?? key;
-    if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, String(v));
-    return s;
-  }, [lang]);
+  const t = useCallback((key, vars) => tr(lang, key, vars), [lang]);
 
   /** USD 내부값 → 표시 통화. ko는 원화 환산(고정 환율 — '약' 표기). */
   const fmtMoney = useCallback((usd, { approx = true } = {}) => {

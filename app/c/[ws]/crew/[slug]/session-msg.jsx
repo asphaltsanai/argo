@@ -39,7 +39,7 @@ export function SessionMentionPanel({ sm, t }) {
   return (
     <div className="card card-float" role="listbox" aria-label={t('chat.session.mentionTitle')} style={{
       position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, zIndex: 40, minWidth: 260, maxWidth: 'min(420px, 100%)',
-      maxHeight: 300, overflowY: 'auto', padding: 6, boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+      maxHeight: 300, overflowY: 'auto', padding: 6, boxShadow: 'var(--shadow-float)',
     }}>
       <div style={{ padding: '4px 8px 2px', fontSize: 11, color: 'var(--fg-3)' }}>{t('chat.session.mentionTitle')}</div>
       {sm.list.map((a, i) => (

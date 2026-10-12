@@ -116,7 +116,7 @@ export function WorkFolderPopover({ wf, note = '' }) {
         // 좁은 유효 폭(실측 배율 2: 열 216 > 내용 폭 202)에서 문단 오른쪽 끝이 카드 밖으로 잘린다(#350 계열).
         gridTemplateColumns: 'minmax(0, 1fr)',
         maxHeight: maxH || undefined, overflowY: 'auto', // 상한에 걸리면 안에서 스크롤 — 위쪽 문단·닫기 버튼이 화면 밖으로 나가지 않는다
-        boxShadow: '0 8px 28px rgba(0,0,0,.14)',
+        boxShadow: 'var(--shadow-float)',
       }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span className="microlabel">{t('chat.workFolder.open')}</span>
