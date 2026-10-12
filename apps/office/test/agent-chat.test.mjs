@@ -91,7 +91,9 @@ test('전송 통로 — 글에 meta·reply_to를 싣고, 응답을 잃으면 같
 
 
 // 쓰기 확인 카드(2단계 PR1) — 카드 목록·상태·확인 글 쓰기
-import { proposalsOf, proposalState, proposalFields, sendConfirm } from '../src/core/agent-chat.js';
+import { proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm } from '../src/core/agent-chat.js';
+import { AGENT_DICT } from '../src/ui/agent-panel-i18n.js';
+import { officeToolSpecs } from '../../../src/gateway/office-tools.mjs';
 
 test('카드 목록은 에이전트 글의 검증된 제안만', () => {
   const p = { pid: 'p1', tool: 'office_work', args: {}, summary: '할 일 추가: a' };
@@ -129,4 +131,19 @@ test('확인 글 — 대화 뿌리에 붙이고 같은 카드는 한 건(client_
   assert.equal(await sendConfirm(sb, args), 50);
   assert.equal(await sendConfirm(sb, args), 50, '두 번째는 이미 있는 글 번호');
   assert.deepEqual(inserted[0], { channel_id: 'ch', author_kind: 'user', author_user_id: 'u1', body: '실행: 할 일 추가', client_msg_id: 'oc:42:p1', meta: { source: PANEL_SOURCE, office_confirm: { reply: 42, pid: 'p1' } }, reply_to: 10, thread_root: 10 });
+});
+
+// 다국어 상시 규칙 — 카드 '자세히'의 칸 이름이 한국어 모드에서 영어 키로 보이지 않게, 쓰기 도구의 모든 칸이 사전에 있어야 한다(검수 L-b)
+test('카드 칸 이름 — 오피스 도구의 모든 인자 칸에 ko·en 이름, 뜻이 다른 칸은 도구 이름이 먼저', () => {
+  const has = (k) => !!AGENT_DICT[k];
+  const missing = [];
+  for (const spec of officeToolSpecs('ko')) for (const key of Object.keys(spec.shape)) {
+    if (key === 'action') continue;
+    const k = fieldLabelKey({ tool: spec.name, key }, has);
+    if (!has(k) || !AGENT_DICT[k][0] || !AGENT_DICT[k][1]) missing.push(`${spec.name}.${key}`);
+  }
+  assert.deepEqual(missing, []);
+  assert.equal(fieldLabelKey({ tool: 'office_mail', key: 'account' }, has), 'agent.field.office_mail.account');
+  assert.equal(AGENT_DICT['agent.field.office_mail.account'][0], '메일 계정');
+  assert.equal(fieldLabelKey({ tool: 'office_work', key: 'title' }, has), 'agent.field.title');
 });

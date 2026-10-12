@@ -36,3 +36,12 @@ test('대조군: 패널 턴이 아니면 처리기가 그대로 돈다(카드 �
   assert.ok(!/확인 카드/.test(out), out);
   assert.equal(ctx.proposals, undefined);
 });
+
+// 검수 M-a — 패널 턴에서 만든 예약·긴 작업은 나중 턴이 패널 사슬이라 오피스 쓰기가 늘 거절된다. 패널 턴에서는 만들지 않는다(메신저 1:1에서는 그대로)
+test('패널 턴: 예약·긴 작업은 만들지 않고 메신저 1:1로 안내', async () => {
+  const ctx = { kind: 'msgr', uid: 'u1', origin: 'u1', channelKind: 'dm', channelId: 'ch', crewId: 'c', orgId: 'o', officePanel: true, proposals: [], handoffs: [] };
+  assert.match(await call(ctx, 'schedule_task', { title: '매일 메일', prompt: '메일 보고 할 일 등록', type: 'daily', time: '09:00' }), /예약·긴 작업을 만들지 않는다/);
+  assert.match(await call(ctx, 'start_long_task', { title: '수집', prompt: 'x' }), /예약·긴 작업을 만들지 않는다/);
+  const plain = { ...ctx, officePanel: undefined, proposals: undefined };
+  assert.ok(!/예약·긴 작업을 만들지 않는다/.test(await call(plain, 'start_long_task', { title: '수집', prompt: 'x' })), '대조군 — 패널 턴이 아니면 관문 밖');
+});

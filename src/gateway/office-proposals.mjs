@@ -99,6 +99,12 @@ export function panelWriteGate(ctx, name, args, lang = 'ko') {
     `Not executed — posted as confirmation card ${p.pid}: ${p.summary}\nIt runs when the user presses Run in the Office agent panel. Do not say it was done; briefly say you posted a confirmation card.`);
 }
 
+/** 오피스 패널 턴에서 예약·긴 작업을 거절하는 문구 — 그 나중 턴은 패널 사슬이라 오피스 쓰기를 못 해(위 관문) 매번 실패할 예약이 생긴다(검수 M-a).
+    메신저 1:1에서 요청하면 지금처럼 만든다 */
+export const panelLaterNo = (lang = 'ko') => (lang === 'en'
+  ? 'Schedules and long tasks are not created from the Office agent panel yet — their later runs cannot show confirmation cards here. Nothing was created; tell the user to ask for it in the 1:1 chat with you in Messenger.'
+  : '오피스 에이전트 창에서는 아직 예약·긴 작업을 만들지 않는다 — 나중 실행에는 이 창의 확인 카드를 띄울 수 없다. 만들지 않았다 — 메신저의 이 에이전트 1:1 대화에서 요청해 달라고 알려라.');
+
 /** 답 글 meta에 실을 제안 목록(검증된 모양만) */
 export const proposalsMeta = (ctx) => (Array.isArray(ctx?.proposals) && ctx.proposals.length
   ? { office_proposals: ctx.proposals.slice(0, PROPOSAL_MAX).map(({ pid, tool, args, summary }) => ({ pid, tool, args, summary })) } : {});

@@ -18,7 +18,7 @@ import { createComposerDelivery } from '../../../../src/composer-delivery.mjs';
 import { acceptFiles, withoutFile, chipSize } from '../../../messenger/src/attach-files.mjs';
 import { formatBytes } from '../../../../src/media-kind.mjs';
 import { previewFor } from '../../../messenger/src/media-actions.mjs';
-import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, proposalFields, sendConfirm } from '../core/agent-chat.js';
+import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm } from '../core/agent-chat.js';
 import { AGENT_DICT } from './agent-panel-i18n.js';
 import './agent-panel.css';
 
@@ -94,7 +94,7 @@ function ProposalCard({ p, state, onRun, onCancel }) {
           <button type="button" className="btn sm primary" onClick={onRun}>{t('agent.prop.run')}</button>
         </span> : <small className="dim">{label}</small>}
       </div>
-      {more && <dl className="agent-prop-fields">{fields.map((f) => <div key={f.key}><dt className="dim">{t(`agent.field.${f.key}`) === `agent.field.${f.key}` ? f.key : t(`agent.field.${f.key}`)}</dt><dd>{f.value}</dd></div>)}</dl>}
+      {more && <dl className="agent-prop-fields">{fields.map((f) => <div key={f.key}><dt className="dim">{t(fieldLabelKey(f, (k) => t(k) !== k))}</dt><dd>{f.value}</dd></div>)}</dl>}
     </div>
   );
 }

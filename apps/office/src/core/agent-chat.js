@@ -120,7 +120,12 @@ export function proposalFields(p, max = 300) {
   const a = p?.args && typeof p.args === 'object' ? p.args : {};
   const text = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
   return Object.entries(a).filter(([k, v]) => k !== 'action' && v != null && v !== '')
-    .map(([k, v]) => { const s = text(v); return { key: k, value: s.length > max ? `${s.slice(0, max)}…` : s }; });
+    .map(([k, v]) => { const s = text(v); return { key: k, tool: p.tool, value: s.length > max ? `${s.slice(0, max)}…` : s }; });
+}
+/** 칸 이름 사전 키 — 도구마다 뜻이 다른 칸(메일 account = 메일 계정, 거래 account = 계좌)은 도구 키가 먼저 */
+export function fieldLabelKey(f, has) {
+  const own = `agent.field.${f.tool}.${f.key}`;
+  return has(own) ? own : `agent.field.${f.key}`;
 }
 
 /** 확인 글 쓰기 — 같은 카드를 두 번 눌러도 한 건(client_msg_id 고정, 이미 있으면 그 글 번호) */

@@ -154,3 +154,9 @@ test('확인 턴의 문구는 저장된 summary가 아니라 실행할 인자로
   assert.match(r.note, /할 일 추가: 진짜 제목/);
   assert.ok(!r.note.includes('가짜 문구'));
 });
+
+test('카드 [실행] — 제안을 읽다가 던지면 실행하지 않고 오류 상태(카드가 실행 요청함에 멈추지 않게)', async () => {
+  const calls = [];
+  const r = await runOfficeConfirm({ message: async () => { throw new Error('timeout'); } }, { wsId: 'w', job: job(), ctx: panel(), uid: 'u1', lang: 'ko' }, fakeDeps(calls));
+  assert.equal(calls.length, 0); assert.equal(r.status, 'error'); assert.match(r.note, /제안을 읽지 못해/);
+});

@@ -1572,7 +1572,9 @@ const planOrRaw = (wsId, text, lang, max) => planReplyFiles(wsId, text, { lang, 
 export async function runOfficeConfirm(db, { wsId, job, ctx, uid, lang = 'ko', crewName = '' }, deps = { specs: async (lang) => (await import('./office-tools.mjs')).officeToolSpecs(lang), owner: async (ws) => (await loadCompany(ws).catch(() => ({}))).ownerId ?? null }) {
   const say = (ko, en) => (lang === 'en' ? en : ko);
   const c = job.officeConfirm;
-  const row = job.authorId === uid ? await db.message(c.reply) : null;
+  let row = null;
+  try { row = job.authorId === uid ? await db.message(c.reply) : null; }
+  catch { return { result: null, status: 'error', note: `\n${say('[사용자가 확인 카드에서 [실행]을 눌렀지만 제안을 읽지 못해 아무것도 실행하지 않았다. 잠시 뒤 다시 눌러 달라고 짧게 알려라]', '[The user pressed Run on a confirmation card, but the proposal could not be read, so nothing ran. Briefly ask them to try again shortly]')}` }; } // 조회 순단 — 카드가 '실행 요청함'에 멈추지 않게(검수 L-a)
   const p = findProposal(row, { channelId: job.channelId, crewId: job.crewId, pid: c.pid });
   if (!p) return { result: null, status: 'not_found', note: `\n${say('[사용자가 확인 카드에서 [실행]을 눌렀지만 그 제안을 찾지 못해 아무것도 실행하지 않았다. 다시 요청해 달라고 짧게 알려라]', '[The user pressed Run on a confirmation card, but the proposal was not found, so nothing ran. Briefly ask them to request it again]')}` };
   const spec = (await deps.specs(lang)).find((x) => x.name === p.tool); // 도구 정의는 실행할 때만 불러온다 — msgr.mjs를 가볍게(해고 라우트가 동적으로 가져온다)
