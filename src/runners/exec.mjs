@@ -2,7 +2,7 @@
 // claude setup-token 원클릭. (runners.mjs 관심사 분리 2026-07-28 — externalExec 본체는
 // 배선 트립와이어 테스트가 소스 위치를 잠가 runners.mjs(facade)에 남았다)
 
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { openSync, writeSync, closeSync } from 'node:fs'; // setup-token 코드 왕복 fifo(동기 fd — 이벤트 핸들러에서 사용)
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
@@ -100,6 +100,9 @@ export function apiError(e, runner = null) {
 const DETECT_CACHE_MS = 10 * 60_000;
 let cache = null;
 let cacheAt = 0;
+/** 로그인 파일의 수정 시각(ISO) | null(없음) — 존재 판정은 exists와 같고, 시각은 터미널에서 다시 로그인했을 때 데크 배너가 옛 만료 기록을 무시하는 기준이다(#980 LOW-2). */
+const authFileAt = (p) => stat(p).then((s) => s.mtime.toISOString(), () => null);
+
 export async function detectRunners(force = false) {
   if (!force && cache && Date.now() - cacheAt < DETECT_CACHE_MS) return cache;
   await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
@@ -114,13 +117,13 @@ export async function detectRunners(force = false) {
       // Windows 공식 설치 경로(%LOCALAPPDATA%\agy\bin) — 실행(runners.mjs agyCmd)이 보는 경로를 감지도 본다(K08)
       .then((ok) => ok || (process.platform === 'win32' && !!process.env.LOCALAPPDATA && exists(join(process.env.LOCALAPPDATA, 'agy', 'bin', 'agy.exe')))),
 
-    exists(join(home, '.codex', 'auth.json')),
-    exists(join(home, '.gemini', 'oauth_creds.json')),
+    authFileAt(join(home, '.codex', 'auth.json')),
+    authFileAt(join(home, '.gemini', 'oauth_creds.json')),
     // 리눅스 — 파일 보관(macOS도 키체인 불가 환경은 이 파일 폴백이라 무시하면 역회귀).
     // ⚠ 스테일 잔재가 authed 오탐을 낼 수 있다(실사용 2026-07-19: 죽은 Claude 흔적이 유효한 Codex를
     // 밀어내고 "Not logged in"으로 턴 사망) — 그 케이스는 chat/runOneShot의 인증 오류 자가 치유
     // (남은 가용 러너를 차례로 재시도)가 회수한다. 감지 단계에서 유효성까지는 판정하지 않는다.
-    exists(join(home, '.claude', '.credentials.json')),
+    authFileAt(join(home, '.claude', '.credentials.json')),
     // macOS/Windows — OAuth 토큰은 키체인/OS 보관이라 .claude.json의 로그인 계정 기록(oauthAccount)으로
     // 판정한다. 파일 존재만으론 안 됨: 로그인 없이 CLI가 실행만 돼도(번들 SDK 포함) 생성된다 — 미로그인
     // 기기가 설정에서 "연결중 · 이 컴퓨터 로그인"으로 오표시되고 턴은 Not logged in으로 죽던 원인.
@@ -129,9 +132,10 @@ export async function detectRunners(force = false) {
   ]);
   const claudeCred = claudeCredFile || claudeCfgLogin;
   cache = {
-    claude: { installed: true, authed: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || claudeCred) },
-    codex: { installed: !!codexV || codexManaged, authed: (!!codexV || codexManaged) && codexAuth }, // gemini와 대칭 — 관리본도 로그인 파일을 상속해 돈다
-    gemini: { installed: !!geminiV || geminiManaged, authed: (!!geminiV || geminiManaged) && (geminiAuth || !!process.env.GEMINI_API_KEY) },
+    // authAt = 로그인 파일 수정 시각 — 파일 보관 자격만(키체인·env는 알 수 없어 없다. .claude.json은 실행마다 고쳐 써서 로그인 시각이 아니다)
+    claude: { installed: true, authed: !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || claudeCred), ...(claudeCredFile ? { authAt: claudeCredFile } : {}) },
+    codex: { installed: !!codexV || codexManaged, authed: (!!codexV || codexManaged) && !!codexAuth, ...(codexAuth ? { authAt: codexAuth } : {}) }, // gemini와 대칭 — 관리본도 로그인 파일을 상속해 돈다
+    gemini: { installed: !!geminiV || geminiManaged, authed: (!!geminiV || geminiManaged) && (!!geminiAuth || !!process.env.GEMINI_API_KEY), ...(geminiAuth ? { authAt: geminiAuth } : {}) },
     glm: { installed: true, authed: !!process.env.GLM_API_KEY },
     kimi: { installed: true, authed: !!process.env.KIMI_API_KEY }, // env 주입 = 운영자 명시 옵트인(glm 관례)
     openrouter: { installed: true, authed: false }, // 호스트 개념 없음 — 회사 자격(BYOK)만. env 폴백도 두지 않는다(설계 2026-07-27 YAGNI)
