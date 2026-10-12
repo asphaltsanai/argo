@@ -26,6 +26,7 @@ const { shellEnv } = await import('../src/engine/builtin-tools.mjs');
 const { sessionFile } = await import('../src/engine/session.mjs');
 const { scrubServerSecrets } = await import('../src/runners/shared.mjs');
 const { saveRunnerCred, loadRunnerCred, runnerCredEnv, ensureCodexAccess, CODEX_LOCK_TIMEOUT_MS, CODEX_LOCK_STALE_MS, codexLockMaxHoldMs } = await import('../src/runners/creds.mjs');
+const { runnerStatus } = await import('../src/runners.mjs'); // 저장 시각(savedAt) 확인 — #984 검수 LOW-1
 const { makePermissionGate } = await import('../src/permission-gate.mjs');
 
 const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
@@ -140,7 +141,9 @@ test('C5. ensureCodexAccess — 미만료면 무호출, 만료 임박이면 리�
     await saveRunnerCred(ws, 'codex', 'oauth', authJson({ exp: Math.floor(Date.now() / 1000) + 3600 }));
     const t0 = await ensureCodexAccess(ws, await loadRunnerCred(ws, 'codex')); assert.equal(srv.calls.length, 0, '미만료 — 무호출'); assert.equal(t0.refresh_token, 'rt-1');
     await saveRunnerCred(ws, 'codex', 'oauth', authJson({ exp: Math.floor(Date.now() / 1000) + 30, refresh: 'rt-fresh' }));
+    const savedAt0 = (await runnerStatus(ws, { forPick: true })).codex.company.savedAt; await new Promise((r) => setTimeout(r, 15));
     const t1 = await ensureCodexAccess(ws, await loadRunnerCred(ws, 'codex'));
+    assert.ok(Date.parse((await runnerStatus(ws, { forPick: true })).codex.company.savedAt) > Date.parse(savedAt0), '갱신 성공은 저장 시각도 새로 — 데크 만료 배너를 걷는다(#984 검수 LOW-1)');
     assert.equal(t1.refresh_token, 'rt-fresh-2'); assert.equal(accessExpiring(t1.access_token), false);
     const saved = parseCodexAuth((await loadRunnerCred(ws, 'codex')).value); assert.equal(saved.refresh_token, 'rt-fresh-2', '회사 자격에 회전 결과 저장'); assert.equal(saved.account_id, 'acct_A');
     // 재로그인 계급 + CLI 파일에 더 새 토큰 → 반입

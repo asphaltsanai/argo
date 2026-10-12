@@ -243,7 +243,8 @@ export async function ensureCodexAccess(wsId, cred, { fetchImpl = globalThis.fet
       const json = mergeCodexAuth(raw, next); const s = await loadSecrets(wsId);
       // 회전된 새 refresh 토큰을 못 남기면 옛 토큰은 이미 소비돼 이후 갱신이 영구 실패한다 — 조용한 no-op 금지(검수 LOW-6)
       if (!s.runners?.codex) throw Object.assign(new Error('codex credential was removed during token refresh — reconnect'), { authExpired: 'codex' });
-      s.runners.codex = { ...s.runners.codex, value: json }; await writeJsonAtomic(secretsFile(wsId), s); return parseCodexAuth(json);
+      // savedAt도 새로 — 갱신(또는 CLI 파일 반입)이 성공했다는 것은 자격이 살아 있다는 뜻이라 데크의 옛 "로그인 만료" 배너를 걷는다(saveRunnerCred·grok 갱신과 같은 기준, #984 검수 LOW-1)
+      s.runners.codex = { ...s.runners.codex, value: json, savedAt: new Date().toISOString() }; await writeJsonAtomic(secretsFile(wsId), s); return parseCodexAuth(json);
     };
     // 토큰 확보(리프레시 → 실패 시 CLI 파일 반입)와 저장(persist)을 분리한다 — 저장 실패(자격 삭제)를 리프레시 실패로 오인해 CLI 반입까지 타지 않게.
     // 일시 장애(네트워크·타임아웃·5xx — 인증도 한도도 아님)는 grok 선례와 같이: 액세스 토큰이 **실제로** 아직 살아 있으면(스큐 없이 exp > now) 쓰던 토큰으로 진행하고
