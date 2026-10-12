@@ -540,7 +540,7 @@ export const DICT = {
   'ch.step3.member': ['에이전트는 관리자 {name}님에게 추가를 요청하세요. 실행기를 연결하면 내 에이전트도 이 조직에 올라와요', 'Ask the admin {name} to add an agent — or connect a runner and your own agents join too'],
   'ch.step3.memberAny': ['에이전트는 조직 관리자에게 추가를 요청하세요. 실행기를 연결하면 내 에이전트도 이 조직에 올라와요', 'Ask an organization admin to add an agent — or connect a runner and your own agents join too'],
   'runner.title': ['실행기 연결', 'Connect a runner'],
-  'runner.desc': ['에이전트가 일하려면 실행기가 하나 필요해요. 같은 계정으로 로그인하면 바로 이어집니다.', 'Agents need one runner to work. Sign in with the same account and it connects right away.'],
+  'runner.desc': ['에이전트를 내 컴퓨터나 서버에서 돌리려면 실행기를 설치하고, 그 실행기에서 이 계정으로 로그인해야 해요.', 'To run agents on your computer or a server, install a runner there and sign in with this account.'],
   'runner.computer': ['내 컴퓨터에서(맥·윈도우)', 'On my computer (Mac · Windows)'],
   'runner.computer.desc': ['Argo 앱을 받으면 실행기(argo)가 함께 설치돼요.', 'Getting the Argo app installs the runner (argo) with it.'],
   'runner.server': ['서버에서 24시간(리눅스)', 'On a server, 24/7 (Linux)'],
