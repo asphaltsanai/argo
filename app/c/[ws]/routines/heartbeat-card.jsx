@@ -151,7 +151,7 @@ export function HeartbeatCard({ ws, agents = [], agentsLoaded = true, children =
       {busy && <Spinner size={12} />}
       <span data-testid="assistant-state">{on ? t('assistant.on') : t('assistant.off')}</span>
       <span aria-hidden="true" style={{ position: 'relative', width: 36, height: 20, borderRadius: 999, background: on ? 'var(--primary)' : 'var(--border)', transition: 'background .15s', flex: 'none' }}>
-        <span style={{ position: 'absolute', top: 2, left: on ? 18 : 2, width: 16, height: 16, borderRadius: 999, background: 'var(--card)', boxShadow: '0 1px 2px rgba(0,0,0,.2)', transition: 'left .15s' }} />
+        <span style={{ position: 'absolute', top: 2, left: on ? 18 : 2, width: 16, height: 16, borderRadius: 999, background: 'var(--card)', boxShadow: '0 0 0 1px var(--border)', transition: 'left .15s' }} />
       </span>
     </button>
   );

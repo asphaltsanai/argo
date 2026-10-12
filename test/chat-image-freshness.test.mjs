@@ -21,7 +21,7 @@ globalThis.__invoked = invoked;
 const ui = await loadComponent(file('../app/ui.jsx'), {
   stubs: {
     marked: `export * from '${markedUrl}';`,
-    './i18n': 'export const useLang = () => ({ t: (k) => k, lang: "ko" });',
+    './i18n': 'export const useLang = () => ({ t: (k) => k, lang: "ko" }); export const tr = (lang, k) => k;',
     'react-dom': 'export const createPortal = (node, target) => ({ type: "portal", props: { node, target } });',
     '@tauri-apps/plugin-opener': 'export const openUrl = async () => {}; export const revealItemInDir = async () => {};',
     '@tauri-apps/api/core': 'export const invoke = async (cmd, args) => { globalThis.__invoked.push([cmd, args]); return "/tmp/x"; };',
