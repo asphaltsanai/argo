@@ -1,6 +1,6 @@
 // 팀 메신저 — 이 회사 크루를 조직에 등록/해제/조회. 서버가 아니라 **이 기기의 기기 세션(크루 소유자 JWT)**으로
 // Supabase msgr_crews에 쓴다(RLS: owner_user_id = auth.uid()). 새 공개 API를 뚫지 않는다 — 조직·채널·메시지는 메신저 앱이 직접 다룬다.
-// 등록이 하나라도 있으면 company.json.msgr.enabled=true → 게이트웨이 매니저가 브리지(폴러)·드레인 워커를 켠다(src/gateway.mjs).
+// 연결된 행(조직 등록 또는 개인 공간)이 하나라도 있으면 company.json.msgr.enabled=true → 게이트웨이 매니저가 브리지(폴러)·드레인 워커를 켠다(src/gateway.mjs).
 import { guardCompany, csrfDenied, authError, requestLang } from '../../../../auth.mjs';
 import { apiError } from '../../../../apimsg.mjs';
 import { sessionClient, appMeetsMin } from '../../../../../src/gateway/msgr.mjs';
@@ -33,14 +33,16 @@ async function myRegistrations(c, ws) {
   if (error) throw new Error(error.message);
   return data ?? [];
 }
+/** 이 회사의 내 행 전부(조직 등록 + 개인 공간) — 카드 조회와 브리지 켜기 판정이 같은 한 건을 쓴다(syncEnabled는 종전 조직 등록 조회 대신이라 호출 수 그대로). */
+async function myBridgeRows(c, ws) {
+  const { data, error } = await c.client.from('msgr_crews').select(REG_COLS).eq('owner_user_id', c.uid).eq('ws_id', ws);
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
 /** 카드 조회용 — 같은 한 번의 조회로 조직 등록과 개인 공간 행 수를 함께 얻는다(호출 수 그대로). 개인 공간 행(org NULL)은
     연결·해제 판정에는 쓰지 않고 "개인 공간에 연결됨" 표시에만 쓴다(CX-12, 2026-10-05). */
 async function myCardRows(c, ws) {
-  const { data, error } = await c.client.from('msgr_crews')
-    .select(REG_COLS)
-    .eq('owner_user_id', c.uid).eq('ws_id', ws);
-  if (error) throw new Error(error.message);
-  return splitCardRows(data);
+  return splitCardRows(await myBridgeRows(c, ws));
 }
 /** 이 회사의 내 개인 공간 행(org_id NULL) — 조직이 없는 사용자의 개인 공간 연결(검수 스택 화면 4차). 행은 게이트웨이(미러)가 만든다. */
 async function myPersonalRows(c, ws) {
@@ -63,16 +65,25 @@ async function myOrgs(c) {
   for (const o of orgs) o.policy = (pols ?? []).find((p) => p.org_id === o.id) ?? null;
   return orgs;
 }
-async function syncEnabled(ws, c) {
-  let regs;
-  try { regs = await myRegistrations(c, ws); } catch (e) { console.error('[argo] msgr 등록 조회 실패 — enabled 유지:', e.message); return []; } // 일시 오류로 브리지를 끄지 않는다
+async function syncEnabled(ws, c) { return (await syncBridge(ws, c)).regs; }
+/** 브리지 값 맞추기 → { regs: 조직 등록, enabled: 판정(조회 실패면 null — 값을 건드리지 않았다) }. rows = 이미 읽은 이 회사의 내 행(다시 연결 — 같은 조회를 두 번 하지 않게) */
+async function syncBridge(ws, c, read = null) {
+  let rows = read;
+  if (!rows) try { rows = await myBridgeRows(c, ws); } catch (e) { console.error('[argo] msgr 등록 조회 실패 — enabled 유지:', e.message); return { regs: [], enabled: null }; } // 일시 오류로 브리지를 끄지 않는다
+  const regs = rows.filter((r) => r.org_id != null); // 돌려주는 값은 종전대로 조직 등록만(카드의 연결·해제 판정)
+  // 브리지 판정에는 개인 공간 행(org NULL)도 센다(2026-10-12 재현) — 개인 공간 에이전트도 브리지가 답한다. 조직 등록만 세면 조직 없는 계정의
+  //   [유지할 에이전트 고르기](#966)가 브리지를 껐고, 모두 연결된 계정은 자동 켜기(autoEnableMsgr — 크루 행이 있으면 멈춘 행이 있을 때만)도 다시 켜지 않았다.
   // paused(무료 계정 일시 중지 #941)만 남은 회사도 켠다(2026-10-11) — 최신 앱은 브리지가 돌아야 기기 심박(앱 버전)이 나가고, 서버가 그 심박을 보고 무료 계정
   // 에이전트를 4명까지 재개한다(20261011120000). 단 이 앱이 서버가 정한 최소 버전(#943 실시간 방식 포함 발행) 이상일 때만 — 아니면 #941처럼 꺼 둔다(검수 #945 MEDIUM-2).
-  let enabled = regs.some((r) => r.status === 'active');
-  if (!enabled && regs.some((r) => r.status === 'paused')) enabled = appMeetsMin((await readAgentPause(c.client).catch(() => null))?.min_app);
+  let enabled = rows.some((r) => r.status === 'active');
+  if (!enabled && rows.some((r) => r.status === 'paused')) {
+    const info = await readAgentPause(c.client).catch(() => null);
+    if (!info) return { regs, enabled: null }; // 최소 버전을 못 읽으면(RPC 실패·옛 서버) 판정하지 않고 값을 쓰지 않는다 — 옛 앱으로 오판해 돌던 브리지를 끄지 않게(검수 1 LOW-1)
+    enabled = appMeetsMin(info.min_app);
+  }
   const company = await loadCompany(ws);
   if (!!company.msgr?.enabled !== enabled) await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), enabled } }));
-  return regs;
+  return { regs, enabled };
 }
 
 /** 이 기기의 새 앱 심박 한 번(앱 버전) — 이 회사의 내 조직 행(상태 무관 — 기기 행이 서려면 행이 있어야 한다)으로. 서버가 재개 신호를 주면 makeDb.heartbeat가 재개까지 부른다. */
@@ -117,8 +128,14 @@ export async function POST(req, { params }) {
     if (!c) return Response.json({ ok: false, runtime: { state: 'login' } });
     const company = await loadCompany(ws);
     if (company.ownerId !== c.uid) return Response.json({ ok: false, runtime: { state: 'owner' } });
-    const crews = await myRegistrations(c, ws);
+    // 개인 공간 행도 센다(분리 검수 MEDIUM-1, 2026-10-12) — 조직 등록만 세면 조직 없는 계정은 늘 noCrews였고, 이미 꺼진 브리지(enabled=false)를
+    //   되살릴 길이 없었다(자동 켜기도 크루 행이 있고 멈춘 행이 없으면 켜지 않는다). 다시 연결은 브리지 값을 행 상태에 맞춘 뒤 깨운다.
+    const crews = await myBridgeRows(c, ws);
     if (!crews.some((crew) => crew.status === 'active' || crew.status === 'paused')) return Response.json({ ok: false, runtime: { state: 'noCrews' } }); // paused = 무료 계정 — 브리지가 돌아야 재개된다(syncEnabled)
+    // 사람이 누를 때만 — 위 조회 1건을 그대로 쓰고 + (멈춘 행만이면) rpc 1건 + 값이 바뀔 때만 쓰기 1건.
+    // 멈춘 행만 있고 이 앱이 최소 버전 미만이면 브리지를 꺼 둔다(#945 MEDIUM-2) — '다시 연결하는 중'이 아니라 업데이트 안내로 답한다(재검수 LOW-A)
+    const { enabled } = await syncBridge(ws, c, crews);
+    if (enabled === false) return apiError('msgr_app_update_required', lang); // 판정 못 함(null)은 종전처럼 깨우기만 한다
     nudgeGateway(ws);
     return Response.json({ ok: true, runtime: { state: 'reconnecting' } });
   }
@@ -265,7 +282,7 @@ export async function POST(req, { params }) {
   return Response.json({ ok: true, id: data.id, crews });
 }
 
-/** 해제 { orgId, slug } — 행 삭제(감사는 서버 트리거 몫). 마지막 등록이 사라지면 브리지도 꺼진다. */
+/** 해제 { orgId, slug } — 행 삭제(감사는 서버 트리거 몫). 마지막 등록이 사라지고 연결된 개인 공간 행도 없으면 브리지도 꺼진다. */
 export async function DELETE(req, { params }) {
   const { ws } = await params;
   const denied = await guardCompany(ws); if (denied) return denied;
