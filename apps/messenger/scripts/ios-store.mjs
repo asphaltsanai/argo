@@ -5,7 +5,7 @@
 // 러스트 툴체인은 RUSTUP_HOME/CARGO_HOME이 있으면 그대로, 없으면 레포 루트의 artifacts/mobile-native 를 쓴다.
 import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 
@@ -130,6 +130,12 @@ const run = (cmd, args, env) => {
   if (r.status !== 0) process.exit(r.status ?? 1);
 };
 
+// iOS 발행(build·upload)은 맥 one에서만(CLAUDE.md "머신" 표, 2026-10-12). 맥 two(홈 /Users/leankim)에서는 거부한다. 시험이 불러다 쓰는 함수들은 막지 않는다.
+// ponytail: 맥 two 홈 하나만 막는다(CI 러너는 통과). 개발 맥이 늘면 여기에 홈을 더한다.
+if ((mode === 'build' || mode === 'upload') && homedir() === '/Users/leankim') {
+  console.error(`거부  iOS 발행은 맥 one에서만 합니다 — 여기는 맥 two(홈 ${homedir()}). 맥 one 세션에 넘기세요`);
+  process.exit(5);
+}
 if (mode === 'build') {
   const configFile = join(app, '.env.local');
   const env = { ...buildEnv(process.env, existsSync(configFile) ? parseEnv(readFileSync(configFile, 'utf8')) : {}), ...ascBuildEnv(ascKey()) };
