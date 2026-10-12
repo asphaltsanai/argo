@@ -1,0 +1,98 @@
+#!/usr/bin/env node
+// PR 본문 규칙 검사(CLAUDE.md "인접 회귀 방지 3"·"DB 위생 5"·"회귀 게이트 1·5"·"벤더 1·4"·"버그 방지" — 2026-10-12).
+// 바뀐 파일과 추가된 줄을 보고, 규칙이 요구하는 절이 PR 본문에서 비어 있으면 실패한다. 문서만 바뀐 PR은 검사하지 않는다.
+// 절은 .github/pull_request_template.md의 `## ` 제목 단위로 읽고, 안내 주석(<!-- -->)과 빈 표 칸은 내용으로 치지 않는다.
+// CI: .github/workflows/pr-rules.yml. 로컬: node scripts/pr-rules-check.mjs <본문파일> <파일목록> <diff>. 시험: test/rule-gates.test.mjs
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, posix } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = fileURLToPath(new URL('../', import.meta.url));
+const DOC_ONLY = /\.(md|txt|png|jpe?g|gif|svg|webp)$|^docs\/|^artifacts\//;
+const NOT_PRODUCT = /^test\/|\/test\/|\.test\.m?js$|\.(md|txt)$/; // 주기 호출 판정에서 빼는 파일(시험·문서)
+// 상태를 바꾸는 파일 — 회귀 게이트 1(동기화·결제·권한·메신저 표지). 폴더·파일 이름의 한 부분이 이 낱말이어야 한다(author·async-queue 오탐 방지).
+// 시험·문서 파일만 바뀐 것은 세지 않는다.
+const STATEFUL = (f) => !NOT_PRODUCT.test(f) && (/^supabase\/migrations\//.test(f) || /^apps\/messenger\/src\//.test(f)
+  || /(^|\/)(billing|cloud-?sync|sync|auth|permissions?|quota|storage|lease|entitlement|msgr)([-_./]|$)/i.test(f));
+const RUNNER = /^src\/engine\/(native-query|native-flags|messages-http|responses-wire|gemini-wire|prompt-cache|builtin-tools)\.mjs$|^test\/helpers\/strict-vendor\.mjs$/;
+// ponytail: 흔한 형태만 잡는 정규식이다(지연을 계산식으로 넘기는 재귀 setTimeout 등은 못 잡는다) — 그런 변경은 검수에서 본다.
+const PERIODIC = new RegExp([
+  String.raw`cron\.schedule`, String.raw`setInterval\s*\(`, String.raw`useInterval\s*\(`, String.raw`refetchInterval`,
+  String.raw`\b\w*(INTERVAL|POLL|HEARTBEAT|TICK|EVERY|TTL|PERIOD)\w*_MS\s*=\s*\d`, String.raw`\b(interval|poll|heartbeat|tick|every)\w*Ms\s*=\s*\d`,
+  String.raw`\b\w*(_INTERVAL|_POLL|_HEARTBEAT)\w*\s*=\s*\d`,
+  String.raw`setTimeout\s*\(\s*\w+\s*,\s*(\d{3,}|\w*(INTERVAL|POLL|HEARTBEAT|TICK|EVERY|DELAY)\w*)\s*\)`,
+].join('|'), 'i');
+
+// 메신저가 가져다 쓰는 본체 파일 — vite 별칭 shared('…')와 apps/messenger/src의 상대 import에서 읽는다(목록을 손으로 두지 않는다).
+export function messengerShared(root = ROOT) {
+  const out = new Set();
+  const vite = join(root, 'apps/messenger/vite.config.js');
+  if (existsSync(vite)) for (const [, p] of readFileSync(vite, 'utf8').matchAll(/shared\('([^']+)'\)/g)) if (p !== '.') out.add(p);
+  const walk = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
+  const src = join(root, 'apps/messenger/src');
+  if (existsSync(src)) for (const file of walk(src).filter((p) => /\.(jsx?|mjs)$/.test(p))) {
+    const rel = file.slice(root.length).replace(/\\/g, '/');
+    for (const [, spec] of readFileSync(file, 'utf8').matchAll(/from\s+'((?:\.\.\/)+[^']+)'/g)) {
+      const target = posix.normalize(posix.join(posix.dirname(rel), spec));
+      if (!target.startsWith('apps/messenger/')) out.add(target);
+    }
+  }
+  return out;
+}
+
+// 본문을 `## 제목` 단위로 나누고, 주석·빈 표 칸·구분선을 지운 내용만 남긴다.
+export function sections(body) {
+  const clean = String(body || '').replace(/<!--[\s\S]*?-->/g, '').replace(/```[\s\S]*?```/g, '(코드)'); // 코드 블록 안의 # 줄은 제목이 아니다
+  const out = {};
+  let cur = '';
+  for (const line of clean.split('\n')) {
+    const h = line.match(/^#{1,4}\s+(.+?)\s*$/);
+    if (h) { cur = h[1]; out[cur] ??= ''; continue; }
+    const text = line.replace(/^\s*\|?(\s*:?-{3,}:?\s*\|)+\s*$/, '').replace(/^\s*(\|\s*)+$/, '').trim();
+    if (text) out[cur] = `${out[cur] ?? ''}${text}\n`;
+  }
+  return out;
+}
+const sectionText = (secs, re) => Object.entries(secs).filter(([k]) => re.test(k)).map(([, v]) => v).join('');
+const EMPTY = /^(해당\s*없음|없음|안\s*함|미실시|n\/?a|-)\.?$/i;
+const filled = (t) => t.trim() !== '' && !EMPTY.test(t.trim());
+
+// 반환: 빠진 항목 설명 목록(빈 배열 = 통과). added = [{ file, line }]
+export function checkPr({ body = '', files = [], added = [], shared = messengerShared() }) {
+  const code = files.filter((f) => !DOC_ONLY.test(f));
+  if (!code.length) return [];
+  const secs = sections(body);
+  const all = Object.values(secs).join('');
+  const missing = [];
+  if (!filled(sectionText(secs, /영향\s*반경/))) missing.push('영향 반경: "## 영향 반경" 절에 걸치는 문맥 축과 축마다 "검증함(방법)/미검증"(인접 회귀 방지 3)');
+  if (!filled(sectionText(secs, /검수/))) missing.push('분리 검수: "## 검수" 절에 만든 컨텍스트가 아닌 검수 결과(지적과 처리)(자기 승인 금지)');
+  if (code.some(STATEFUL) && !filled(sectionText(secs, /경우\s*표/))) missing.push('경우 표: 상태를 바꾸는 파일(마이그레이션·결제·메신저·동기화·권한)이 바뀌었다 — "## 경우 표"에 칸마다 기대 결과와 근거(회귀 게이트 1)');
+  if (added.some(({ file, line }) => !NOT_PRODUCT.test(file) && PERIODIC.test(line)) && !/분당/.test(sectionText(secs, /부하/))) missing.push('부하 계산: 새 주기 호출이 있다 — "## 부하"에 "기기 N대 × 분당 M회 = 분당 K행"과 유휴 쓰기 0 시험(DB 위생 5)');
+  if (code.some((f) => shared.has(f)) && !['390', '1280', '880'].every((n) => sectionText(secs, /화면/).includes(n))) missing.push(`메신저 화면 확인: 메신저가 쓰는 공용 파일(${code.filter((f) => shared.has(f)).join('·')})이 바뀌었다 — "## 화면"에 메신저 390·1280·880(회귀 게이트 5)`);
+  if (code.some((f) => RUNNER.test(f)) && !/러너/.test(all)) missing.push('러너별 검증: 벤더 와이어·도구 정의 파일이 바뀌었다 — 러너(벤더)마다 "실턴/가짜 서버/미검증"(벤더 1·4)');
+  return missing;
+}
+
+// diff에서 추가된 줄을 파일과 함께(파일 머리 줄 제외)
+export function addedFromDiff(diff) {
+  const out = []; let file = '';
+  for (const l of diff.split('\n')) {
+    const m = l.match(/^\+\+\+ b\/(.+)$/); if (m) { file = m[1]; continue; }
+    if (l.startsWith('+') && !l.startsWith('+++')) out.push({ file, line: l.slice(1) });
+  }
+  return out;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const [bodyFile, filesFile, diffFile] = process.argv.slice(2);
+  const body = readFileSync(bodyFile, 'utf8');
+  const files = readFileSync(filesFile, 'utf8').split('\n').map((s) => s.trim()).filter(Boolean);
+  const added = diffFile ? addedFromDiff(readFileSync(diffFile, 'utf8')) : [];
+  const missing = checkPr({ body, files, added });
+  if (missing.length) {
+    console.log('PR 본문에 규칙이 요구하는 내용이 없습니다(.github/pull_request_template.md 참고):');
+    for (const m of missing) console.log(`- ${m}`);
+    process.exit(1);
+  }
+  console.log(`PR 본문 규칙 통과 (코드 파일 ${files.filter((f) => !DOC_ONLY.test(f)).length}개)`);
+}
