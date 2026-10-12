@@ -139,3 +139,16 @@ export async function sendConfirm(sb, { channel, uid, root, replyId, pid, body }
   if (!found.error && found.data) return found.data.id;
   throw Object.assign(new Error(error.message), { code: error.code });
 }
+
+/* ── 단계 보기(2단계 PR2) — 진행 중에는 progress 방송의 steps, 끝난 뒤에는 답 글 meta.office_steps {n, steps}(src/gateway/office-steps.mjs).
+   단계 = { stage, detail }. stage는 게이트웨이의 안정 코드(turn-status TOOL_STAGE) — 모르는 값은 'work'로 본다. */
+export const STEP_STAGES = ['memory', 'write', 'shell', 'web', 'delegate', 'approval', 'tool', 'work'];
+const cleanSteps = (list) => (Array.isArray(list) ? list.filter((x) => x && typeof x === 'object').slice(-40).map((x) => ({ stage: STEP_STAGES.includes(x.stage) ? x.stage : 'work', detail: String(x.detail ?? '').slice(0, 120) })) : []);
+export const liveSteps = (payload) => cleanSteps(payload?.steps);
+export function keptSteps(row) {
+  const o = row?.author_kind === 'crew' ? row.meta?.office_steps : null;
+  if (!o || typeof o !== 'object') return null;
+  const steps = cleanSteps(o.steps);
+  const n = Number.isSafeInteger(o.n) && o.n > 0 ? o.n : steps.length;
+  return steps.length ? { n, steps } : null;
+}

@@ -62,6 +62,12 @@ html.agent-open .main { margin-right: var(--agent-w); }
 .agent-prop-act { display: flex; gap: 6px; flex: none; }
 .agent-auto { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--fg-2); cursor: pointer; }
 .agent-auto input { margin: 0; }
+.agent-steps { width: 100%; }
+.agent-steps-head { display: inline-flex; align-items: center; gap: 4px; color: var(--fg-2); }
+.agent-steps-head[aria-expanded='false'] .ico { transform: rotate(-90deg); }
+.agent-steps-list { margin: 6px 0 0; padding: 8px 10px 8px 26px; border-radius: var(--rc); background: var(--bg); display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 1.45; }
+.agent-steps-list b { font-weight: 500; }
+.agent-steps-list span { overflow-wrap: anywhere; }
 @media (max-width: 767px) {
   html.agent-open .main { margin-right: 0; }
   .agent-dock { width: 100%; border-left: 0; }

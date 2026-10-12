@@ -60,6 +60,7 @@ import { dispatchMessengerAutomations } from './msgr-automations.mjs';
 import { joinTranslate, leaveTranslate } from './office-translate.mjs';
 import { ownerSoloRoom } from './office-audience.mjs'; // 주인 혼자 1:1 판정(유건 결정 2026-10-08 ①) — 오피스 도구의 'owner' 판정과 같은 사람 규칙
 import { isPanelSource, confirmOf, proposalsMeta, findProposal, proposalSummary } from './office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드(2단계 PR1)
+import { liveSteps, stepsMeta } from './office-steps.mjs'; // 오피스 패널 단계 보기(2단계 PR2)
 import { outsideContextLine } from '../assistant/mail-text.mjs'; // 비서가 메일에서 가져온 글은 방 문맥에 표지 줄로만(설계 4.9 규칙 3)
 import { selfTag, selfReplyNote, recordSelfPost } from '../self-posts.mjs'; // 에이전트가 대화 밖에서 보낸 자기 글 — 방 문맥 표지·답글 대상 줄·개인 1:1 기록
 
@@ -1981,11 +1982,14 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // onStopRequested: 방송(u:<owner>의 'stop_request')을 놓친 기기의 폴백 — 30초 심박마다 stop_requested_at을 확인한다.
     const stopHeartbeat = executionHeartbeat(wsId, db, job, { onStopRequested: () => { interruptTurn(wsId, job.slug, { source: 'messenger', tag: job.msgId }).catch((e) => console.error(`[argo] msgr 심박 중단 처리 실패(${wsId}/${job.slug}/${job.msgId}):`, e.message)); } });
     activeCtx.set(ctxKey, ctx);
-    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId, topic: early?.full === (ch.kind === 'public') ? early : null }); if (!early) stageLog(job, 'broadcast', now()); // 받음 방송에 쓴 방 토픽을 그대로 잇는다(방 채널을 두 번 열지 않는다). 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
+    // 오피스 패널 단계 보기 — 주인 혼자 1:1일 때만(단계 요약에 파일 이름·명령이 들어간다). 판정(구성원 조회 1건)은 아래 try 안에서 — 그 전에는 solo가 거짓이라 싣지 않는다
+    const panelTrace = { ref: null, solo: false };
+    const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId, topic: early?.full === (ch.kind === 'public') ? early : null, ...(ctx.officePanel === true ? { steps: () => (panelTrace.solo ? liveSteps(panelTrace.ref) : null) } : {}) }); if (!early) stageLog(job, 'broadcast', now()); // 받음 방송에 쓴 방 토픽을 그대로 잇는다(방 채널을 두 번 열지 않는다). 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
     let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {}; let officeResult = null;
     try {
       // 주인 혼자 1:1 방 확인(구성원 조회 1건)은 실행권을 잡은 뒤에만 — 다른 프로세스가 실행 중인 잡이 3초마다 DEFER로 다시 집힐 때 조회를 되풀이하지 않게(재검수 LOW 2026-10-08).
       const solo = soloCandidate && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
+      if (ctx.officePanel === true) panelTrace.solo = await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId); // 패널 턴만(패널 턴은 soloCandidate가 아니라 위와 겹치지 않는다 — 검수 L3)
       if (solo) ctx.ownerSolo = true;
       // 개인 공간(조직 없는 방) 턴 — 결재·예약·긴 작업의 여는 스위치(messengerOrigin)에 서버 판정(crew 1:1인가)을 싣는다(계획 5-3 #3). 같은 자리(실행권을 잡은 뒤 1회)라
       // DEFER로 다시 집혀도 되풀이하지 않는다. 조직 턴은 문맥 모양까지 그대로(묻지도 싣지도 않는다), 손님 턴은 어차피 거절이라 묻지 않는다, 봉투 없는 옛 서버도 묻지 않는다(모름 = 거절).
@@ -2008,7 +2012,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       }
       stageLog(job, 'turn-start', now());
       const turn = await runChat(wsId, job.slug, text, sessionId, {
-        source: 'messenger', attachments, mirrorCtx: ctx, abortTag: job.msgId, ...(job.fromCrewId || job.relayVia ? { notOwnerDirect: handoffLabel(orgPeers, job.fromCrewId ?? job.relayVia, job.fromCrewId ? null : job.relayViaName) } : {}), // 크루가 넘긴 턴(DM 전달 포함) — 풀 오토만 끈다(넘긴 크루를 잇는다) // abortTag — 중단은 이 원본 메시지의 실행만(검수 2026-09-26 M-1: 같은 크루의 텔레그램·결재 후속 턴도 source:'messenger'다)
+        source: 'messenger', attachments, mirrorCtx: ctx, abortTag: job.msgId, ...(ctx.officePanel === true ? { onTrace: (t) => { panelTrace.ref = t; } } : {}), ...(job.fromCrewId || job.relayVia ? { notOwnerDirect: handoffLabel(orgPeers, job.fromCrewId ?? job.relayVia, job.fromCrewId ? null : job.relayViaName) } : {}), // 크루가 넘긴 턴(DM 전달 포함) — 풀 오토만 끈다(넘긴 크루를 잇는다) // abortTag — 중단은 이 원본 메시지의 실행만(검수 2026-09-26 M-1: 같은 크루의 텔레그램·결재 후속 턴도 source:'messenger'다)
         journal: { ...msgrJournal(job.orgId, job.channelId, ch.crew_memory === false), ...(solo ? { text: job.text } : {}) }, // 채널 설정: 기억 안 남김 / 채널 태그 파일(회수 단위). 주인 혼자 1:1은 주인이 쓴 글만 일지에(text — 개인 공간은 데스크톱 일지, 조직은 그 방 태그 파일: chat.mjs journalWrite)
       });
       stageLog(job, 'turn-end', now());
@@ -2061,7 +2065,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // 링크 미리보기 — 보내기 전에 첫 링크를 한 번 가져와 같은 insert에 싣는다(읽는 사람마다 다시 가져오지 않는다). 실패·중단 답은 대상 밖, 실패하면 카드 없음.
     // 게시가 재시도되면 큐 파일에 보존된 replyRow(카드 포함)를 그대로 쓴다 — 다시 가져오지 않는다.
     const linkCard = failed || aborted ? null : await Promise.resolve().then(() => linkPreview(replyRow.body)).catch(() => null);
-    const metaBase = { ...replyMeta, ...(officeResult ? { office_result: officeResult } : {}), hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}), ...(aborted ? { stopped: true } : {}), ...(linkCard ? { link_preview: linkCard } : {}) }; // hop/origin=연쇄 상한·정책 기준
+    const metaBase = { ...replyMeta, ...(officeResult ? { office_result: officeResult } : {}), ...(panelTrace.solo && !aborted ? stepsMeta(panelTrace.ref) : {}), hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, ...(failed ? { failed: true } : {}), ...(aborted ? { stopped: true } : {}), ...(linkCard ? { link_preview: linkCard } : {}) }; // hop/origin=연쇄 상한·정책 기준
     try {
       row = await finishMessengerExecution(wsId, db, job, { ...replyRow, meta: metaBase }, executionMeta); // 궤적은 저장하지 않는다(유건 결정 2026-09-24 — 메신저엔 '답변 준비 중'만)
     } catch (e) {
@@ -2116,7 +2120,7 @@ function roomTopic(wsId, orgId, channelId, { full = false } = {}) {
   } };
 }
 
-function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false, sourceMsgId = null, topic = null } = {}) {
+function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false, sourceMsgId = null, topic = null, steps = null } = {}) { // steps — 오피스 패널 턴의 단계 목록을 돌려주는 함수(주인 혼자 1:1에서만, office-steps.mjs)
   const room = topic ?? roomTopic(wsId, orgId, channelId, { full }); // 토픽 규칙은 roomTopic 한 곳(공개 = 조직 토픽, 비공개 = dm:<방>, 못 열면 보내지 않음)
   if (!room) return () => {};
   const ch = room.ch;
@@ -2128,7 +2132,7 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
   // 바뀐 것만 보내던 예전 실행 카드(단계·사고 등)는 매번 다시 보내도 무해하다("답변 준비 중" 신호일 뿐, DB 쓰기 없음 — typing 방송과 같은 방식).
   // payload가 턴 내내 고정이라 "바뀐 것만"으로는 턴당 한 번만 나가 8초 뒤 화면에서 카드·중단 버튼이 사라졌다(화면 QA HIGH, 2026-09-26).
   // 1.5초마다 상태 파일은 확인하되 실제 방송은 최소 4초 간격으로만 — 8초 만료 여유는 충분하고 방송 횟수를 줄인다(재검수 2026-09-26 L-b).
-  let stopped = false; let lastSentAt = 0;
+  let stopped = false; let lastSentAt = 0; let stepsRev = -1;
   const pump = async () => {
     const s = slug ? await getTurnStatus(wsId, slug).catch(() => null) : null;
     if (stopped || !s || s.source !== 'messenger') return; // 종료 뒤 남은 비동기 pump도 다음 채널의 상태를 방송하지 않는다
@@ -2136,7 +2140,10 @@ function startTyping(wsId, orgId, channelId, crewId, slug = null, { full = false
     if (now - lastSentAt < PROGRESS_MIN_GAP_MS) return; // 크루당 최소 4초 간격(L-b) — 첫 전송은 즉시(lastSentAt=0)
     // 메신저에는 "답변 준비 중"만 보인다(유건 결정 2026-09-24) — 단계·사고·작성 중 본문·도구 단계는 어느 방에도 싣지 않는다.
     // 크루 상태 파일은 크루당 하나라 같은 크루의 다른 턴(데스크톱 대화·다른 방)이 남긴 값이 섞여 나갈 수 있었다(검수 #697 HIGH).
-    const payload = { channel_id: channelId, crew_id: crewId, startedAt: s.startedAt, source_msg_id: sourceMsgId }; // source_msg_id — 중단 버튼이 msgr_request_stop(p_source)에 넘길 대상(유건 확정 2026-09-26)
+    const got = steps ? steps() : null; // 오피스 패널 턴만 — 이 턴의 기록기에서 최근 단계(가린 요약). 그 밖의 방에는 지금처럼 싣지 않는다(유건 결정 2026-09-24)
+    const list = got && got.list.length && got.rev !== stepsRev ? got.list : null; // 단계가 바뀐 때만 다시 싣는다 — 화면은 같은 턴의 마지막 목록을 유지한다(검수 L5)
+    if (list) stepsRev = got.rev;
+    const payload = { channel_id: channelId, crew_id: crewId, startedAt: s.startedAt, source_msg_id: sourceMsgId, ...(list ? { steps: list, steps_n: got.n } : {}) }; // source_msg_id — 중단 버튼이 msgr_request_stop(p_source)에 넘길 대상(유건 확정 2026-09-26)
     lastSentAt = now;
     await ch.send({ type: 'broadcast', event: 'progress', payload }).catch?.(() => {});
   };

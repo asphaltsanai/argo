@@ -18,7 +18,7 @@ import { createComposerDelivery } from '../../../../src/composer-delivery.mjs';
 import { acceptFiles, withoutFile, chipSize } from '../../../messenger/src/attach-files.mjs';
 import { formatBytes } from '../../../../src/media-kind.mjs';
 import { previewFor } from '../../../messenger/src/media-actions.mjs';
-import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm } from '../core/agent-chat.js';
+import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm, liveSteps, keptSteps } from '../core/agent-chat.js';
 import { AGENT_DICT } from './agent-panel-i18n.js';
 import './agent-panel.css';
 
@@ -99,6 +99,28 @@ function ProposalCard({ p, state, onRun, onCancel }) {
   );
 }
 
+// 에이전트 자체 도구(mcp__crew)의 단계 대상은 'crew · 도구이름'으로 온다(turn-status detailForTool) — 아는 도구는 사람이 읽는 이름으로
+const CREW_TOOLS = ['calendar', 'office', 'office_files', 'office_work', 'office_deals', 'office_mail', 'office_briefing', 'request_approval', 'send_to_crew', 'start_long_task', 'schedule_task', 'use_connector'];
+const stepDetail = (d) => { const m = /^crew · ([a-z_]+)$/.exec(d ?? ''); return m ? (CREW_TOOLS.includes(m[1]) ? t(`agent.tool.${m[1]}`) : '') : d; }; // 모르는 내부 도구 이름은 숨긴다 — 단계 이름('도구 사용')만(검수 L6)
+
+// 처리 과정 — 누가(이 에이전트) 무엇을 했는지 단계 한 줄씩. 진행 중에는 펼쳐 두고, 끝난 답에서는 접어 둔다
+function Steps({ steps, n, open: initial = false }) {
+  const [open, setOpen] = useState(initial);
+  if (!steps?.length) return null;
+  const more = Math.max(0, (n ?? steps.length) - steps.length);
+  return (
+    <div className="agent-steps">
+      <button type="button" className="link-btn small agent-steps-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name="caret" size={14} />{t('agent.steps', { n: n ?? steps.length })}
+      </button>
+      {open && <ol className="agent-steps-list">
+        {more > 0 && <li className="dim">{t('agent.steps.more', { n: more })}</li>}
+        {steps.map((s, i) => { const d = stepDetail(s.detail); return <li key={i}><b>{t(`agent.stage.${s.stage}`)}</b>{d && <span className="dim"> · {d}</span>}</li>; })}
+      </ol>}
+    </div>
+  );
+}
+
 function Message({ row, files, crewName, fence, cards }) {
   const mine = row.author_kind === 'user';
   const own = files.filter((f) => f.message_id === row.id);
@@ -112,6 +134,7 @@ function Message({ row, files, crewName, fence, cards }) {
       {own.length > 0 && <div className="agent-files">{own.map((f) => <FileCard key={f.id} f={f} />)}</div>}
       {!mine && <LinkCard row={row} />}
       {cards}
+      {!mine && (() => { const k = keptSteps(row); return k ? <Steps steps={k.steps} n={k.n} /> : null; })()}
     </div>
   );
 }
@@ -165,7 +188,7 @@ export default function AgentPanel({ path, space, onClose }) {
           if (row.author_kind === 'crew') { setProgress(null); setSentAt(null); }
         }, () => {}),
         attach: (p) => loadFiles(sb, [p.message_id]).then((fs) => { if (alive) setFiles((old) => [...old.filter((x) => x.message_id !== p.message_id), ...fs]); }, () => {}),
-        progress: (p) => { if (alive) setProgress({ at: Date.now(), startedAt: (typeof p.startedAt === 'number' ? p.startedAt : Date.parse(p.startedAt)) || Date.now(), source: p.source_msg_id, crew: p.crew_id }); }, // 게이트웨이는 Date.now() 숫자를 보낸다(turn-status.mjs)
+        progress: (p) => { if (alive) setProgress((old) => { const steps = liveSteps(p); return { at: Date.now(), startedAt: (typeof p.startedAt === 'number' ? p.startedAt : Date.parse(p.startedAt)) || Date.now(), source: p.source_msg_id, crew: p.crew_id, steps: steps.length ? steps : (old?.source === p.source_msg_id ? old.steps : []), n: Number.isSafeInteger(p.steps_n) && p.steps_n > 0 ? p.steps_n : (old?.source === p.source_msg_id ? old.n : null) }; }); }, // 단계는 패널 턴·주인 혼자 1:1에서만 온다 — 빈 방송이 와도 같은 턴의 마지막 목록을 지우지 않는다 // 게이트웨이는 Date.now() 숫자를 보낸다(turn-status.mjs)
         // 구독이 붙을 때마다(처음·재연결) 그사이 들어온 글만 한 번 읽는다 — 불러오기와 구독 사이 틈, 끊긴 동안 놓친 답. 이벤트 때만이라 폴링이 아니다
         status: (s) => {
           if (!alive) return;
@@ -258,6 +281,7 @@ export default function AgentPanel({ path, space, onClose }) {
       })}
       {busyTurn && <div className="agent-progress dim small"><span className="agent-spin" />{t('agent.preparing', { crew: crew.name, sec: Math.max(0, Math.round((now - progress.startedAt) / 1000)) })}
         {progress.source && <button type="button" className="btn sm" onClick={() => stopTurn(sbRef.current, progress.crew, progress.source).then((ok) => { setProgress(null); if (ok) showToast(t('agent.stopped')); }, () => showToast(t('crew.fail.generic')))}>{t('agent.stop')}</button>}</div>}
+      {busyTurn && progress.steps?.length > 0 && <Steps key={progress.source ?? 'live'} steps={progress.steps} n={progress.n ?? undefined} open />}
       {!busyTurn && sentAt && !answered && <p className="agent-progress dim small">{t(silent ? 'agent.silent' : 'agent.waiting', { crew: crew.name })}</p>}
       {crew.on === false && <p className="data-note"><Icon name="info" size={12} />{t('crew.offNote')}</p>}
     </div>
