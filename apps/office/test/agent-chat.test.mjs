@@ -91,7 +91,7 @@ test('전송 통로 — 글에 meta·reply_to를 싣고, 응답을 잃으면 같
 
 
 // 쓰기 확인 카드(2단계 PR1) — 카드 목록·상태·확인 글 쓰기
-import { proposalsOf, proposalState, sendConfirm } from '../src/core/agent-chat.js';
+import { proposalsOf, proposalState, proposalFields, sendConfirm } from '../src/core/agent-chat.js';
 
 test('카드 목록은 에이전트 글의 검증된 제안만', () => {
   const p = { pid: 'p1', tool: 'office_work', args: {}, summary: '할 일 추가: a' };
@@ -107,7 +107,16 @@ test('카드 상태 — 열림 → 실행 요청함(확인 글) → 실행함(�
   assert.equal(proposalState(thread, 42, 'p1'), 'sent');
   assert.equal(proposalState(thread, 42, 'p2'), 'open', '다른 카드는 그대로');
   thread.push({ ...bot(44, 10), meta: { office_result: { reply: 42, pid: 'p1' } } });
-  assert.equal(proposalState(thread, 42, 'p1'), 'done');
+  assert.equal(proposalState(thread, 42, 'p1'), 'done', 'status 없는 표지 = 처리함');
+  for (const [status, want] of [['ran', 'done'], ['error', 'failed'], ['not_found', 'failed'], ['unknown', 'unknown']])
+    assert.equal(proposalState([bot(42, 10), { ...bot(45, 10), meta: { office_result: { reply: 42, pid: 'p1', status } } }], 42, 'p1'), want, status);
+});
+
+test('카드 자세히 — action 빼고 칸 이름·값, 긴 값은 자른다', () => {
+  const f = proposalFields({ args: { action: 'customer_set', id: 'c1', account: '국민 123', notes: '가'.repeat(400), empty: '', lines: [{ item: 'A', unit_price: 1 }] } });
+  assert.deepEqual(f.map((x) => x.key), ['id', 'account', 'notes', 'lines']);
+  assert.equal(f[2].value.length, 301);
+  assert.equal(f[3].value, '[{"item":"A","unit_price":1}]');
 });
 
 test('확인 글 — 대화 뿌리에 붙이고 같은 카드는 한 건(client_msg_id 고정)', async () => {

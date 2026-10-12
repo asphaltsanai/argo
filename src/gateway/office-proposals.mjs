@@ -6,7 +6,9 @@ import { confirmNeeded } from '../office-confirm.mjs';
 
 export const PANEL_SOURCE = 'office_panel';
 export const PROPOSAL_MAX = 5;
-const ARGS_MAX = 8000; // 제안 하나의 인자 JSON 상한 — 답 글 meta에 실린다
+const ARGS_MAX = 8000; // 제안 하나의 인자 JSON 바이트 상한 — 답 글 meta에 실린다
+const ALL_MAX = 16000; // 한 답의 제안 인자 합계 바이트 상한 — meta 열 제약(msgr_messages_meta_size 64KB, 20260909003000)에 한참 못 미치게(검수 M4)
+const bytes = (v) => Buffer.byteLength(JSON.stringify(v ?? null));
 
 /** 쓰기 동작 — 나머지(목록·읽기)는 확인 없이 실행한다 */
 const WRITES = {
@@ -21,7 +23,9 @@ const WRITES = {
 export const isWrite = (name, a) => !!WRITES[name]?.includes(a?.action);
 
 /** 바로 실행을 켜도 카드를 띄우는 동작 — CLI·MCP 승인 목록(되돌리기 어려움) + 일정 삭제(휴지통 없음) */
-export const alwaysConfirm = (name, a) => !!confirmNeeded(name, a) || (name === 'calendar' && a?.action === 'delete');
+export const alwaysConfirm = (name, a) => !!confirmNeeded(name, a)
+  || (name === 'calendar' && (a?.action === 'delete' || (a?.action === 'update' && (a.scope === 'all' || a.scope === 'following')))) // 일정 삭제(휴지통 없음), 반복 일정 여러 회차 고치기
+  || (name === 'office' && a?.action === 'company_set'); // 회사 정보(계좌·세무 포함) 덮어쓰기 — 검수 L5
 
 export const isPanelSource = (message) => message?.meta?.source === PANEL_SOURCE;
 
@@ -75,7 +79,12 @@ const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
  */
 export function panelWriteGate(ctx, name, args, lang = 'ko') {
   const a = args ?? {};
-  if (ctx?.officePanel !== true || !isWrite(name, a)) return null;
+  if (!isWrite(name, a)) return null;
+  // 패널에서 시작한 일이 넘김·예약·긴 작업·결재 후속으로 다른 턴이 된 경우 — 그 답은 패널 카드로 오지 않는다. 쓰기는 하지 않고 패널에서 다시 요청하게 한다(검수 M1)
+  if (ctx?.officePanel !== true && ctx?.officePanelChain === true) return (lang === 'en'
+    ? 'This work started from the Office agent panel, and Office changes from it run only through a confirmation card there. Nothing was changed — tell the user to ask again in the Office agent panel.'
+    : '오피스 에이전트 창에서 시작한 일이라 오피스 데이터 변경은 그 창의 확인 카드로만 한다. 바꾸지 않았다 — 오피스 에이전트 창에서 다시 요청해 달라고 알려라.');
+  if (ctx?.officePanel !== true) return null;
   if (ctx.officeAuto === true && !alwaysConfirm(name, a)) return null;
   const say = (ko, en) => (lang === 'en' ? en : ko);
   const list = (ctx.proposals ??= []);
@@ -83,7 +92,7 @@ export function panelWriteGate(ctx, name, args, lang = 'ko') {
   if (hit) return say(`이미 확인 카드(${hit.pid})로 올렸다. 다시 부르지 마라.`, `Already posted as confirmation card ${hit.pid}. Do not call it again.`);
   if (list.length >= PROPOSAL_MAX) return say(`한 답에 확인 카드는 ${PROPOSAL_MAX}개까지다 — 이 동작은 올리지 않았다. 나머지는 사용자가 카드를 처리한 뒤 다음 요청에서 하겠다고 알려라.`,
     `At most ${PROPOSAL_MAX} confirmation cards per reply — this one was not posted. Say the rest can follow after the user handles the cards.`);
-  if (JSON.stringify(a).length > ARGS_MAX) return say('인자가 너무 커서 확인 카드로 올리지 못했다 — 나눠서 다시 제안하라.', 'The arguments are too large for a confirmation card — split it and propose again.');
+  if (bytes(a) > ARGS_MAX || list.reduce((n, p) => n + bytes(p.args), bytes(a)) > ALL_MAX) return say('인자가 너무 커서 확인 카드로 올리지 못했다 — 나눠서 다시 제안하라.', 'The arguments are too large for a confirmation card — split it and propose again.');
   const p = { pid: `p${list.length + 1}`, tool: name, args: a, summary: proposalSummary(name, a, lang) };
   list.push(p);
   return say(`실행하지 않고 확인 카드(${p.pid})로 올렸다: ${p.summary}\n사용자가 오피스 에이전트 창에서 [실행]을 누르면 그때 실행된다. 실행했다고 말하지 말고, 확인 카드를 올렸다고 짧게 알려라.`,

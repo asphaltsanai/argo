@@ -98,6 +98,7 @@ test('카드 [실행] — 답 글의 제안을 인자 그대로 한 번 실행�
   assert.equal(calls[0].o.ownerId, 'u1');
   assert.equal(calls[0].o.ctx.officePanel, false, '실행 경로는 관문을 다시 타지 않는다');
   assert.equal(r.result, '할 일을 만들었다');
+  assert.equal(r.status, 'ran');
   assert.match(r.note, /이미 한 번 실행했다: 할 일 추가: 견적 회신/);
   assert.match(r.note, /같은 동작을 다시 부르지 마라/);
 });
@@ -108,6 +109,7 @@ test('카드 [실행] — 남이 쓴 확인 글·찾을 수 없는 제안은 실
     const r = await runOfficeConfirm({ message: async () => msg }, { wsId: 'w', job: j, ctx: panel(), uid: 'u1', lang: 'ko' }, fakeDeps(calls));
     assert.equal(calls.length, 0, name);
     assert.equal(r.result, null, name);
+    assert.equal(r.status, 'not_found', name);
     assert.match(r.note, /찾지 못해 아무것도 실행하지 않았다/, name);
   }
 });
@@ -116,4 +118,39 @@ test('카드 [실행] — 도구가 던져도 턴은 이어간다(오류를 결�
   const r = await runOfficeConfirm({ message: async () => reply() }, { wsId: 'w', job: job(), ctx: panel(), uid: 'u1', lang: 'en' },
     { owner: async () => 'u1', specs: () => [{ name: 'office_work', run: async () => { throw new Error('rpc down'); } }] });
   assert.match(r.result, /Error while running: rpc down/);
+  assert.equal(r.status, 'error', '카드가 실행하지 못함으로 보이게');
+});
+
+// 검수 M1 — 패널에서 시작한 일이 넘김·예약·긴 작업·결재 후속으로 다른 턴이 되면 그 답은 패널 카드로 오지 않는다. 쓰기는 거절, 읽기는 그대로
+test('패널 사슬의 다른 턴은 오피스 쓰기를 하지 않는다(카드도 만들지 않음)', () => {
+  const ctx = { kind: 'msgr', officePanelChain: true };
+  assert.match(panelWriteGate(ctx, 'office_work', { action: 'task_add', title: 'a' }), /오피스 에이전트 창에서 다시 요청/);
+  assert.equal(ctx.proposals, undefined, '카드 없음');
+  assert.equal(panelWriteGate(ctx, 'office_work', { action: 'tasks' }), null, '읽기는 그대로');
+  assert.match(panelWriteGate({ ...ctx, officePanel: true, proposals: [] }, 'office_work', { action: 'task_add', title: 'a' }), /확인 카드\(p1\)/, '패널 턴 자신은 카드');
+});
+
+test('제안 크기 — 하나 8000바이트, 한 답 합계 16000바이트(meta 열 제약에 못 미치게)', () => {
+  const ctx = panel();
+  const big = '가'.repeat(2500); // 7500바이트
+  assert.match(panelWriteGate(ctx, 'office_work', { action: 'page_add', title: 'x', text: '가'.repeat(2700) }), /너무 커서/, '하나가 8000바이트 넘음');
+  panelWriteGate(ctx, 'office_work', { action: 'page_add', title: 'a', text: big });
+  panelWriteGate(ctx, 'office_work', { action: 'page_add', title: 'b', text: big });
+  assert.match(panelWriteGate(ctx, 'office_work', { action: 'page_add', title: 'c', text: '가'.repeat(400) }), /너무 커서/, '합계 16000 넘음');
+  assert.equal(ctx.proposals.length, 2);
+});
+
+test('늘 카드 — 회사 정보 덮어쓰기, 반복 일정 여러 회차 고치기', () => {
+  assert.equal(alwaysConfirm('office', { action: 'company_set', id: 'x', value: '1' }), true);
+  assert.equal(alwaysConfirm('calendar', { action: 'update', id: 'e', scope: 'all' }), true);
+  assert.equal(alwaysConfirm('calendar', { action: 'update', id: 'e', scope: 'following' }), true);
+  assert.equal(alwaysConfirm('calendar', { action: 'update', id: 'e', scope: 'this' }), false);
+  assert.equal(alwaysConfirm('calendar', { action: 'update', id: 'e' }), false);
+});
+
+test('확인 턴의 문구는 저장된 summary가 아니라 실행할 인자로 다시 만든다', async () => {
+  const forged = reply({ meta: { office_proposals: [{ pid: 'p1', tool: 'office_work', args: { action: 'task_add', title: '진짜 제목' }, summary: '가짜 문구' }] } });
+  const r = await runOfficeConfirm({ message: async () => forged }, { wsId: 'w', job: job(), ctx: panel(), uid: 'u1', lang: 'ko' }, fakeDeps([]));
+  assert.match(r.note, /할 일 추가: 진짜 제목/);
+  assert.ok(!r.note.includes('가짜 문구'));
 });

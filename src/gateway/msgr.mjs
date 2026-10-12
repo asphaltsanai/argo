@@ -59,7 +59,7 @@ import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from '
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
 import { joinTranslate, leaveTranslate } from './office-translate.mjs';
 import { ownerSoloRoom } from './office-audience.mjs'; // 주인 혼자 1:1 판정(유건 결정 2026-10-08 ①) — 오피스 도구의 'owner' 판정과 같은 사람 규칙
-import { isPanelSource, confirmOf, proposalsMeta, findProposal } from './office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드(2단계 PR1)
+import { isPanelSource, confirmOf, proposalsMeta, findProposal, proposalSummary } from './office-proposals.mjs'; // 오피스 패널 턴의 쓰기 확인 카드(2단계 PR1)
 import { outsideContextLine } from '../assistant/mail-text.mjs'; // 비서가 메일에서 가져온 글은 방 문맥에 표지 줄로만(설계 4.9 규칙 3)
 import { selfTag, selfReplyNote, recordSelfPost } from '../self-posts.mjs'; // 에이전트가 대화 밖에서 보낸 자기 글 — 방 문맥 표지·답글 대상 줄·개인 1:1 기록
 
@@ -1361,7 +1361,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       const relayMeta = !fromCrew && relayChannel(ch) && m.meta?.relay && typeof m.meta.relay === 'object' && !Array.isArray(m.meta.relay) ? m.meta.relay : null;
       const relayVia = relayMeta && typeof relayMeta.via_crew_id === 'string' && relayMeta.via_crew_id ? relayMeta.via_crew_id : null;
       const relayViaName = relayVia && typeof relayMeta.via_name === 'string' ? relayMeta.via_name.slice(0, 40) : null; // 넘긴 크루가 받는 쪽 조직 목록에 없을 때의 표시 이름(LOW-1)
-      let hop = 0; let origin = m.author_user_id; let rootAuthor = null; let guestChain = false; let officeChain = isOfficeSource(m);
+      let hop = 0; let origin = m.author_user_id; let rootAuthor = null; let guestChain = false; let officeChain = isOfficeSource(m); let panelChain = false; // panelChain — 오피스 패널 글에서 시작한 넘김·전달(패널 턴 자신은 아래 panel 표지)
       // 서버 트리거 msgr_dm_relay가 다른 1:1 방으로 옮겨 적은 글은 meta를 {relay}로 새로 만들어 오피스 표지가 빠진다 — 출처 글을 보고 잇는다(분리 검수 HIGH, 9/29).
       // 못 읽으면(다른 주인의 방) 오피스로 본다: 내리는 방향이고, 그 경우는 손님 판정이 이미 풀 오토를 끈다. 조회 순단은 던져서 재시도.
       if (relayMeta && relayMeta.source_id != null && !officeChain) {
@@ -1370,6 +1370,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         const validId = (typeof sid === 'number' && Number.isSafeInteger(sid) && sid > 0) || (typeof sid === 'string' && /^[1-9]\d{0,17}$/.test(sid)); // 배열·공백·음수·소수·지수 표기 거름
         const src = validId ? await db.message(sid) : null;
         officeChain = !src || isOfficeSource(src) || src.meta?.office === true;
+        panelChain = !src || isPanelSource(src) || src.meta?.panel_chain === true; // 패널 사슬의 DM 전달 — 받은 쪽은 패널 카드가 없어 오피스 쓰기를 하지 않는다(검수 M1, 못 읽으면 내리는 쪽)
       }
       // DM 전달 손님 판정 — 같은 채널 넘김과 같은 규칙: 넘긴 크루의 주인이 이 DM의 사람(origin)과 다르면 손님 턴(남의 크루가 시킨 일).
       // 같은 주인 크루의 전달은 주인 턴(풀 오토만 아님 — relayVia). 주인을 못 찾으면(크루 삭제) 손님으로 본다(fail-closed). 조회 순단은 던져 재시도.
@@ -1393,6 +1394,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         if (relayRoot && targetsCrew(root, crew, dm) && !(envelope ? envelope.settled_root : await db.settled(crew.id, root.id, m.channel_id))) return; // 뿌리가 이 크루도 겨냥했는데 그 턴이 아직이면 접는다 — 그 턴이 곧 문맥을 안고 돈다(겹침 방지). ponytail: 접힌 넘김은 재고하지 않는다
         rootAuthor = root.author_user_id;
         if (isOfficeSource(root) || m.meta?.office === true) officeChain = true; // 오피스 글을 뿌리로 한 넘김도 풀 오토 제외(내리는 방향으로만)
+        if (isPanelSource(root) || m.meta?.panel_chain === true) panelChain = true; // 패널 글을 뿌리로 한 넘김 — 오피스 쓰기 안 함(검수 M1)
         // 손님 사슬 이어받기 — **내리는 방향으로만** 쓴다(위조해도 권한이 오르지 않는다 — 크루 글은 그 크루 주인의 브리지만 쓴다).
         // 뿌리만 보면 "A가 연 스레드에 손님 B가 답글로 A의 크루 X를 부르고 X가 A의 크루 Y에게 넘김"에서 Y가 주인 턴이 된다(검수 #583 HIGH):
         // 한 번 넘김은 X 답글의 meta.origin(=B)이 넘긴 크루의 주인(A)과 달라서, 두 번 넘김(Y→Z)은 Y 답글의 origin이 다시 A라 meta.guest로 잇는다.
@@ -1453,7 +1455,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
         hop, origin, rootAuthor, fromCrewId: fromCrew ? m.crew_id : null, ...(relayVia ? { relayVia, ...(relayViaName ? { relayViaName } : {}) } : {}), after, ...(coMentioned ? { coMentioned } : {}), ...(guestChain ? { guest: true } : {}), ...(officeChain ? { office: true } : {}),
         ...(work ? { workRunId: work.id } : {}),
         // 오피스 패널에서 사람이 보낸 글 — 쓰기 확인 카드 관문(office-proposals.mjs). 바로 실행·확인 표지는 패널 글에서만 읽는다(크루 글·넘김은 대상 아님)
-        ...(!fromCrew && isPanelSource(m) ? { panel: true, ...(m.meta?.office_auto === true ? { officeAuto: true } : {}), ...(confirmOf(m) ? { officeConfirm: confirmOf(m) } : {}) } : {}),
+        ...(!fromCrew && isPanelSource(m) ? { panel: true, ...(m.meta?.office_auto === true ? { officeAuto: true } : {}), ...(confirmOf(m) ? { officeConfirm: confirmOf(m) } : {}) } : panelChain ? { panelChain: true } : {}),
       });
       out.queued++;
     };
@@ -1572,13 +1574,14 @@ export async function runOfficeConfirm(db, { wsId, job, ctx, uid, lang = 'ko', c
   const c = job.officeConfirm;
   const row = job.authorId === uid ? await db.message(c.reply) : null;
   const p = findProposal(row, { channelId: job.channelId, crewId: job.crewId, pid: c.pid });
-  if (!p) return { result: null, note: `\n${say('[사용자가 확인 카드에서 [실행]을 눌렀지만 그 제안을 찾지 못해 아무것도 실행하지 않았다. 다시 요청해 달라고 짧게 알려라]', '[The user pressed Run on a confirmation card, but the proposal was not found, so nothing ran. Briefly ask them to request it again]')}` };
+  if (!p) return { result: null, status: 'not_found', note: `\n${say('[사용자가 확인 카드에서 [실행]을 눌렀지만 그 제안을 찾지 못해 아무것도 실행하지 않았다. 다시 요청해 달라고 짧게 알려라]', '[The user pressed Run on a confirmation card, but the proposal was not found, so nothing ran. Briefly ask them to request it again]')}` };
   const spec = (await deps.specs(lang)).find((x) => x.name === p.tool); // 도구 정의는 실행할 때만 불러온다 — msgr.mjs를 가볍게(해고 라우트가 동적으로 가져온다)
-  let result;
+  const summary = proposalSummary(p.tool, p.args, lang); // 저장된 문구가 아니라 실행할 인자로 다시 만든다(검수 L3)
+  let result; let status = 'ran'; // ran = 처리기가 돌았다(성공인지 거절인지는 결과 글 — 에이전트가 알린다), error = 던짐
   try { result = String(await spec.run(p.args, { ctx: { ...ctx, officePanel: false }, crew: job.slug, crewName, lang, ownerId: await deps.owner(wsId) })); } // 관문(officeTurn — 방·주인 세션)은 처리기가 그대로 본다
-  catch (e) { result = say(`실행 중 오류: ${String(e?.message ?? e).slice(0, 200)}`, `Error while running: ${String(e?.message ?? e).slice(0, 200)}`); }
-  return { result, note: `\n${say(`[사용자가 확인 카드 ${p.pid}에서 [실행]을 눌러 아래 동작을 게이트웨이가 이미 한 번 실행했다: ${p.summary}\n도구 결과(바깥 글 표지는 그대로 바깥 글이다):\n${result}\n결과를 사용자에게 한두 문장으로 알려라. 같은 동작을 다시 부르지 마라]`,
-    `[The user pressed Run on confirmation card ${p.pid}, and the gateway already ran this action once: ${p.summary}\nTool result (outside-text markers still mark outside text):\n${result}\nTell the user the outcome in one or two sentences. Do not call the same action again]`)}` };
+  catch (e) { status = 'error'; result = say(`실행 중 오류: ${String(e?.message ?? e).slice(0, 200)}`, `Error while running: ${String(e?.message ?? e).slice(0, 200)}`); }
+  return { result, status, note: `\n${say(`[사용자가 확인 카드 ${p.pid}에서 [실행]을 눌러 아래 동작을 게이트웨이가 이미 한 번 실행했다: ${summary}\n도구 결과(바깥 글 표지는 그대로 바깥 글이다):\n${result}\n결과를 사용자에게 한두 문장으로 알려라. 같은 동작을 다시 부르지 마라]`,
+    `[The user pressed Run on confirmation card ${p.pid}, and the gateway already ran this action once: ${summary}\nTool result (outside-text markers still mark outside text):\n${result}\nTell the user the outcome in one or two sentences. Do not call the same action again]`)}` };
 }
 
 async function messengerReply(ctx, text, { db = null, lang = 'ko', loopTurn = false } = {}) {
@@ -1603,6 +1606,7 @@ async function messengerReply(ctx, text, { db = null, lang = 'ko', loopTurn = fa
   mentions = mentions.filter((m) => !copiedIds.has(m.id)); // explicit CC is never promoted by an incidental body mention
   for (const id of copiedIds) mentions.push({ kind: 'crew', id, role: 'cc' });
   return { replyForChecks: parsed.text, reply: [visible, handoff].filter(Boolean).join('\n\n'), msgrReply: { mentions, meta: { hop: ctx.hop ?? 0, origin: ctx.origin ?? null, ...(isGuestCtx(ctx) ? { guest: true } : {}), ...(ctx.office === true ? { office: true } : {}),
+    ...(ctx.officePanel === true || ctx.officePanelChain === true ? { panel_chain: true } : {}), // 다음 넘김이 패널 사슬을 이어받는 재료(검수 M1)
     ...(parsed.disposition === 'done' ? { disposition: 'done' } : {}),
     ...(workReply.status ? { work_status: workReply.status } : {}), ...proposalsMeta(ctx) } } };
 }
@@ -1662,7 +1666,7 @@ async function restoreMessengerContext(wsId, slug, origin, session, { ownerAppro
   // delegated — DM 위임(0.1.74)의 원래 방 실행 유물. msgr_dm_relay(2026-09-14)가 도입된 뒤로는 서버가 delegated=true를 주지 않아(비구성원 크루는 항상 새 1:1 DM으로 전달) 죽은 경로다. 아래 delegated 분기들은 방어적으로 남긴다.
   const ctx = { kind: 'msgr', chatType: 'group', channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: origin.orgId, channelId: origin.channelId, crewId: crew.id,
     threadRoot: root.id, sourceMsgId: source.id, uid, wsId, origin: actor, hop, orgSlug: org?.slug ?? null, channelName: ch.name ?? '', peers, handoffs: [], ...(work ? { work } : {}), ...(personal ? { ownCrewRoom: true } : {}),
-    ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(origin.office === true || isOfficeSource(root) || isOfficeSource(source) ? { office: true } : {}), ...(ownerApproved === true ? { ownerApproved: true } : {}), ...(cont ? { continuation: cont } : {}), // cont = 이어 실행 근거 — 이 턴이 올리는 결재 카드용(messengerOrigin이 결재 기록에 옮긴다)
+    ...(source.author_kind === 'crew' && root.author_user_id ? { rootAuthor: root.author_user_id } : {}), ...(origin.guest === true ? { guest: true } : {}), ...(origin.office === true || isOfficeSource(root) || isOfficeSource(source) ? { office: true } : {}), ...(origin.panelChain === true || isPanelSource(root) || isPanelSource(source) ? { officePanelChain: true } : {}), /* 패널에서 시작한 사슬의 이어 실행 — 오피스 쓰기 안 함(검수 M1) */ ...(ownerApproved === true ? { ownerApproved: true } : {}), ...(cont ? { continuation: cont } : {}), // cont = 이어 실행 근거 — 이 턴이 올리는 결재 카드용(messengerOrigin이 결재 기록에 옮긴다)
     ...(origin.handoffFrom || source.author_kind === 'crew' || (relayChannel(ch) && typeof source.meta?.relay?.via_crew_id === 'string' && source.meta.relay.via_crew_id) ? { handoffFrom: origin.handoffFrom ?? (source.author_kind === 'crew' ? source.crew_id : source.meta.relay.via_crew_id) } : {}) }; // 전달 표지는 DM에서만 // 손님 판정. handoffFrom = 크루가 넘긴 지시(DM 전달로 옮겨 적힌 것 포함)의 후속(풀 오토 아님) 재료(isGuestCtx) — rootAuthor는 drain과 같은 뜻(넘김 스레드의 뿌리 사람)
   const orgMemory = await crewMemoryCached(db, crew.id, ch.id); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널) — 없으면 chat이 미러 규칙으로 물러난다
   return { db, ctx, ch, source, envelope, orgPeers }; // orgPeers — 넘긴 크루의 표시 이름(handoffLabel)용. 문맥(ctx)에는 싣지 않는다
@@ -1944,7 +1948,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     // 손님·넘김(DM 전달 포함)·오피스 턴은 싣지 않는다 — 지금 말한 사람이 사용자가 아니거나 사용자가 직접 시킨 일이 아니다. 이름이 없으면('멤버' 대체값) 싣지 않는다.
     const ownerName = !guest && !job.fromCrewId && !job.relayVia && job.office !== true && typeof rawHumanName === 'string' && rawHumanName.trim() ? clean(rawHumanName, 40) : null;
     const ctx = { chatType: 'group', ...authority, channelKind: ch.kind, delegated: envelope?.delegated === true, orgId: job.orgId, channelId: job.channelId, crewId: job.crewId, threadRoot: job.threadRoot, sourceMsgId: job.msgId, wsId, hop: job.hop ?? 0, orgSlug: orgRow?.slug ?? null, channelName: ch?.name ?? '', handoffs: [], peers, ...(work ? { work } : {}), ...(ownerName ? { ownerName } : {}),
-      ...(job.panel === true && !guest ? { officePanel: true, proposals: [], ...(job.officeAuto === true ? { officeAuto: true } : {}) } : {}) }; // 패널 턴 — 쓰기는 확인 카드로(chat.mjs officeTool → panelWriteGate)
+      ...(job.panel === true && !guest ? { officePanel: true, proposals: [], ...(job.officeAuto === true ? { officeAuto: true } : {}) } : {}), ...(job.panelChain === true ? { officePanelChain: true } : {}) }; // 패널 턴 — 쓰기는 확인 카드로(chat.mjs officeTool → panelWriteGate)
     const orgMemory = await crewMemoryCached(db, job.crewId, job.channelId); if (orgMemory !== undefined) ctx.orgMemory = orgMemory; // 서버 기억(전사+이 채널, 유건 결정 2026-09-24)
     ctx.roomIds = [...ctxRows.map((r) => r.id), ...(job.replyTo ? [job.replyTo] : [])]; // 방 문맥·답글 대상에 이미 든 글 — 주인 1:1 턴의 '대화 밖에서 보낸 최근 글' 구획이 같은 글을 두 번 싣지 않게(chat.mjs, self-posts.mjs)
     const execution = await beginMessengerExecution(wsId, db, job, executionMeta);
@@ -1954,7 +1958,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         await finishMessengerExecution(wsId, db, job, {
           channel_id: job.channelId, author_kind: 'crew', crew_id: job.crewId, kind: 'text', reply_to: job.msgId, thread_root: job.threadRoot ?? job.msgId,
           client_msg_id: `reply:${job.crewId}:${job.msgId}`, body: roomTurnInterrupted(lang), mentions: [],
-          meta: { hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, failed: true, interrupted: true },
+          meta: { hop: job.hop ?? 0, origin: job.origin ?? job.authorId ?? null, failed: true, interrupted: true, ...(job.officeConfirm ? { office_result: { ...job.officeConfirm, status: 'unknown' } } : {}) }, // 확인 카드 실행 중 끊김 — 실행됐는지 모른다(검수 L1)
         }, executionMeta);
         console.warn(`[argo] msgr 끊긴 턴 닫음(${wsId}/${job.slug}/${job.msgId}) — 다시 실행하지 않고 중단 안내`);
         return;
@@ -1997,7 +2001,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       // 실행 뒤 게시 전에 꺼져도 다시 실행하지 않는다(끊긴 턴은 위 interrupted 갈래가 실패로 닫는다 — D25)
       if (job.officeConfirm && ctx.officePanel === true) {
         const done = await runOfficeConfirm(db, { wsId, job, ctx, uid, lang, crewName: clean(crewName(job.crewId), 40) });
-        if (done.result) officeResult = { reply: job.officeConfirm.reply, pid: job.officeConfirm.pid };
+        officeResult = { reply: job.officeConfirm.reply, pid: job.officeConfirm.pid, status: done.status }; // ran·error·not_found — 카드가 '처리함'·'실행하지 못함'을 고른다(검수 M3·L1)
         text += done.note;
       }
       stageLog(job, 'turn-start', now());

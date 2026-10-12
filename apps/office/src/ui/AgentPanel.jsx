@@ -18,7 +18,7 @@ import { createComposerDelivery } from '../../../../src/composer-delivery.mjs';
 import { acceptFiles, withoutFile, chipSize } from '../../../messenger/src/attach-files.mjs';
 import { formatBytes } from '../../../../src/media-kind.mjs';
 import { previewFor } from '../../../messenger/src/media-actions.mjs';
-import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, sendConfirm } from '../core/agent-chat.js';
+import { PANEL_SOURCE, conversations, threadOf, shownBody, seeingItem, waiting, openRoom, loadRoom, loadRow, loadSince, loadFiles, fileUrl, stopTurn, listen, panelTransport, proposalsOf, proposalState, proposalFields, sendConfirm } from '../core/agent-chat.js';
 import { AGENT_DICT } from './agent-panel-i18n.js';
 import './agent-panel.css';
 
@@ -80,15 +80,21 @@ function LinkCard({ row }) {
 
 // 쓰기 확인 카드 — 에이전트가 제안한 오피스 쓰기. [실행]을 눌러야 게이트웨이가 실행한다(office-proposals.mjs)
 function ProposalCard({ p, state, onRun, onCancel }) {
-  const label = { done: t('agent.prop.done'), sent: t('agent.prop.sent'), canceled: t('agent.prop.canceled') }[state];
+  const [more, setMore] = useState(false);
+  const fields = proposalFields(p);
+  const label = { done: t('agent.prop.done'), failed: t('agent.prop.failed'), unknown: t('agent.prop.unknown'), sent: t('agent.prop.sent'), canceled: t('agent.prop.canceled') }[state];
   return (
     <div className={`agent-prop${state !== 'open' ? ' settled' : ''}`}>
-      <Icon name={state === 'done' ? 'check' : 'run'} size={14} />
-      <span className="agent-prop-text">{p.summary}</span>
-      {state === 'open' ? <span className="agent-prop-act">
-        <button type="button" className="btn sm" onClick={onCancel}>{t('agent.prop.cancel')}</button>
-        <button type="button" className="btn sm primary" onClick={onRun}>{t('agent.prop.run')}</button>
-      </span> : <small className="dim">{label}</small>}
+      <div className="agent-prop-row">
+        <Icon name={state === 'done' ? 'check' : state === 'failed' ? 'x' : 'run'} size={14} />
+        <span className="agent-prop-text">{p.summary}</span>
+        {fields.length > 0 && <button type="button" className="link-btn small" aria-expanded={more} onClick={() => setMore(!more)}>{t(more ? 'agent.prop.less' : 'agent.prop.more')}</button>}
+        {state === 'open' ? <span className="agent-prop-act">
+          <button type="button" className="btn sm" onClick={onCancel}>{t('agent.prop.cancel')}</button>
+          <button type="button" className="btn sm primary" onClick={onRun}>{t('agent.prop.run')}</button>
+        </span> : <small className="dim">{label}</small>}
+      </div>
+      {more && <dl className="agent-prop-fields">{fields.map((f) => <div key={f.key}><dt className="dim">{t(`agent.field.${f.key}`) === `agent.field.${f.key}` ? f.key : t(`agent.field.${f.key}`)}</dt><dd>{f.value}</dd></div>)}</dl>}
     </div>
   );
 }
