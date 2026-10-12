@@ -71,6 +71,8 @@ const Settings = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m
 const Trash = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.Trash })));
 const Shared = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.Shared })));
 const PublicPage = lazy(() => import('./pages/Misc.jsx').then((m) => ({ default: m.PublicPage })));
+const OAuthConsent = lazy(() => import('./pages/OAuthConsent.jsx')); // 원격 MCP 연결 허용(2026-10-13 오피스 분리) — 그 주소로 올 때만 받는다
+const CONSENT_KEY = 'argo-office-oauth-consent'; // 로그인으로 주소를 떠나도(구글 로그인은 /me로 돌아온다) 동의 화면으로 되돌아오게 — 이 탭에만
 
 /** 지연 로드 자리 — 화면 파일을 못 받아도(배포 뒤 옛 탭·개발 서버 504) 앱 전체가 하얘지지 않는다. 파일 실패면 한 번 새로 불러오고,
  *  그래도 안 되면 안내를 둔다(quiet = 창처럼 안 보여도 되는 자리는 비운다). reset이 바뀌면(다른 화면으로 가면) 다시 그려 본다 */
@@ -99,6 +101,7 @@ function route(path) {
   let m;
   if ((m = match('/s/:id', path))) return { space: null, view: 'public', id: m.id };
   if ((m = match('/sign/:token', path))) return { space: null, view: 'sign', token: m.token };
+  if (match('/oauth/consent', path)) return { space: null, view: 'oauthConsent' };
   if (match('/f', path)) return { space: null, view: 'fileLink' }; // 공유 링크 /f#<토큰> — 토큰은 화면이 주소 조각에서 읽는다(서버 접근 기록에 남지 않게)
   const me = path === '/me' || path.startsWith('/me/');
   const org = !me && match('/o/:org', path.split('/').slice(0, 3).join('/'));
@@ -230,6 +233,11 @@ export default function App() {
     document.addEventListener('visibilitychange', onShow); addEventListener('focus', onShow);
     return () => { document.removeEventListener('visibilitychange', onShow); removeEventListener('focus', onShow); };
   }, [mode]);
+  useEffect(() => { // 로그인하러 떠났던 동의 화면으로 한 번 되돌아간다
+    if (mode !== 'signedIn' || r.view === 'oauthConsent') return;
+    let q = null; try { q = sessionStorage.getItem(CONSENT_KEY); sessionStorage.removeItem(CONSENT_KEY); } catch { /* 없음 */ }
+    if (q) navigate(`/oauth/consent?${q}`, { replace: true });
+  }, [mode]);
   useEffect(() => { setUi({ navOpen: false }); }, [path]);
   useEffect(() => { document.documentElement.classList.toggle('agent-open', !!ui.agent); }, [ui.agent]);
   useEffect(() => {
@@ -253,7 +261,8 @@ export default function App() {
   if (r.view === 'sign') return <><Lazy fallback={<Boot />}><SignPage token={r.token} /></Lazy><ToastHost /></>;
   if (r.view === 'fileLink') return <><Lazy fallback={<Boot />}><FileLink /></Lazy><ToastHost /></>;
   if (mode === 'loading') return <Boot />;
-  if (mode === 'signedOut') return <Lazy fallback={<Boot />}><Login /></Lazy>;
+  if (mode === 'signedOut') { if (r.view === 'oauthConsent') { try { sessionStorage.setItem(CONSENT_KEY, query ?? ''); } catch { /* 이 탭에 기억만 못 한다 */ } } return <Lazy fallback={<Boot />}><Login /></Lazy>; }
+  if (r.view === 'oauthConsent') return <><Lazy fallback={<Boot />}><OAuthConsent query={query} /></Lazy><ToastHost /></>;
   if (r.redirect) return null;
 
   const onDragEnd = ({ active, over }) => {
