@@ -1,9 +1,10 @@
 // 데몬 리더 선출 — Next가 라우트를 여러 워커(각자 globalThis)로 돌려도
 // 스케줄러/게이트웨이 같은 상주 루프는 전체에서 딱 하나만 살아있어야 한다.
 // 파일 lease: 하트비트로 갱신, 소유자가 죽으면(ttl 초과) 다른 워커가 계승한다.
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WS_ROOT } from './workspace.mjs';
+import { renameRetry } from './jsonstore.mjs';
 
 const OWNER = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 // 이 프로세스가 켠 리스 등록부 — 동기화(sync.mjs)가 "이 프로세스가 실행 주인인가"를 묻는다(holdsDaemonLease). globalThis: Next 번들 사본이 갈려도 하나.
@@ -29,18 +30,34 @@ export function daemonLease(name, { ttl = 15_000, beat = 5_000 } = {}) {
   // I/O가 오류 없이 멈춰 catch가 오지 않아도 만료 전에 리더가 아니게 된다(2026-10-08 검수 M-1: 멈춤 9.8초 이상 이중 리더).
   const leaderUntil = () => heldTs + ttl - beat / 2;
   let failing = false;
+  let corruptSince = 0; // 보유자가 아닌 채 깨진 내용을 처음 본 시각(0 = 마지막 읽기는 정상)
+  // 쓰기는 임시 파일 + rename — 덮어쓰기(writeFile)는 파일을 먼저 비우므로 그 순간 다른 프로세스가 빈 내용을 읽었다(2026-10-13 재현: 동시 읽기의 1~8%).
+  // rename은 원자적이라 읽는 쪽은 늘 이전 기록이나 새 기록 하나를 본다. fsync는 하지 않는다 — 크래시 뒤 남는 리스는 TTL로 버려지는 값이다.
+  // 임시 파일 이름은 .tmp-lease-로 시작한다 — 동기화 EXCLUDE(.tmp-*)에 걸리고, 셸 방어(permission-gate WS_DOT_FILES)에 이 접두로 등재돼 있다(.tmp-devsess-와 같은 규약).
+  const writeLease = async (body) => {
+    const tmp = join(WS_ROOT, `.tmp-lease-${name}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`);
+    try { await writeFile(tmp, body); await renameRetry(tmp, file); } // renameRetry: Windows의 일시 잠금(EPERM·EACCES)은 짧게 다시 시도
+    catch (e) { await rm(tmp, { force: true }).catch(() => {}); throw e; }
+  };
   const tick = async () => {
     try {
       try {
-        const cur = JSON.parse(await readFile(file, 'utf8'));
-        if (cur.owner !== OWNER && Date.now() - cur.ts < ttl) { mine = false; return; } // 살아있는 리더 존중
+        const text = await readFile(file, 'utf8');
+        let cur = null;
+        try { cur = JSON.parse(text); corruptSince = 0; } catch {
+          // 깨진 내용 — 옛 버전(덮어쓰기)이 쓰는 도중이거나 쓰다 죽은 기록이다. 보유자가 아니면 이번 박자는 건너뛴다: 살아 있는 남의 리스를
+          // 쓰는 도중에 읽고 빼앗아 1~2초 실행 주체가 0개이던 것(2026-10-13, sync-lock-leader 재시작 경쟁 CI 실패). 같은 내용이 TTL 넘게
+          // 그대로면 버려진 기록으로 보고 가져간다 — 아무도 못 잡는 교착이 되지 않게. 보유자는 종전대로 다시 쓴다.
+          if (!mine) { corruptSince ||= Date.now(); if (Date.now() - corruptSince < ttl) return; }
+        }
+        if (cur && cur.owner !== OWNER && Date.now() - cur.ts < ttl) { mine = false; return; } // 살아있는 리더 존중
       } catch (e) {
         // 파일이 없거나 쓰다 만 내용이면 선점을 시도한다. 그 밖의 I/O 오류(EPERM·EBUSY 등)는 남의 살아 있는 리스를 못 읽은 것일 수 있어
         // 보유자가 아니면 이번 박자를 건너뛴다(아래 catch). '파일 없음'으로 보고 빼앗아 이중 리더가 되던 것(2026-10-08 검수 M-2, 2.8초).
         if (e?.code && e.code !== 'ENOENT' && !mine) throw e;
       }
       const ts = Date.now();
-      await writeFile(file, JSON.stringify({ owner: OWNER, ts }));
+      await writeLease(JSON.stringify({ owner: OWNER, ts }));
       await new Promise((r) => setTimeout(r, 150)); // 동시 선점 레이스 — 최종 기록자만 리더
       mine = JSON.parse(await readFile(file, 'utf8')).owner === OWNER;
       if (mine) heldTs = ts;
