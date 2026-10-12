@@ -35,6 +35,7 @@ before(() => {
     create table if not exists storage.buckets (id text primary key, name text, public boolean not null default false);
     create or replace function storage.foldername(name text) returns text[] language sql immutable as $$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
     alter table storage.objects enable row level security;
+    alter table storage.objects add column if not exists created_at timestamptz not null default now(); -- 정리 후보 함수가 오래된 순으로 고른다(실제 storage 스키마에 있는 열)
     create or replace function storage.protect_delete() returns trigger language plpgsql as $$ begin if coalesce(current_setting('storage.allow_delete_query', true), 'false') <> 'true' then raise exception 'Direct deletion from storage tables is not allowed. Use the Storage API instead.' using errcode = '42501'; end if; return null; end $$; -- 실제 storage-api 가드 복제(로컬 스택 E2E에서 적발)
     drop trigger if exists protect_objects_delete on storage.objects; create trigger protect_objects_delete before delete on storage.objects for each statement execute function storage.protect_delete();
     grant usage on schema storage to authenticated; grant select, insert, delete on storage.objects to authenticated;
@@ -157,8 +158,14 @@ test('2R H-1: 보관(소프트 삭제) 조직에 다른 멤버가 있으면 차�
   sql(`insert into storage.objects (bucket_id, name) values ('msgr', '${org2}/some-channel/1/file.txt'), ('msgr-avatars', 'avatars/${solo}/me.png'), ('msgr-avatars', 'avatars/${own}/other.png')`);
   assert.deepEqual(JSON.parse(last(asUser(solo, `select public.msgr_delete_me()`))), { deleted_orgs: 1 });
   assert.equal(sql(`select count(*) from public.msgr_orgs where id='${org2}'`), '0');
-  assert.equal(sql(`select count(*) from storage.objects where bucket_id='msgr' and name like '${org2}/%'`), '0', '조직 첨부 파일 정리');
-  assert.equal(sql(`select count(*) from storage.objects where name='avatars/${solo}/me.png'`), '0', '내 아바타 정리');
+  // 20261012160000: 계정 삭제는 storage 행을 지우지 않는다(행만 지우면 바이트가 남는다) — 정리 엣지가 Storage API로 바이트까지 지우게 후보로 남긴다
+  assert.equal(sql(`select count(*) from storage.objects where bucket_id='msgr' and name like '${org2}/%'`), '1', '조직 첨부 행은 남는다(정리 엣지가 지운다)');
+  assert.equal(sql(`select count(*) from storage.objects where name='avatars/${solo}/me.png'`), '1', '내 아바타 행도 남는다(정리 엣지가 지운다)');
+  const msgrCands = sql(`select string_agg(n, ',') from public.msgr_storage_sweep_list(1000) n`);
+  assert.ok(msgrCands.split(',').includes(`${org2}/some-channel/1/file.txt`), '방이 없는 조직 첨부 → msgr 정리 후보');
+  const avCands = sql(`select coalesce(string_agg(n, ','), '') from public.msgr_storage_sweep_avatars(1000) n`).split(',');
+  assert.ok(avCands.includes(`avatars/${solo}/me.png`), '계정이 사라진 아바타 → 아바타 정리 후보');
+  assert.ok(!avCands.includes(`avatars/${own}/other.png`), '남의(살아 있는 계정) 아바타는 후보가 아니다');
   assert.equal(sql(`select count(*) from storage.objects where name='avatars/${own}/other.png'`), '1', '남의 아바타는 그대로');
 });
 
@@ -172,7 +179,7 @@ test('2R M-1: 만료된 게스트만 남은 조직의 소유자는 삭제된다(
 test('2R H-2: 가드 통과 플래그는 함수 끝과 예외 경로 모두에서 되돌린다(자기 역할 상승 방어선 유지)', { skip }, () => {
   const src = sql(`select prosrc from pg_proc where proname='msgr_delete_me'`);
   assert.equal((src.match(/set_config\('argo\.msgr_account_delete', '', true\)/g) ?? []).length, 2, '정상·예외 두 경로');
-  assert.equal((src.match(/set_config\('storage\.allow_delete_query', '', true\)/g) ?? []).length, 2, 'storage GUC도 두 경로에서 복원(3R L2R-1)');
+  assert.doesNotMatch(src, /allow_delete_query|storage\.objects/, '20261012160000: storage 가드를 끄지 않고 storage 행을 건드리지 않는다(정리 엣지가 Storage API로)');
   assert.match(src, /exception when others then/);
   // 플래그 없이 본인 역할 상승은 여전히 막힌다
   const own = NEW('4'), mem = NEW('8'); mkUser(own, 'rowner'); mkUser(mem, 'rmember');
@@ -215,14 +222,16 @@ test('3R M2R-3: 30일 유예가 끝난 보관 조직에 멤버가 남아 있어�
   assert.equal(sql(`select count(*) from public.msgr_orgs where id='${org}'`), '0');
 });
 
-test('3R M2R-2: 30일 지난 보관 조직 purge가 첨부 파일 행과 함께 성공한다(storage 직접 삭제 가드 통과)', { skip }, () => {
+test('3R M2R-2 → 20261012160000: 30일 지난 보관 조직 purge가 첨부가 있어도 성공하고, 첨부 행은 남아 정리 엣지 후보가 된다(storage 가드를 끄지 않는다)', { skip }, () => {
   const own = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1'; mkUser(own, 'purgeowner');
   const org = last(asUser(own, `insert into public.msgr_orgs (name, slug, owner_user_id) values ('PurgeMe', 'purgeme', '${own}') returning id`));
   sql(`update public.msgr_orgs set deleted_at = now() - interval '31 days' where id = '${org}'`);
   sql(`insert into storage.objects (bucket_id, name) values ('msgr', '${org}/chan/1/doc.pdf')`);
   assert.equal(sql(`select public.msgr_purge_orgs()`), '1', '서비스 문맥(auth.uid() null)에서 1건');
   assert.equal(sql(`select count(*) from public.msgr_orgs where id='${org}'`), '0');
-  assert.equal(sql(`select count(*) from storage.objects where name like '${org}/%'`), '0', '첨부 행 정리 — 가드가 있으면 이전 정의는 42501로 실패했다');
+  assert.equal(sql(`select count(*) from storage.objects where name like '${org}/%'`), '1', '첨부 행은 남는다 — 가드를 끄지 않으므로 42501도 없다');
+  assert.ok(sql(`select string_agg(n, ',') from public.msgr_storage_sweep_list(1000) n`).split(',').includes(`${org}/chan/1/doc.pdf`), '방이 없는 첨부 → 정리 후보');
+  assert.doesNotMatch(sql(`select prosrc from pg_proc where proname='msgr_purge_orgs'`), /allow_delete_query|storage\.objects/);
 });
 
 test('3R 가드 좁히기: 플래그 켠 세션도 비공개 채널 공개 전환·재부모화는 막히고, 문서 본문을 바꾸면 버전이 오르며 수정자가 귀속된다(작성자 이관만 통과)', { skip }, () => {
@@ -239,4 +248,39 @@ test('3R 가드 좁히기: 플래그 켠 세션도 비공개 채널 공개 전�
   assert.equal(last(flagged(adm, `update public.msgr_org_docs set body = '변조' where id = '${doc}' returning version||'|'||updated_by`).stdout.trim()), `2|${adm}`, '본문 변경은 정상 경로: 버전 +1·수정자 귀속(위조 불가)');
   // 이관만 하는 경로(created_by/updated_by만)는 여전히 통과 — C-1과 같은 성질
   assert.equal(last(flagged(own, `update public.msgr_org_docs set created_by = '${own}', updated_by = '${own}' where id = '${doc}' returning version`).stdout.trim()), '2', '작성자·수정자만 바꾸면 버전 불변');
+});
+
+// 20261012160000 — 정리 후보·크론 판정(아바타 후보 추가)
+test('[정리 후보] 아바타 후보는 계정이 사라진 uid 폴더만 — 살아 있는 계정·uid 모양이 아닌 경로·다른 버킷은 아니다, 서비스 역할만 부른다', { skip }, () => {
+  const gone = 'a9a9a9a9-a9a9-4a9a-8a9a-a9a9a9a9a9a9';
+  sql(`insert into storage.objects (bucket_id, name) values ('msgr-avatars', 'avatars/${gone}/x.jpg'), ('msgr-avatars', 'avatars/not-a-uuid/y.jpg'), ('msgr-avatars', 'other/${gone}/z.jpg'), ('msgr', 'avatars/${gone}/w.jpg'), ('msgr-avatars', 'avatars/${U.owner}/live.jpg')`);
+  const c = sql(`select coalesce(string_agg(n, ','), '') from public.msgr_storage_sweep_avatars(1000) n`).split(',');
+  assert.ok(c.includes(`avatars/${gone}/x.jpg`));
+  for (const n of ['avatars/not-a-uuid/y.jpg', `other/${gone}/z.jpg`, `avatars/${U.owner}/live.jpg`]) assert.ok(!c.includes(n), n);
+  assert.equal(sql(`select count(*) from public.msgr_storage_sweep_avatars(1)`), '1', 'p_limit');
+  const r = asUserRaw(U.owner, `select public.msgr_storage_sweep_avatars(10)`);
+  assert.notEqual(r.status, 0, '로그인 사용자는 못 부른다'); assert.match(r.stderr, /permission denied/);
+});
+
+test('[크론] 정리 실행기는 주소·비밀이 있고 두 후보(msgr·아바타) 중 하나라도 있을 때만 엣지를 부른다 — 유휴는 호출 0', { skip }, () => {
+  sql(`insert into public.msgr_settings (key, value) values ('storage_sweep_url', 'http://sweep.test'), ('storage_sweep_secret', 's') on conflict (key) do update set value = excluded.value`);
+  const kick = () => sql(`select public.msgr_storage_sweep_kick()`);
+  // 아바타 후보만 있게: msgr 후보를 비우고(테스트 행 정리) 계정이 사라진 아바타 하나
+  sql(`truncate storage.objects`);
+  assert.equal(kick(), 'f', '후보 없음 → 호출 0');
+  sql(`insert into storage.objects (bucket_id, name) values ('msgr-avatars', 'avatars/b8b8b8b8-b8b8-4b8b-8b8b-b8b8b8b8b8b8/a.jpg')`);
+  assert.equal(kick(), 't', '아바타 후보만 있어도 부른다');
+  sql(`delete from public.msgr_settings where key = 'storage_sweep_secret'`);
+  assert.equal(kick(), 'f', '비밀이 없으면 부르지 않는다');
+});
+
+test('[정리 후보] 아바타 후보는 지금 버전만 — 버전 관리 보관본·삭제 표시는 매시간 다시 후보가 되지 않게 뺀다(열이 있는 storage 버전)', { skip }, () => {
+  sql(`alter table storage.objects add column if not exists archived_at timestamptz; alter table storage.objects add column if not exists is_delete_marker boolean not null default false`);
+  const gone = 'c7c7c7c7-c7c7-4c7c-8c7c-c7c7c7c7c7c7';
+  sql(`insert into storage.objects (bucket_id, name, archived_at) values ('msgr-avatars', 'avatars/${gone}/old.jpg', now())`);
+  sql(`insert into storage.objects (bucket_id, name, is_delete_marker) values ('msgr-avatars', 'avatars/${gone}/marker.jpg', true)`);
+  sql(`insert into storage.objects (bucket_id, name) values ('msgr-avatars', 'avatars/${gone}/cur.jpg')`);
+  const c = sql(`select coalesce(string_agg(n, ','), '') from public.msgr_storage_sweep_avatars(1000) n`).split(',');
+  assert.ok(c.includes(`avatars/${gone}/cur.jpg`));
+  assert.ok(!c.includes(`avatars/${gone}/old.jpg`) && !c.includes(`avatars/${gone}/marker.jpg`));
 });
