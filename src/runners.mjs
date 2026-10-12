@@ -372,6 +372,7 @@ export async function runnerStatus(wsId, { forPick = false } = {}) {
       keyUrl: meta.keyUrl,
       hostInstalled: host[id]?.installed ?? false,
       hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)
+      ...(host[id]?.authAt ? { hostAuthAt: host[id].authAt } : {}), // 이 컴퓨터 로그인 파일의 수정 시각(터미널에서 다시 로그인하면 바뀐다) — 키체인 보관(macOS claude)은 알 수 없어 없다
       hostAuthUnknown: host[id]?.authUnknown ?? false, // 키링 자격(antigravity) — 로그인 판정 불가, UI는 단정 금지
       hidden: isHiddenRunner(id), // 숨김 러너(gemini·http) — 명판·목록은 빼고, 판정(pickRunner 명시 지정)은 그대로 쓴다
       retired: isRetiredRunner(id), // 제공 종료(gemini 구독 CLI)만 — 데크 배너·재연결 안내의 열쇠. http는 숨김이되 정상
@@ -379,6 +380,7 @@ export async function runnerStatus(wsId, { forPick = false } = {}) {
         connected: true,
         type: credType(cred.type),
         masked: cred.type === 'host' ? '' : maskCred(cred.value),
+        ...(typeof cred.savedAt === 'string' ? { savedAt: cred.savedAt } : {}), // 저장·갱신 시각만(자격 내용 아님) — 배너가 다시 로그인 전 만료 기록을 무시하는 기준(#980 LOW-2). 이 필드 도입 전 자격엔 없다
         // 저장 검증 도입 전(철회된 웹 브리지 등)에 들어온 무효 형식 토큰 — 카드가 "재연결 필요"를 보여준다
         ...(cred.type === 'oauth' && oauthFormatError(id, cred.value, 'ko') ? { invalid: true } : {}),
         // host 마커는 이 컴퓨터 CLI 로그인이 살아 있어야 유효 — 로그아웃·미설치면 "재연결 필요".

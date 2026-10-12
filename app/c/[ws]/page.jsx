@@ -8,7 +8,7 @@ import { Graph2D } from './graph2d'; // 데크 별자리도 기억 페이지와 
 import { keepSide } from './split.mjs'; // 주 화면 이동은 현재 ?side=(옆에 열기 패널)를 유지 — 생 router.push는 패널을 닫는다
 import { subscribeSearch } from './search-bus.mjs'; // 상단 검색 받기(UL10)
 import { anyRunnerUsable, runnerNeedsReconnect, usableRunnerNames, onlyHiddenConnected } from '../../runner-connect';
-import { runnersAuthLost } from '../../runner-usable.mjs'; // 다른 러너는 되지만 한 러너의 로그인이 만료된 경우(데크 배너)
+import { runnersAuthLost, runnerAuthRenewedAt } from '../../runner-usable.mjs'; // 다른 러너는 되지만 한 러너의 로그인이 만료된 경우(데크 배너)
 import { useLang } from '../../i18n';
 import { failureReason } from '../../lib/error-text.mjs'; // 실패 이유 — 빈 이유·브라우저 원문 없이(UL5)
 import { approvalExpandDefault, approvalOwnerMayDecide } from '../../lib/approval-display.mjs';
@@ -367,7 +367,8 @@ function AiKeyBanner({ ws, agents = [] }) {
         // 활동 조회 1건(로컬 파일, DB 아님) — 데크를 열 때·argo:refresh 때만(폴 없음).
         return api(`/api/companies/${ws}/activity`).then((d) => {
           if (!alive) return;
-          const lost = runnersAuthLost(d.events).filter((id) => k.runners?.[id]?.company?.connected || k.runners?.[id]?.hostAuthed);
+          const renewed = Object.fromEntries(Object.entries(k.runners ?? {}).map(([id, r]) => [id, runnerAuthRenewedAt(r)])); // 다시 로그인한 시각 — 그 전 만료 기록은 무시(#980 LOW-2)
+          const lost = runnersAuthLost(d.events, renewed).filter((id) => k.runners?.[id]?.company?.connected || k.runners?.[id]?.hostAuthed);
           setLostNames(lost.map((id) => k.runners?.[id]?.name || id).join(', '));
           setState(lost.length ? 'authLost' : null);
         });

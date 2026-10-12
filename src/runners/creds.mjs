@@ -139,7 +139,9 @@ export async function saveRunnerCred(wsId, runner, type, value) {
   await withDirLock(`${secretsFile(wsId)}.lockd`, async () => {
     const s = await loadSecrets(wsId); // 락 안에서 최신을 읽는다
     const { claude, ...rest } = s; // 레거시 평문 필드 제거
-    rest.runners = { ...rest.runners, [runner]: { type: credType(type), value: String(value).trim() } };
+    // savedAt = 이 자격을 저장·갱신한 시각 — 데크 배너가 이보다 오래된 "로그인 만료" 턴 기록을 무시한다(다시 로그인하면 배너가 바로 걷힌다, #980 LOW-2).
+    // 모든 연결 경로(설정 AI 연결·CLI 로그인 흡수·원클릭·웹 브리지·계정→회사 복사·토큰 갱신)가 이 함수를 지나므로 시각도 여기 하나에서 남긴다.
+    rest.runners = { ...rest.runners, [runner]: { type: credType(type), value: String(value).trim(), savedAt: new Date().toISOString() } };
     await writeJsonAtomic(secretsFile(wsId), rest);
   });
   // 격리 홈 리셋 — 재연결 시 이전 토큰 파일이 새 자격을 가리지 않게(runnerCredEnv가 재생성).

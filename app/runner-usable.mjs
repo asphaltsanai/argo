@@ -60,17 +60,30 @@ export function lastTurnByRunner(events) {
 /** 활동 이벤트(최신순) → 지금 로그인이 만료된 것으로 보이는 러너 id 목록(순수). 러너별 **최신 턴**이 인증 때문에 실패했으면 만료로 본다 —
     authLost(자가치유 직전 기록: 인증 때문에 다른 러너로 갈아탔다) 또는 failCode 'auth_expired'(chat.mjs surfaceRunnerFailure). 같은 러너의 더 최근
     성공 턴이 있으면 해제(먼저 본 것이 최신이라 그 하나만 본다). 중단 턴은 원인이 아니다. 다른 러너가 대신 답해 "쓸 수 있는 러너 없음" 배너가 뜨지 않던
-    경우를 데크 배너가 말하게 한다(2026-10-13 상주 Claude OAuth 만료 — 메신저엔 일반 실패만, 주인은 본체를 열어 봐야 알았다). */
-export function runnersAuthLost(events) {
+    경우를 데크 배너가 말하게 한다(2026-10-13 상주 Claude OAuth 만료 — 메신저엔 일반 실패만, 주인은 본체를 열어 봐야 알았다).
+    renewedAt = { 러너: 자격을 마지막으로 새로 한 시각(ms) } — 그보다 오래된 턴 기록은 다시 로그인하기 전 일이라 만료로 보지 않는다(#980 LOW-2:
+    다시 로그인해도 다음 성공 턴까지 배너가 남아 "안 고쳐졌다"로 보였다). 시각(ts)이 없는 기록·시각을 모르는 러너는 종전대로 본다. */
+export function runnersAuthLost(events, renewedAt = {}) {
   const seen = new Set(); const lost = [];
   for (const e of events ?? []) {
     // 자가치유 뒤 바깥 턴의 실패 기록은 러너가 처음 러너인데 실패 코드는 대체 러너의 것이다 — authFailedRunner(처음 만료된 러너)가 있으면 그 러너의 기록으로 본다
     const runner = e?.authFailedRunner || e?.runner;
     if (e?.type !== 'turn' || !runner || seen.has(runner) || isAbortedTurnEvent(e)) continue;
     seen.add(runner);
+    const ts = Date.parse(e.ts ?? '');
+    if (renewedAt[runner] > 0 && Number.isFinite(ts) && ts < renewedAt[runner]) continue; // 최신 기록이 다시 로그인보다 앞섰다 — 그 앞 기록은 더 오래됐다
     if (e.ok === false && (e.authLost === true || e.failCode === 'auth_expired' || !!e.authFailedRunner)) lost.push(runner);
   }
   return lost;
+}
+
+/** 러너 상태(/keys runners[id]) → 그 러너 자격을 마지막으로 새로 한 시각(ms, 모르면 0, 순수). 회사 자격(apikey·oauth)으로 도는 러너는
+    회사 자격 저장 시각만 본다(이 컴퓨터 로그인을 새로 해도 그 러너는 낫지 않는다). host 마커이거나 회사 자격이 없으면 이 컴퓨터 로그인 파일 시각도 본다. */
+export function runnerAuthRenewedAt(r) {
+  const at = (s) => { const n = Date.parse(s ?? ''); return Number.isFinite(n) ? n : 0; };
+  const c = r?.company;
+  if (c?.connected && c.type !== 'host') return at(c.savedAt);
+  return Math.max(at(c?.savedAt), at(r?.hostAuthAt));
 }
 
 /** 활동 이벤트 → 러너별 최신 검진 실패(P1-2 주기 검진, 순수). 턴 실패(lastTurnByRunner)와 **별개
