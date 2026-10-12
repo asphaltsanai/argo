@@ -4,12 +4,14 @@
 const getClient = async () => (await import('./supabase.js')).getClient(); // 쓸 때만 — 시험(node)이 Vite 설정 없이 순수 함수를 부를 수 있게
 const apiUrl = async (p) => (await import('./platform.js')).apiUrl(p);
 
+import { proposalSummary } from '../../server/agent/actions.js'; // 카드 한 줄은 저장된 요약이 아니라 실행될 인자로 다시 만든다(검수 2 HIGH-1 — 요약을 꾸며 다른 일을 승인받지 못하게)
+
 export const STATUSES = ['pending', 'running', 'done', 'failed', 'canceled'];
 
 /** 화면용 행 — 모양이 맞는 것만, 상태는 아는 값만 */
-export const cleanActions = (list) => (Array.isArray(list) ? list : []).filter((a) => a && typeof a.id === 'string' && typeof a.summary === 'string')
-  .map((a) => ({ id: a.id, tool: String(a.tool ?? ''), action: String(a.action ?? ''), summary: a.summary, args: a.args && typeof a.args === 'object' && !Array.isArray(a.args) ? a.args : {},
-    source: String(a.source ?? ''), status: STATUSES.includes(a.status) ? a.status : 'pending', result: a.result ? String(a.result) : '', at: a.created_at ?? null }));
+export const cleanActions = (list, lang = 'ko') => (Array.isArray(list) ? list : []).filter((a) => a && typeof a.id === 'string' && typeof a.tool === 'string')
+  .map((a) => { const args = a.args && typeof a.args === 'object' && !Array.isArray(a.args) ? a.args : {}; return { id: a.id, tool: String(a.tool ?? ''), action: String(a.action ?? ''), summary: proposalSummary(a.tool, { ...args, action: a.action }, lang), args,
+    source: String(a.source ?? ''), status: STATUSES.includes(a.status) ? a.status : 'pending', result: a.result ? String(a.result) : '', at: a.created_at ?? null }; });
 export const pendingOf = (list) => list.filter((a) => a.status === 'pending');
 
 /** '자세히' — 실행될 인자를 칸 이름과 값 한 줄씩(action 제외). 길면 자른다. 무엇이 바뀌는지 보고 누르게 */
@@ -24,11 +26,11 @@ export function fieldLabelKey(f, has) {
   return has(own) ? own : `agent.field.${f.key}`;
 }
 
-export async function listActions(sb = null) {
+export async function listActions(sb = null, lang = 'ko') {
   const c = sb ?? await getClient();
   const { data, error } = await c.rpc('office_agent_action_list');
   if (error) throw error;
-  return cleanActions(data);
+  return cleanActions(data, lang);
 }
 export async function cancelAction(id, sb = null) {
   const c = sb ?? await getClient();

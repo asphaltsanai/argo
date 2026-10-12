@@ -12,7 +12,7 @@
 // 부하: 사람이 시킬 때만 부른다(폴링 없음). 목록·고치기 모두 읽기 1(+ 쓰기 1, 새 품목이 있으면 품목마다 쓰기 1).
 // 바깥 글(S1): 거래처 이름·연락처·메모, 거래 건명·품목 이름은 남이 쓴 글이다 — 목록·자세히 결과는 경계 블록으로 감싼다(office-audience.mjs outsideOf).
 import { randomUUID } from 'node:crypto';
-import { officeTurn, ONLY_DM, refusalText, outsideOf, quoted, OUTSIDE_RULE } from './audience.js';
+import { officeTurn, ONLY_DM, refusalText, outsideOf, quoted, OUTSIDE_RULE, isRemoteCtx } from './audience.js';
 
 export const dealsDeps = {
   session: async () => { throw new Error('no session'); }, // 원격 MCP는 요청마다 ctx.session을 넘긴다(동시 요청이 같은 모듈을 쓴다)
@@ -91,7 +91,9 @@ export async function dealsTool(args, { ctx = null, lang = 'ko', ownerId = null 
   const a = args ?? {};
   const turn = await officeTurn({ ctx, ownerId, lang, session: ctx?.session ?? dealsDeps.session, name: NAME });
   if (turn.text) return turn.text;
-  const { c, org, owner } = turn;
+  const { c, org } = turn;
+  // 원격 MCP 읽기는 거래처 계좌·사업자번호·가림 칸을 내지 않는다(부른 쪽이 어떤 방에서 부르는지 모른다 — 검수 2 MEDIUM-1). 사람이 [실행]한 대기 변경은 주인 자리
+  const owner = turn.owner && (!isRemoteCtx(ctx) || ctx.approved === true);
   const today = kstDay(dealsDeps.now());
   const read = async () => unwrap(await c.client.rpc('office_business_read', { p_org: org })) ?? {};
   const write = async (action, data) => unwrap(await c.client.rpc('office_business_write', { p_org: org, p_key: dealsDeps.newId(), p_action: action, p_data: data }));

@@ -76,7 +76,7 @@ function LinkCard({ row }) {
 }
 
 // 대기 변경 카드 — 에이전트가 오피스 원격 MCP로 올린 쓰기. [실행]을 눌러야 오피스 서버가 이 사람의 세션으로 실행한다(api/agent/actions.js)
-function ActionCard({ a, busy, onRun, onCancel }) {
+export function ActionCard({ a, busy, onRun, onCancel }) {
   const [more, setMore] = useState(false);
   const fields = actionFields(a);
   return (
@@ -96,7 +96,7 @@ function ActionCard({ a, busy, onRun, onCancel }) {
 }
 
 // 확인할 변경 — 대기 중인 것만, 오래된 것부터 위에서 아래로 한 묶음
-function Pending({ list, busy, onRun, onCancel }) {
+export function Pending({ list, busy, onRun, onCancel }) {
   if (!list.length) return null;
   return (
     <section className="agent-props" aria-label={t('agent.pending', { n: list.length })}>
@@ -141,7 +141,7 @@ export default function AgentPanel({ path, space, onClose }) {
   const [progress, setProgress] = useState(null), [sentAt, setSentAt] = useState(null), [now, setNow] = useState(() => Date.now());
   const [again, setAgain] = useState(0), [dropped, setDropped] = useState(null), [tooBig, setTooBig] = useState([]);
   const [actions, setActions] = useState([]), [acting, setActing] = useState(null);
-  const refreshActions = () => { if (live) listActions().then((l) => setActions(pendingOf(l)), () => {}); };
+  const refreshActions = () => { if (live) listActions(null, getLang()).then((l) => setActions(pendingOf(l)), () => {}); };
   useEffect(() => { refreshActions(); }, [live]); // 열 때 한 번 — 그 뒤는 에이전트 답이 올 때·누른 뒤에만(주기 호출 없음)
   const [attachMax, setAttachMax] = useState(() => attachMaxFor(attachPlanCache.plan));
   useEffect(() => { // 내 플랜의 첨부 상한(5분 모듈 캐시 — 메신저 입력창과 같은 규칙). 실패·지연은 무료 상한 안내 유지

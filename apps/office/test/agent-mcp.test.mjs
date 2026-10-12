@@ -162,3 +162,51 @@ test('[실행] — 처리기가 던지면 실패로 적는다', async () => {
   assert.equal(calls[1].args.p_ok, false);
   assert.match(calls[1].args.p_result, /rpc down/);
 });
+
+// 검수 2 HIGH-1 · 총괄 결정(2026-10-13) — 토큰 종류: 원격 MCP는 허용 목록 OAuth 클라이언트 토큰만, [실행]은 오피스 화면 세션(client_id 없음)만
+import { tokenAllowed, clientIdOf, sessionFor } from '../server/agent/auth.js';
+const jwt = (claims) => `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig_${'x'.repeat(20)}`;
+
+test('토큰 종류 — 화면 세션은 [실행]만, 허용 목록 클라이언트 토큰은 MCP만, 목록 밖 클라이언트는 둘 다 거절', () => {
+  const old = process.env.OFFICE_MCP_CLIENTS; process.env.OFFICE_MCP_CLIENTS = 'argo-desktop, claude-code';
+  try {
+    const user = jwt({ sub: 'u1', aud: 'authenticated' }), argo = jwt({ sub: 'u1', client_id: 'argo-desktop' }), rogue = jwt({ sub: 'u1', client_id: 'rogue-app' });
+    assert.equal(clientIdOf(argo), 'argo-desktop'); assert.equal(clientIdOf(user), null); assert.equal(clientIdOf('not-a-jwt'), null);
+    assert.equal(tokenAllowed(user, 'user'), true); assert.equal(tokenAllowed(user, 'mcp'), false, '화면 세션으로 MCP를 쓰지 않는다');
+    assert.equal(tokenAllowed(argo, 'mcp'), true); assert.equal(tokenAllowed(argo, 'user'), false, 'OAuth 클라이언트 토큰은 [실행] 못 한다');
+    assert.equal(tokenAllowed(rogue, 'mcp'), false, '허용 목록 밖'); assert.equal(tokenAllowed(rogue, 'user'), false);
+    assert.equal(tokenAllowed(argo, undefined), false, '종류를 안 주면 거절');
+  } finally { if (old === undefined) delete process.env.OFFICE_MCP_CLIENTS; else process.env.OFFICE_MCP_CLIENTS = old; }
+});
+
+test('토큰 종류가 맞지 않으면 사용자 확인(/auth/v1/user)도 부르지 않는다', async () => {
+  const saved = { u: process.env.VITE_SUPABASE_URL, k: process.env.VITE_SUPABASE_ANON_KEY, c: process.env.OFFICE_MCP_CLIENTS };
+  Object.assign(process.env, { VITE_SUPABASE_URL: 'https://ref.supabase.test', VITE_SUPABASE_ANON_KEY: 'anon', OFFICE_MCP_CLIENTS: 'argo-desktop' });
+  try {
+    let calls = 0; const fetchImpl = async () => { calls++; return new Response(JSON.stringify({ id: 'u1' })); };
+    assert.equal(await sessionFor(jwt({ sub: 'u1', client_id: 'argo-desktop' }), { kind: 'user', fetchImpl }), null);
+    assert.equal(await sessionFor(jwt({ sub: 'u1' }), { kind: 'mcp', fetchImpl }), null);
+    assert.equal(calls, 0);
+    assert.equal((await sessionFor(jwt({ sub: 'u1', client_id: 'argo-desktop' }), { kind: 'mcp', fetchImpl })).clientId, 'argo-desktop');
+    assert.equal(calls, 1);
+  } finally { for (const [k, v] of [['VITE_SUPABASE_URL', saved.u], ['VITE_SUPABASE_ANON_KEY', saved.k], ['OFFICE_MCP_CLIENTS', saved.c]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+});
+
+test('HTTP 경로가 묻는 토큰 종류 — MCP는 mcp, [실행]은 user', async () => {
+  const kinds = [];
+  const spy = async (t, o) => { kinds.push(o?.kind); return null; };
+  await handle(rpcReq({ jsonrpc: '2.0', id: 1, method: 'tools/list' }), { sessionFor: spy });
+  await run(actReq({ id: ID }), { sessionFor: spy });
+  assert.deepEqual(kinds, ['mcp', 'user']);
+});
+
+// 검수 2 MEDIUM-1 — 원격 읽기는 거래처 계좌·사업자번호를 회사 계좌와 같은 기준으로 가린다. 사람이 [실행]한 대기 변경은 주인 자리
+test('거래처 — 원격 읽기는 계좌·사업자번호를 가리고, 승인된 실행 문맥에서는 보인다', async () => {
+  const customer = { id: 'cu1', name: '한빛', account: '국민 123-456', biz_no: '123-45-67890', redacted: [] };
+  const { c } = fakeSession({ rpc: { office_business_read: { customers: [customer], orders: [], items: [], events: [] } } });
+  const spec = remoteSpecs().find((s) => s.name === 'office_deals');
+  const plain = await runSpec(spec, { action: 'customers', id: 'cu1' }, { c, org: ORG });
+  assert.doesNotMatch(plain, /123-456|123-45-67890/, plain);
+  const approved = await runSpec(spec, { action: 'customers', id: 'cu1' }, { c, org: ORG, approved: true });
+  assert.match(approved, /123-456/, approved);
+});

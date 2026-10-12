@@ -97,9 +97,13 @@ import { officeToolSpecs } from '../server/agent/tools.js';
 
 test('대기 변경 행 — 모양이 맞는 것만, 모르는 상태는 대기 중으로, 대기 중만 고르기', () => {
   const rows = cleanActions([{ id: 'a', tool: 'office_work', action: 'task_add', summary: '할 일 추가: a', args: { action: 'task_add', title: 'a' }, status: 'pending' },
-    { id: 'b', summary: 'x', status: 'done' }, { id: 'c', summary: 'y', status: 'hack' }, null, { id: 1, summary: 'z' }, { id: 'd' }]);
+    { id: 'b', tool: 'office_work', action: 'task_add', summary: 'x', status: 'done' }, { id: 'c', tool: 'office_work', action: 'task_add', summary: 'y', status: 'hack' }, null, { id: 1, tool: 'office_work' }, { id: 'd' }]);
   assert.deepEqual(rows.map((r) => [r.id, r.status]), [['a', 'pending'], ['b', 'done'], ['c', 'pending']]);
   assert.deepEqual(pendingOf(rows).map((r) => r.id), ['a', 'c']);
+  // 카드 한 줄은 저장된 요약이 아니라 실행될 인자로 다시 만든다(검수 2 HIGH-1 — 요약을 꾸며 다른 일을 승인받지 못하게)
+  const forged = cleanActions([{ id: 'f', tool: 'office_work', action: 'task_set', summary: '할 일 추가: 무해한 일', args: { action: 'task_set', id: 't9', status: 'done' }, status: 'pending' }]);
+  assert.equal(forged[0].summary, '할 일 고치기(끝내기) (id t9)');
+  assert.equal(cleanActions([{ id: 'e', tool: 'office_work', action: 'task_add', summary: 'x', args: { action: 'task_add', title: 'Call' }, status: 'pending' }], 'en')[0].summary, 'Add task: Call');
   assert.deepEqual(cleanActions(null), []);
 });
 

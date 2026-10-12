@@ -39,12 +39,16 @@ begin
   return new_id;
 end $$;
 
--- 내 대기 변경 목록 — 대기 중을 먼저, 최근 100개
+-- 내 대기 변경 목록 — 대기 중을 먼저, 최근 100개. 실행 중(running)으로 15분 넘게 남은 내 행은 실패(interrupted)로 닫는다(서버 함수 상한 120초 —
+-- 잡은 뒤 실행이 끊긴 행이 다시 실행도 취소도 못 한 채 남지 않게, 검수 2 LOW-1). 그런 행이 없으면 쓰지 않는다(유휴 쓰기 0)
 create or replace function public.office_agent_action_list() returns jsonb
-language sql stable security definer set search_path = public, pg_temp as $$
-  select coalesce(jsonb_agg(to_jsonb(a) - 'user_id' order by (a.status = 'pending') desc, a.created_at desc), '[]'::jsonb)
-  from (select * from public.office_agent_actions where user_id = auth.uid() order by (status = 'pending') desc, created_at desc limit 100) a;
-$$;
+language plpgsql security definer set search_path = public, pg_temp as $$
+begin
+  update public.office_agent_actions set status = 'failed', result = 'interrupted'
+    where user_id = auth.uid() and status = 'running' and decided_at < now() - interval '15 minutes';
+  return (select coalesce(jsonb_agg(to_jsonb(a) - 'user_id' order by (a.status = 'pending') desc, a.created_at desc), '[]'::jsonb)
+    from (select * from public.office_agent_actions where user_id = auth.uid() order by (status = 'pending') desc, created_at desc limit 100) a);
+end $$;
 
 -- 실행 잡기 — 대기 중인 내 행만 '실행 중'으로 바꾸고 돌려준다. 두 번 눌러도 한 번만 잡힌다(없으면 null)
 create or replace function public.office_agent_action_claim(p_id uuid) returns jsonb

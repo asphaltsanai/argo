@@ -12,7 +12,7 @@ const CLIENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex', 'codex-mcp-
 
 export async function handle(request, deps = {}) {
   const origin = originOf(request);
-  const c = await (deps.sessionFor ?? sessionFor)(bearer(request));
+  const c = await (deps.sessionFor ?? sessionFor)(bearer(request), { kind: 'mcp' }); // 허용 목록 OAuth 클라이언트 토큰만(auth.js)
   if (!c) return unauthorized(origin);
   const lang = /^en\b/i.test(request.headers.get('accept-language') ?? '') ? 'en' : 'ko';
   const mcp = officeMcp({ lang });

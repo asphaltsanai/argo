@@ -94,8 +94,8 @@ export function officeMcp({ lang = 'ko' } = {}) {
 }
 
 /** 도구 하나를 그 사용자의 세션으로 실행한다 — 읽기(MCP)와 대기 변경 [실행](api/agent-actions.js)이 같이 쓴다. 반환: 처리기가 돌려준 글 */
-export async function runSpec(spec, args, { c, org = null, source = 'MCP', lang = 'ko' }) {
-  const ctx = remoteContext({ uid: c.uid, orgId: org, source: { kind: 'session', name: String(source).slice(0, 120) }, session: async () => c, jwt: async () => c.token });
+export async function runSpec(spec, args, { c, org = null, source = 'MCP', lang = 'ko', approved = false }) {
+  const ctx = remoteContext({ uid: c.uid, orgId: org, source: { kind: 'session', name: String(source).slice(0, 120) }, session: async () => c, jwt: async () => c.token, approved });
   return String(await spec.run(args, { ctx, crew: null, crewName: String(source).slice(0, 120), lang, ownerId: c.uid }));
 }
 

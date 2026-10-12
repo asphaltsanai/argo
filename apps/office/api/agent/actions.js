@@ -8,7 +8,7 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), { status
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** 처리기는 거절·오류도 한 줄 글로 돌려준다 — 그 글을 결과로 남기고, 던진 오류만 실패로 */
 export async function run(request, deps = {}) {
-  const c = await (deps.sessionFor ?? sessionFor)(bearer(request));
+  const c = await (deps.sessionFor ?? sessionFor)(bearer(request), { kind: 'user' }); // 오피스 화면 세션만 — OAuth 클라이언트 토큰은 [실행]하지 못한다(검수 2 HIGH-1)
   if (!c) return json({ error: 'signed_out' }, 401);
   const body = await request.json().catch(() => ({}));
   if (!UUID.test(String(body?.id ?? ''))) return json({ error: 'input' }, 400);
@@ -20,7 +20,7 @@ export async function run(request, deps = {}) {
   let ok = true, result;
   if (!spec) { ok = false; result = lang === 'en' ? 'This action is not available.' : '이 동작은 실행할 수 없습니다.'; }
   else {
-    try { result = await (deps.runSpec ?? runSpec)(spec, row.args, { c, org: row.org_id ?? null, source: row.source, lang }); }
+    try { result = await (deps.runSpec ?? runSpec)(spec, row.args, { c, org: row.org_id ?? null, source: row.source, lang, approved: true }); } // 사람이 오피스 화면에서 승인한 실행 — 주인 자리(audience.js)
     catch (e) { ok = false; result = String(e?.message ?? e).slice(0, 500); }
   }
   await c.client.rpc('office_agent_action_finish', { p_id: row.id, p_ok: ok, p_result: String(result ?? '').slice(0, 4000) });

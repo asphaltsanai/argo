@@ -23,8 +23,8 @@ export const isCliCtx = (ctx) => !!ctx && typeof ctx === 'object' && CLI_CTX.has
    통장사본 글자)은 'org' 판정으로 가리고(오피스 화면에서 본다), 할 일·거래·메일·브리핑·일정은 계정 주인의 도구로 쓴다(argo office CLI와 같다).
    session·jwt = 그 요청의 사용자 토큰으로 만든 클라이언트·토큰(모듈 전역 deps를 쓰지 않는다 — 동시 요청이 섞이지 않게) */
 const REMOTE_CTX = new WeakSet();
-export function remoteContext({ uid, orgId = null, source = null, session, jwt }) {
-  const c = { kind: 'msgr', uid, orgId, channelKind: 'dm', source, session, jwt };
+export function remoteContext({ uid, orgId = null, source = null, session, jwt, approved = false }) {
+  const c = { kind: 'msgr', uid, orgId, channelKind: 'dm', source, session, jwt, approved: approved === true };
   REMOTE_CTX.add(c);
   return c;
 }
@@ -32,7 +32,7 @@ export const isRemoteCtx = (ctx) => !!ctx && typeof ctx === 'object' && REMOTE_C
 
 export async function audienceOf(client, ctx, ownerId) {
   if (isCliCtx(ctx)) return 'owner';
-  if (isRemoteCtx(ctx)) return 'org'; // 원격 MCP — 가장 민감한 값은 가린다(위 설명)
+  if (isRemoteCtx(ctx)) return ctx.approved ? 'owner' : 'org'; // 원격 MCP — 가장 민감한 값은 가린다(위 설명). 사람이 오피스 화면에서 [실행]한 대기 변경(approved)은 그 사람의 일이라 주인 자리
   if (ctx?.channelKind === 'public') return ctx?.orgId ? 'org' : 'mixed';
   if (!ctx?.channelId) return 'mixed';
   let users;

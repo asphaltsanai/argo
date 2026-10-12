@@ -122,3 +122,16 @@ test('보존 30일 — 30일 지난 행만 지운다', { skip }, () => {
   const ids = list(U.member).map((a) => a.id);
   assert.ok(!ids.includes(old)); assert.ok(ids.includes(fresh));
 });
+
+test('멈춘 실행 — 15분 넘게 running인 내 행은 목록을 읽을 때 실패(interrupted)로 닫고, 남의 행·최근 행은 그대로, 없으면 쓰지 않는다', { skip }, () => {
+  const stale = add(U.owner), fresh = add(U.owner), other = add(U.member);
+  for (const [u, id] of [[U.owner, stale], [U.owner, fresh], [U.member, other]]) sql(as(u, `select office_agent_action_claim(${quote(id)})`));
+  sql(`update office_agent_actions set decided_at = now() - interval '16 minutes' where id in (${quote(stale)}, ${quote(other)})`);
+  const rows = list(U.owner);
+  assert.equal(rows.find((a) => a.id === stale).status, 'failed'); assert.equal(rows.find((a) => a.id === stale).result, 'interrupted');
+  assert.equal(rows.find((a) => a.id === fresh).status, 'running');
+  assert.equal(sql(`select status from office_agent_actions where id = ${quote(other)}`), 'running', '남의 행은 그 사람이 읽을 때만');
+  const x = sql(`select xmin::text from office_agent_actions where id = ${quote(fresh)}`);
+  list(U.owner);
+  assert.equal(sql(`select xmin::text from office_agent_actions where id = ${quote(fresh)}`), x, '닫을 행이 없으면 다시 쓰지 않는다');
+});
