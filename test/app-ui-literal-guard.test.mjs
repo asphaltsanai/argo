@@ -3,11 +3,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const APP = new URL('../app/', import.meta.url).pathname;
+const APP = fileURLToPath(new URL('../app/', import.meta.url)); // pathname은 Windows에서 /D:/… 가 되어 폴더를 못 찾는다(CI windows 실패 2026-10-12)
 const walk = (d) => readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
-const rel = (p) => p.slice(APP.length);
+const rel = (p) => p.slice(APP.length).split(sep).join('/'); // 허용 목록 키는 / 구분(Windows는 \\)
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 const ui = walk(APP).filter((p) => /\.(jsx?|mjs)$/.test(p) && !rel(p).startsWith('api/'));
 
