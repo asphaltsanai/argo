@@ -16,7 +16,7 @@ Wire (Telegram Bot API discipline, JSON): GET  {url}/bot{token}/getMe
                                           POST {url}/bot{token}/sendMessage {approval_id, text}   (결정 뒤 후속 보고 — 한 번만, 원문 답글)
                                           POST {url}/bot{token}/reportStatus {version, approval_mode, mirror_all_applied}   (바뀔 때만)
                                           POST {url}/bot{token}/createUpload {message_id, file_name, file_size} → PUT upload_url → attachFile {message_id, storage_path, file_name, mime_type}
-                                               (파일 보내기 — 봇 자기 글(답글·새 글)에 붙는다, 파일당 25MB)
+                                               (파일 보내기 — 봇 자기 글(답글·새 글)에 붙는다, 파일당 무료 25MB·Pro 500MB — 서버가 주인 플랜으로 판정)
 getUpdates?events=1 also returns {event: routine_edit|approval_decided|config, …} items (no update_id; the server leases them for 60s
 and re-sends until closed). Crew contract 1-a/1-b (2026-09-29): the same automation/approval contract Argo crews use.
 Who may instruct the bot, which channels it reads, and channel policies are all decided by the Argo server
@@ -78,7 +78,8 @@ class ArgoMsgrError(Exception):
         self.status, self.description = status, description
 
 
-_ATTACH_MAX = 25 * 1024 * 1024  # 서버 첨부 상한과 같다
+_ATTACH_MAX = 25 * 1024 * 1024  # 받기(사람이 올린 첨부 내려받기) 상한
+_UPLOAD_MAX = 500 * 1024 * 1024  # 보내기 전역 천장 — 플랜별 상한(무료 25MB · Pro 500MB)은 서버가 판정한다(20261012120000, 주인 기준). 25MB로 미리 거절하면 Pro 주인의 큰 파일이 여기서 막힌다
 
 
 def _download(url: str, path, limit: int) -> None:
@@ -109,11 +110,11 @@ def _put_file(url: str, path: str, mime: str, size: int) -> None:
 
 
 def _upload_file(base: str, token: str, message_id: int, path: str, name: Optional[str] = None) -> Dict[str, Any]:
-    """파일 하나를 봇 자기 글(message_id)에 첨부 — createUpload(서버가 대상·크기 판정) → PUT → attachFile. 25MB 초과는 413."""
+    """파일 하나를 봇 자기 글(message_id)에 첨부 — createUpload(서버가 대상·플랜별 크기 판정) → PUT → attachFile. 전역 천장(500MB) 초과는 요청 없이 413."""
     name = name or os.path.basename(path)
     size = os.path.getsize(path)
-    if size > _ATTACH_MAX:
-        raise ArgoMsgrError(413, "files are limited to 25 MB")
+    if size > _UPLOAD_MAX:
+        raise ArgoMsgrError(413, "files are limited to 500 MB")
     mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
     up = _call(base, token, "createUpload", {"message_id": int(message_id), "file_name": name, "file_size": size}, post=True) or {}
     _put_file(str(up.get("upload_url") or ""), path, mime, size)
@@ -308,7 +309,7 @@ def pick_linked_files(content: str):
 
 def _file_error_text(name: str, e: Exception) -> str:
     if isinstance(e, ArgoMsgrError) and e.status == 413:
-        return f"파일 {name}은(는) 25MB를 넘어 올리지 못했습니다."
+        return f"파일 {name}은(는) 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다."   # 천장 초과와 서버의 플랜 거절(413) 둘 다
     return f"파일 {name}을(를) 올리지 못했습니다. ({_redact(str(getattr(e, 'description', '') or e))[:160]})"
 
 
@@ -1020,8 +1021,8 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
         try:
             if not os.path.isfile(path):
                 raise ArgoMsgrError(404, 'file not found')
-            if os.path.getsize(path) > _ATTACH_MAX:
-                raise ArgoMsgrError(413, 'files are limited to 25 MB')
+            if os.path.getsize(path) > _UPLOAD_MAX:
+                raise ArgoMsgrError(413, 'files are limited to 500 MB')
             target = await self._attach_target(chat_id, (caption or '').strip() or ('📎 ' + name), bool((caption or '').strip()), final)
             # 코어는 MEDIA: 파일과 본문에서 찾은 파일을 서로 중복 제거하지 않고 둘 다 보낸다(_deliver_media_attachments). 같은 글에 같은 실제 경로는
             # 한 번만 올린다 — 업로드·저장 객체·첨부 행이 두 배가 되지 않게. 올리기 전에 표시하고 실패하면 지운다(다시 부르면 올린다).
@@ -1583,6 +1584,6 @@ def register(ctx):
             "When something needs a person's approval before you act, call argo_request_approval, then end your turn; "
             "the decision comes back in the same conversation. "
             "Files people attach are saved locally and listed with their paths. To send a file back, put MEDIA:/absolute/path/to/file "
-            "on its own line in your reply (any file type, up to 25 MB each) — it is uploaded and attached to your reply. "
+            "on its own line in your reply (any file type, up to 25 MB each on a free plan, 500 MB on Pro) — it is uploaded and attached to your reply. "
             "Never hand over a file as a server path, an attachment: or file:// link, or a GitHub or cloud-storage link instead: "
             "the people reading cannot open those."))

@@ -1,5 +1,5 @@
 // 오픈클로 플러그인 파일 받기·보내기(0.3.2) — 유건 2026-09-30 "헤르메스 포함 외부 에이전트랑 내부 에이전트 모두 파일 송수신 등이 가능해야해".
-// 승인 기준: ① 대화면 봇 답글에, 원문이 없으면(예약 작업·능동 전송) 봇 새 글에 붙는다 ② 파일당 25MB — 넘으면 올리지 않고 방에 한 줄 ③ 글 쓸 수 있는 방만(서버 판정).
+// 승인 기준: ① 대화면 봇 답글에, 원문이 없으면(예약 작업·능동 전송) 봇 새 글에 붙는다 ② 파일당 플랜 상한(무료 25MB · Pro 500MB, 서버 판정) — 넘으면 올리지 않고 방에 한 줄 ③ 글 쓸 수 있는 방만(서버 판정).
 // 실제 src/api.js·channel.ts 코드로 돈다. 서버·저장소·OpenClaw SDK는 가짜 fetch·런타임이다.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +8,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ApprovalBridge } from '../integrations/openclaw-argo-msgr/src/contract.js';
-import { makeApi, deliverFiles, findFileTurn, openFileTurn, downloadAttachments, fileNotice, ArgoMsgrError, MAX_FILE_BYTES, relayPrompt } from '../integrations/openclaw-argo-msgr/src/api.js';
+import { makeApi, deliverFiles, findFileTurn, openFileTurn, downloadAttachments, fileNotice, ArgoMsgrError, MAX_FILE_BYTES, MAX_UPLOAD_BYTES, relayPrompt } from '../integrations/openclaw-argo-msgr/src/api.js';
 
 const T = 'argo_bot_' + 'c'.repeat(48);
 const BASE = 'https://x.supabase.co/functions/v1/msgr-bot';
@@ -17,7 +17,7 @@ const ATTEMPT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const json = (body, status = 200) => ({ ok: status < 400, status, headers: new Headers(), json: async () => body, text: async () => JSON.stringify(body) });
 
 // 가짜 서버 + 저장소. 호출을 순서대로 기록한다: { m: 메서드 이름 또는 'PUT'/'GET', body, headers, url }
-function fakeServer({ putStatus = 200, bodies = {}, nextId = 100 } = {}) {
+function fakeServer({ putStatus = 200, bodies = {}, nextId = 100, uploadLimit = Infinity } = {}) {
   const log = [];
   let id = nextId;
   const f = async (url, init = {}) => {
@@ -31,6 +31,7 @@ function fakeServer({ putStatus = 200, bodies = {}, nextId = 100 } = {}) {
     const m = u.pathname.split('/').pop();
     const body = init.body ? JSON.parse(init.body) : Object.fromEntries(u.searchParams);
     log.push({ m, body, url });
+    if (m === 'createUpload' && body.file_size > uploadLimit) return json({ ok: false, error_code: 413, description: 'Payload Too Large: file exceeds the per-file limit for the owner plan (25 MB free, 500 MB Pro)' }, 413);
     if (m === 'createUpload') return json({ ok: true, result: { storage_path: `org/${CH}/${body.message_id}/bot-abcdef12-f.bin`, upload_url: `https://storage.test/upload/sign/msgr/f?token=SECRETSIGN`, method: 'PUT', max_bytes: MAX_FILE_BYTES } });
     if (m === 'attachFile') return json({ ok: true, result: { file_id: `file-${log.length}`, message_id: body.message_id } });
     if (m === 'sendMessage') return json({ ok: true, result: { message_id: id++ } });
@@ -57,13 +58,22 @@ test('uploadFile: createUpload → PUT(본문·Content-Type·x-upsert) → attac
   assert.equal(out.message_id, 77);
 });
 
-test('uploadFile: 25MB 초과는 서버를 부르지 않고 413, 저장소 거절은 그 상태로(서명 token은 문구에서 지운다)', async () => {
+test('uploadFile: 전역 천장(500MB) 초과는 서버를 부르지 않고 413, 저장소 거절은 그 상태로(서명 token은 문구에서 지운다)', async () => {
   const f = fakeServer();
-  await assert.rejects(api(f).uploadFile(1, { name: 'big.zip', data: { length: MAX_FILE_BYTES + 1 } }), (e) => e instanceof ArgoMsgrError && e.status === 413);
+  await assert.rejects(api(f).uploadFile(1, { name: 'big.zip', data: { length: MAX_UPLOAD_BYTES + 1 } }), (e) => e instanceof ArgoMsgrError && e.status === 413);
   assert.deepEqual(f.methods(), [], '서버 호출 0');
   const denied = fakeServer({ putStatus: 403 });
   await assert.rejects(api(denied).uploadFile(1, { name: 'a.txt', data: Buffer.from('x') }), (e) => e.status === 403 && /file upload failed/.test(e.description) && !/SECRETSIGN/.test(e.description) && e.description.includes('token=***'));
   assert.deepEqual(denied.methods(), ['createUpload', 'PUT'], '업로드가 안 됐으면 attachFile을 부르지 않는다');
+});
+
+test('uploadFile 경계 고정: 25MB 이하는 서버(createUpload)에 크기를 그대로 묻고 올린다', async () => {
+  for (const n of [1, 25 * 1024 * 1024]) {
+    const f = fakeServer();
+    await api(f).uploadFile(9, { name: 'a.bin', data: { length: n } });
+    assert.deepEqual(f.methods(), ['createUpload', 'PUT', 'attachFile'], `${n}`);
+    assert.equal(f.log[0].body.file_size, n);
+  }
 });
 
 test('붙일 글 ① 그 요청에 이미 답글이 있으면 그 id — 같은 요청의 여러 파일은 같은 글, 새 글·답글 호출 없음', async () => {
@@ -101,19 +111,33 @@ test('붙일 글 ③ 요청 맥락이 없으면 새 글(reply 없음) — text �
   assert.equal(f.log.filter((c) => c.m === 'createUpload').at(-1).body.message_id, 901, 'text가 있으면 별개 글');
 });
 
-test('25MB 초과: 올리지 않고(createUpload·PUT 없음), 요청을 마감하지도 않고, 방에 새 글 한 줄로 이유를 알린다', async () => {
+test('천장(500MB) 초과: 올리지 않고(createUpload·PUT 없음), 요청을 마감하지도 않고, 방에 새 글 한 줄로 이유를 알린다', async () => {
   const f = fakeServer({ nextId: 300 });
   const turn = openFileTurn({ accountId: 'default', chatId: CH + 'd', message: { message_id: 7, execution_attempt: ATTEMPT, peers: [] } });
-  const big = { name: '자료집', load: async () => ({ data: { length: MAX_FILE_BYTES + 1 }, mime: 'application/zip' }) };
+  const big = { name: '자료집', load: async () => ({ data: { length: MAX_UPLOAD_BYTES + 1 }, mime: 'application/zip' }) };
   const r = await deliverFiles({ api: api(f), accountId: 'default', chatId: CH + 'd', turn, files: [big] });
   assert.deepEqual(f.methods(), ['sendMessage'], '안내 한 건만');
-  assert.deepEqual(f.log[0].body, { chat_id: CH + 'd', text: '파일 자료집은 25MB를 넘어 올리지 못했습니다.' }, '답글이 아니라 새 글 — 요청은 열려 있다');
+  assert.deepEqual(f.log[0].body, { chat_id: CH + 'd', text: '파일 자료집은 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.' }, '답글이 아니라 새 글 — 요청은 열려 있다');
   assert.equal(turn.finalId, null);
   assert.equal(r.messageId, 300);
   turn.end();
-  assert.equal(fileNotice('결과', new ArgoMsgrError(413, 'x')), '파일 결과는 25MB를 넘어 올리지 못했습니다.');
-  assert.equal(fileNotice('report.zip', new ArgoMsgrError(413, 'x')), '파일 report.zip은(는) 25MB를 넘어 올리지 못했습니다.');
+  assert.equal(fileNotice('결과', new ArgoMsgrError(413, 'x')), '파일 결과는 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.');
+  assert.equal(fileNotice('report.zip', new ArgoMsgrError(413, 'x')), '파일 report.zip은(는) 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.');
   assert.match(fileNotice('a.txt', new ArgoMsgrError(403, 'Forbidden: bot cannot post here')), /올리지 못했습니다\. \(Forbidden: bot cannot post here\)/);
+});
+
+test('25MB~500MB는 서버가 플랜으로 판정 — Pro 주인이면 올라가고, 무료 주인이라 서버가 413으로 거절하면 이유를 방에 한 줄로 남긴다', async () => {
+  const mid = (name) => ({ name, load: async () => ({ data: { length: MAX_FILE_BYTES + 1 }, mime: 'application/zip' }) });
+  const pro = fakeServer({ nextId: 800 });
+  const ok = await deliverFiles({ api: api(pro), accountId: 'default', chatId: CH + 'p', files: [mid('큰자료.zip')], text: '자료' });
+  assert.deepEqual(pro.methods(), ['sendMessage', 'createUpload', 'PUT', 'attachFile'], '천장 안이면 서버에 묻는다');
+  assert.equal(pro.log[1].body.file_size, MAX_FILE_BYTES + 1);
+  assert.deepEqual(ok.sent, ['큰자료.zip']);
+  const free = fakeServer({ nextId: 850, uploadLimit: MAX_FILE_BYTES });
+  const r = await deliverFiles({ api: api(free), accountId: 'default', chatId: CH + 'q', files: [mid('큰자료.zip')], text: '자료' });
+  assert.deepEqual(free.methods(), ['sendMessage', 'createUpload', 'sendMessage'], '거절되면 PUT·attachFile 없이 안내 한 줄');
+  assert.deepEqual(free.log.at(-1).body, { chat_id: CH + 'q', text: '파일 큰자료.zip은(는) 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.' });
+  assert.deepEqual(r.sent, []);
 });
 
 test('한 파일이 실패해도 나머지는 올라가고, 서버가 거절한 사유는 안내에 남는다(403=방 밖·자기 글 아님)', async () => {
@@ -179,7 +203,7 @@ async function withChannel(t, { server, deliverPayloads }) {
   const channel = await loadChannel();
   const contexts = [], loads = [];
   channel.setArgoRuntime({
-    media: { loadWebMedia: async (url, opts) => { loads.push([url, opts]); if (/huge/.test(url)) throw new Error('Media exceeds 25MB limit (got 26MB)'); if (/missing/.test(url)) throw new Error('ENOENT'); if (/bigdata/.test(url)) return { buffer: { length: MAX_FILE_BYTES + 1 }, contentType: 'application/zip', fileName: 'bigdata.zip' }; return { buffer: Buffer.from('DATA:' + url), contentType: 'text/plain', fileName: url.split('/').pop() }; } },
+    media: { loadWebMedia: async (url, opts) => { loads.push([url, opts]); if (/huge/.test(url)) throw new Error('Media exceeds 25MB limit (got 26MB)'); if (/missing/.test(url)) throw new Error('ENOENT'); if (/bigdata/.test(url)) return { buffer: { length: MAX_UPLOAD_BYTES + 1 }, contentType: 'application/zip', fileName: 'bigdata.zip' }; return { buffer: Buffer.from('DATA:' + url), contentType: 'text/plain', fileName: url.split('/').pop() }; } },
     channel: { activity: { record() {} }, routing: { resolveAgentRoute: () => ({ agentId: 'a', sessionKey: 's', accountId: 'default' }) }, inbound: {
       buildContext: (p) => { contexts.push(p); return {}; },
       dispatch: async ({ delivery: d }) => { await deliverPayloads(d, channel); } } } });
@@ -213,7 +237,7 @@ test('channel: 글 없이 파일만 온 메시지도 받는다 · 첨부가 없�
   assert.equal('media' in contexts[1], false);
 });
 
-test('channel: 답에 붙인 파일(mediaUrl) — 최종 답글을 먼저 보내고 그 글에 올린다(같은 요청의 여러 파일은 같은 글), 25MB 초과는 안내', async (t) => {
+test('channel: 답에 붙인 파일(mediaUrl) — 최종 답글을 먼저 보내고 그 글에 올린다(같은 요청의 여러 파일은 같은 글), 천장 초과는 안내', async (t) => {
   const server = fakeServer({ nextId: 200 });
   const { channel, loads } = await withChannel(t, { server, deliverPayloads: async (d) => {
     await d.deliver({ text: '만들었습니다\nMSGR: done', mediaUrls: ['/ws/out/a.txt', '/ws/out/huge.zip', 'https://h.test/b.png'] }, { kind: 'final' });
@@ -223,8 +247,8 @@ test('channel: 답에 붙인 파일(mediaUrl) — 최종 답글을 먼저 보내
   assert.deepEqual(server.log[0].body, { chat_id: CH, text: '만들었습니다', reply_to_message_id: 12, execution_attempt: ATTEMPT, disposition: 'done', mentions: [] });
   assert.deepEqual(server.log.filter((c) => c.m === 'createUpload').map((c) => [c.body.message_id, c.body.file_name]), [[200, 'a.txt'], [200, 'b.png']]);
   assert.equal(Buffer.from(server.log.find((c) => c.m === 'PUT').body).toString(), 'DATA:/ws/out/a.txt');
-  assert.deepEqual(server.log.at(-1).body, { chat_id: CH, text: '파일 huge.zip은(는) 25MB를 넘어 올리지 못했습니다.' });
-  assert.ok(loads.every(([, o]) => o.maxBytes === MAX_FILE_BYTES + 1 && o.optimizeImages === false), '코어 로더에 25MB+1 상한, 이미지 재압축 없음');
+  assert.deepEqual(server.log.at(-1).body, { chat_id: CH, text: '파일 huge.zip은(는) 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.' });
+  assert.ok(loads.every(([, o]) => o.maxBytes === MAX_UPLOAD_BYTES + 1 && o.optimizeImages === false), '코어 로더에 천장(500MB)+1 상한, 이미지 재압축 없음');
 });
 
 test('channel: 글 없이 파일만 답해도 파일 이름으로 마감하고 붙인다 · 읽을 수 없는 파일은 안내', async (t) => {
@@ -271,16 +295,16 @@ test('channel: 최종 답 없이 턴이 끝나면(글 없이 파일만) 그때 �
   assert.equal(server2.log[0].body.text, 'n.csv', '설명이 없으면 파일 이름');
 });
 
-test('channel: 대기 중 25MB 초과·읽기 실패 파일은 대기시키지 않고 방에 새 글 한 줄 — 요청은 마감하지 않는다', async (t) => {
+test('channel: 대기 중 천장 초과·읽기 실패 파일은 대기시키지 않고 방에 새 글 한 줄 — 요청은 마감하지 않는다', async (t) => {
   const server = fakeServer({ nextId: 670 });
   const { channel } = await withChannel(t, { server, deliverPayloads: async (d, ch) => {
     const r = await ch.argoMsgrPlugin.outbound.sendMedia({ cfg, to: CH, text: '', mediaUrl: '/ws/huge.zip', accountId: 'default', replyToId: '17' });
     assert.equal(r.messageId, '670', '안내 글 id');
     assert.deepEqual(server.methods(), ['sendMessage']);
-    assert.deepEqual(server.log[0].body, { chat_id: CH, text: '파일 huge.zip은(는) 25MB를 넘어 올리지 못했습니다.' }, '답글도 execution_attempt도 아니다');
-    // 코어 로더가 상한 없이 25MB+1 바이트를 그대로 돌려줘도 대기시키지 않는다
+    assert.deepEqual(server.log[0].body, { chat_id: CH, text: '파일 huge.zip은(는) 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.' }, '답글도 execution_attempt도 아니다');
+    // 코어 로더가 상한 없이 천장+1 바이트를 그대로 돌려줘도 대기시키지 않는다
     await ch.argoMsgrPlugin.outbound.sendMedia({ cfg, to: CH, text: '', mediaUrl: '/ws/bigdata.zip', accountId: 'default', replyToId: '17' });
-    assert.equal(server.log[1].body.text, '파일 bigdata.zip은(는) 25MB를 넘어 올리지 못했습니다.');
+    assert.equal(server.log[1].body.text, '파일 bigdata.zip은(는) 크기 상한(무료 25MB · Pro 500MB)을 넘어 올리지 못했습니다.');
     await d.deliver({ text: '못 올렸습니다\nMSGR: done' }, { kind: 'final' });
   } });
   await channel.handleInbound({ m: msg({ message_id: 17 }), account, cfg, log: () => {} });
@@ -355,7 +379,7 @@ test('channel.resumeAgentTurn: 파일이 붙은 답은 { text, names, attach(글
   assert.deepEqual(server.methods(), [], 'attach 전에는 아무것도 올리지 않는다');
   await out.attach(777);
   assert.deepEqual(server.log.filter((c) => c.m === 'createUpload').map((c) => c.body.message_id), [777], '후속 보고 글에');
-  assert.match(server.log.at(-1).body.text, /^파일 huge\.zip은\(는\) 25MB/, '초과 안내는 새 글 한 줄');
+  assert.match(server.log.at(-1).body.text, /^파일 huge\.zip은\(는\) 크기 상한\(무료 25MB · Pro 500MB\)/, '초과 안내는 새 글 한 줄');
   assert.equal(server.log.at(-1).body.reply_to_message_id, undefined);
 });
 
