@@ -12,8 +12,8 @@ function personalRefusal(ctx, target, targetSlug) {
     'Approvals, schedules and long tasks are not available in a room shared with friends (a friend 1:1 or a group) — only in the 1:1 room with just you and this agent. Ask there');
   if (ctx.ownCrewRoom !== true) return say(ctx, '개인 공간에서는 아직 결재·예약·긴 작업·다른 에이전트에게 맡기기를 쓸 수 없습니다. 조직 채널에서 요청해 주세요', // 2026-09-30 개인 공간 1단계 문구 — 판정을 모를 때(옛 서버·조회 실패)
     'Approvals, schedules, long tasks and handing work to another agent are not available in this personal-space room yet. Ask in an organization channel');
-  if (targetSlug && target?.id !== ctx.crewId) return say(ctx, '개인 공간 1:1에는 넘길 다른 에이전트가 없어 다른 에이전트에게 예약·작업을 맡길 수 없습니다. 직접 하거나 그 에이전트와의 1:1에서 요청해 주세요',
-    'There is no other agent in this personal 1:1, so schedules and tasks cannot be assigned to another agent. Do it yourself or ask in that agent\'s 1:1');
+  if (targetSlug && target?.id !== ctx.crewId) return say(ctx, '개인 공간 1:1에는 넘길 다른 에이전트가 없어 다른 에이전트에게 예약·작업을 맡길 수 없습니다. 직접 하거나 그 에이전트와의 1:1에서 요청해 주세요. 다른 에이전트에게 맡기기는 그 에이전트가 함께 있는 조직 채널에서는 됩니다',
+    'There is no other agent in this personal 1:1, so schedules and tasks cannot be assigned to another agent. Do it yourself or ask in that agent\'s 1:1. Handing work to another agent does work in an organization channel that agent is in');
   return null;
 }
 export function messengerOrigin(ctx, targetSlug = null) {
@@ -124,8 +124,8 @@ export function stageMessengerHandoff(ctx, { to, cc = [], message }) {
     return matches.length === 1 ? matches[0] : null;
   }; // peers is the freshly authorized organization/thread envelope, never a local slug fallback
   const target = resolve(to);
-  if (!target && workContext(ctx).personal) throw new Error(say(ctx, '개인 공간의 이 방에는 그 에이전트가 없어 넘길 수 없습니다 — 개인 공간에서는 같은 방에 있는 에이전트에게만 넘길 수 있고, 주인과 이 에이전트만 있는 1:1에는 넘길 다른 에이전트가 없습니다',
-    'That agent is not in this personal-space room, so it cannot be handed off — in the personal space you can only hand off to agents in the same room, and a 1:1 with just you and this agent has no one else'));
+  if (!target && workContext(ctx).personal) throw new Error(say(ctx, '개인 공간의 이 방에는 그 에이전트가 없어 넘길 수 없습니다 — 개인 공간에서는 같은 방에 있는 에이전트에게만 넘길 수 있고, 주인과 이 에이전트만 있는 1:1에는 넘길 다른 에이전트가 없습니다. 다른 에이전트에게 넘기기는 그 에이전트가 함께 있는 조직 채널에서는 됩니다',
+    'That agent is not in this personal-space room, so it cannot be handed off — in the personal space you can only hand off to agents in the same room, and a 1:1 with just you and this agent has no one else. Handing off to another agent does work in an organization channel that agent is in'));
   if (!target) throw new Error('같은 메신저 조직에 파견된 동료만 넘겨받을 수 있습니다');
   const body = String(message ?? '').trim();
   if (!body || body.length > 6000) throw new Error('넘김 내용은 1~6000자여야 합니다');

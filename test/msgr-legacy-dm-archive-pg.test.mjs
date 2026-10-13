@@ -126,6 +126,8 @@ test('적용 전: 대상 방은 보관 안 됨, 백업 표 없음 — 시드가 
 let before1;
 test('적용: 주인 + 자기 본체 에이전트(개인 행 있음)인 조직 1:1만 보관하고, 바꾸기 전에 백업 표에 적는다', { skip }, () => {
   const msgsBefore = sql(`select count(*) from public.msgr_messages`);
+  // 운영 Supabase는 public 스키마의 새 함수에 anon·authenticated 실행 권한을 기본으로 준다 — 드릴도 같게 두어 파일의 revoke가 실제로 막는지 잰다
+  sql('alter default privileges in schema public grant execute on functions to anon, authenticated');
   applyMig(FIX);
   for (const n of SHOULD) assert.equal(archivedOf(n), 't', `보관 대상 ${n}`);
   for (const n of KEEP.filter((x) => x !== 'a-pepper-archived')) assert.equal(archivedOf(n), 'f', `그대로 ${n}`);
@@ -157,6 +159,30 @@ test('멱등: 두 번째 적용은 아무 행도 바꾸지 않는다(msgr_channe
   applyMig(FIX);
   assert.equal(sql(`select string_agg(id || ':' || xmin, ',' order by id) from public.msgr_channels`), before1, '방 행을 다시 쓰지 않는다');
   assert.equal(sql(`select string_agg(channel_id || ':' || archived_at || ':' || recorded_at || ':' || xmin, ',' order by channel_id) from public.msgr_legacy_dm_archive_backup`), backupBefore);
+});
+
+test('보관 함수: 사용자 역할은 실행할 수 없다(관리자만 다시 돌린다)', { skip }, () => {
+  const r = asUserRaw(U.a, 'select public.msgr_legacy_dm_archive_run()');
+  assert.notEqual(r.status, 0, 'authenticated는 보관 함수를 못 부른다');
+  assert.match(r.stderr, /permission denied for function msgr_legacy_dm_archive_run/, '함수 권한에서 막힌다(백업 표 권한에서 막히는 것과 구분)');
+  for (const role of ['anon', 'authenticated']) assert.equal(sql(`select has_function_privilege('${role}', 'public.msgr_legacy_dm_archive_run()', 'execute')`), 'f', role);
+});
+
+test('보관 함수 다시 돌리기: 그 뒤 생긴 대상만 보관하고, 이미 보관한 방·백업 행은 다시 쓰지 않는다(멱등)', { skip }, () => {
+  // 첫 보관 뒤에 대상이 된 방 — 예: 무료→Pro로 개인 행이 다시 active가 된 계정(총괄 결정 ③)
+  const late = crew(ORG, U.b, 'ws-b', 'late'); crew(null, U.b, 'ws-b', 'late');
+  room('b-late', [['user', U.b], ['crew', late]]);
+  const keep = ['a-pepper', 'a-pepper-2', 'b-shuri', 'a-pepper-archived'].map((n) => R[n]);
+  const rowsOf = () => sql(`select string_agg(id || ':' || xmin || ':' || archived_at, ',' order by id) from public.msgr_channels where id in (${keep.map((x) => `'${x}'`).join(',')})`);
+  const backupOf = () => sql(`select string_agg(channel_id || ':' || archived_at || ':' || recorded_at || ':' || xmin, ',' order by channel_id) from public.msgr_legacy_dm_archive_backup`);
+  const [rows0, backup0] = [rowsOf(), backupOf()];
+  assert.equal(sql('select public.msgr_legacy_dm_archive_run()'), '1', '이번에 보관한 방 수 = 새 대상 하나');
+  assert.equal(archivedOf('b-late'), 't');
+  assert.equal(rowsOf(), rows0, '이미 보관한 방은 다시 쓰지 않는다(xmin·보관 시각 불변)');
+  assert.equal(backupOf().split(',').length, backup0.split(',').length + 1, '백업은 새 방 한 행만 늘어난다');
+  for (const row of backup0.split(',')) assert.ok(backupOf().split(',').includes(row), '기존 백업 행 불변');
+  for (const n of KEEP.filter((x) => x !== 'a-pepper-archived')) assert.equal(archivedOf(n), 'f', `그대로 ${n}`);
+  assert.equal(sql('select public.msgr_legacy_dm_archive_run()'), '0', '바로 다시 돌리면 0');
 });
 
 test('되돌리기 SQL(파일 주석): 이 마이그레이션이 보관한 방만 되살리고, 그 뒤 사람이 다시 보관한 방은 그대로', { skip }, () => {

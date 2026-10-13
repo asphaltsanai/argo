@@ -25,9 +25,8 @@
 --      보관 방을 건너뛰고 새 조직 1:1을 만든다(msgr_create_channel) — 보관 효과가 그 사용자에게서 되돌려진다. 0.1.50은 이전 대화 보기가 없고, 0.1.51~0.1.52는
 --      보관 방을 이전 대화 보기에서 뺀다 — 그 버전에서는 옛 글을 볼 길이 없다(글은 DB에 그대로).
 --   2) 본체 새 버전(보관 방이 목적지인 루틴·결재 후속을 개인 1:1로 보낸다)이 간 뒤. 0.1.97 이하는 그런 루틴이 종전 오류로 실패한다.
---   3) 개인 1:1에서는 예약·결재·긴 작업·다른 에이전트에게 맡기기를 아직 쓸 수 없다(src/gateway/msgr-handoff.mjs messengerOrigin, 2026-09-30 개인 공간 1단계).
---      보관하면 그 에이전트와의 1:1에서 이 기능이 없어진다. 대상 42개 중 32개 방(유건 11)은 같은 에이전트·주인이 함께 있는 다른 조직 채널이 남아 거기서는 된다.
---      10개 방(사용자 6명 — 유건은 알프레드·효일 2개)은 메신저에서 요청할 곳이 없다(본체 데스크톱 대화는 그대로). 개인 1:1을 여는 단위를 먼저 내보내거나 이 결과에 대한 승인을 따로 받는다.
+--   3) (2026-10-13 풀림) 개인 crew 1:1의 예약·결재·긴 작업은 2026-10-08 PR-C로 주인 턴에 열렸다. '다른 에이전트에게 맡기기'만 개인 1:1에서 안 되고
+--      거절 문구가 조직 채널에서는 된다고 안내한다(총괄 결정 ②, src/gateway/msgr-handoff.mjs personalRefusal·stageMessengerHandoff).
 --   4) 버전 다시 매기기: scripts/msgr-live-apply.sh는 더 새 버전이 기록돼 있으면 거부한다. 그 사이 다른 마이그레이션이 운영에 적용됐으면 적용 직전에 이 파일 이름의
 --      버전만 그때 시각으로 바꾼다(pg 테스트는 이름 끝 _msgr_legacy_dm_archive.sql로 찾는다). 손으로 적용하지 않는다(2026-09-23 사고 경로).
 --
@@ -58,6 +57,11 @@ create table if not exists public.msgr_legacy_dm_archive_backup (
 alter table public.msgr_legacy_dm_archive_backup enable row level security; -- 정책 없음: 운영자(서비스 역할·DB 소유자)만
 revoke all on public.msgr_legacy_dm_archive_backup from public, anon, authenticated;
 
+-- 보관 실행 함수(총괄 결정 2026-10-13 ③) — 관리자가 다시 돌릴 수 있게 함수로 둔다(무료→Pro로 개인 행이 다시 active가 된 계정 등). 주기 실행은 하지 않는다(DB 위생).
+-- 멱등: 대상 조건이 archived_at IS NULL이라 이미 보관한 방(이 함수가 보관한 방 포함)은 다시 쓰지 않는다. 반환 = 이번에 보관한 방 수.
+-- 사용자 역할은 실행할 수 없다(서비스 역할·DB 소유자만): select public.msgr_legacy_dm_archive_run();
+create or replace function public.msgr_legacy_dm_archive_run() returns integer
+  language sql volatile set search_path = public, pg_temp set lock_timeout = '5s' as $$
 with targets as (
   select c.id as channel_id, c.org_id, u.member_id as owner_user_id, k.id as crew_id,
          (select count(*) from public.msgr_messages m where m.channel_id = c.id and m.deleted_at is null)::int as msg_count
@@ -78,7 +82,15 @@ saved as (
   on conflict (channel_id) do update -- 되돌린 뒤 다시 적용하는 경우 — 마지막 보관 시각으로 바꿔 둔다(되돌리기가 그 값을 본다)
     set prev_archived_at = excluded.prev_archived_at, archived_at = excluded.archived_at, msg_count = excluded.msg_count, recorded_at = now()
   returning channel_id, archived_at
+),
+done as (
+  update public.msgr_channels c set archived_at = s.archived_at
+    from saved s
+   where c.id = s.channel_id and c.archived_at is null
+  returning c.id
 )
-update public.msgr_channels c set archived_at = s.archived_at
-  from saved s
- where c.id = s.channel_id and c.archived_at is null;
+select count(*)::int from done
+$$;
+revoke all on function public.msgr_legacy_dm_archive_run() from public, anon, authenticated;
+
+select public.msgr_legacy_dm_archive_run(); -- 이 마이그레이션의 첫 보관
