@@ -110,9 +110,42 @@ export function parseRequest(url, headers = {}, body = null) {
 
 const reply = (status, result) => ({ status, body: { ok: true, result } });
 const fail = (status, description) => ({ status, body: { ok: false, error_code: status, description } });
+// 거부(무효 토큰 401·무료 주인 403·429)에는 "언제 다시 오라"를 싣는다 — 텔레그램 규약 parameters.retry_after(초) + HTTP Retry-After(index.ts가 이 값으로).
+// 새 연결 도구(Hermes 0.3.7·OpenClaw 0.3.4)는 이 값만큼 쉰다. 옛 도구는 모르는 필드라 무시한다(동작 그대로).
+const failRetry = (status, description, retryAfterS) => ({ status, body: { ok: false, error_code: status, description, parameters: { retry_after: retryAfterS } } });
+
+/* ── 거부 기억(2026-10-13, 엣지 호출 30일 추정 133%) ─────────────────────────────────────────────────
+   거부를 받고도 계속 오는 봇(무료 주인 403 약 40초마다 하루 3.3만 건·무효 토큰 401 하루 4,500건)은 옛 연결 도구라 고칠 수 없다.
+   같은 토큰이 REJECT_AFTER번 연달아 거부되면 REJECT_TTL 동안 DB를 부르지 않고 바로 거부한다(값싼 거절). 기억은 이 엣지 인스턴스의
+   메모리뿐이다 — DB에 쓰지 않으므로 보존 기간·쓰기 비용이 없고, 인스턴스가 바뀌면 처음부터 다시 센다(인스턴스당 토큰마다 처음 REJECT_AFTER번, 그 뒤 TTL마다 1번 DB).
+   정상 봇(Pro·유효 토큰)은 거부를 받지 않으므로 기억에 들어가지 않는다 — 판정·지연 그대로. 성공 응답 한 번이면 지운다.
+   무료 → Pro로 바꾼 주인의 봇은 이 인스턴스에서 최대 TTL(5분) 늦게 풀린다. 토큰은 메모리 키로만 쓰고 기록하지 않는다. */
+export const REJECT_AFTER = 3;
+export const REJECT_TTL_S = { plan: 300, auth: 900 };   // = 응답의 retry_after
+const REJECT_MAX = 5_000;                                // 메모리 상한 — 넘으면 가장 오래된 것부터 버린다(Map 삽입 순서)
+export function createRejectMemory({ now = Date.now } = {}) {
+  const m = new Map(); // token → { kind, n, until }
+  return {
+    // TTL이 지나면 DB에 한 번 다시 묻는다 — 횟수는 남겨 두어 그 한 번이 또 거부면 곧바로 다시 기억한다(TTL당 DB 1회). 성공이면 clear가 지운다.
+    blocked(token) { const r = m.get(token); if (!r || !r.until) return null; if (now() < r.until) return r.kind; r.until = 0; return null; },
+    reject(token, kind) {
+      const r = m.get(token);
+      const n = r && r.kind === kind ? r.n + 1 : 1;
+      m.delete(token); // 최근 것이 뒤로(상한 정리 순서)
+      m.set(token, { kind, n, until: n >= REJECT_AFTER ? now() + REJECT_TTL_S[kind] * 1000 : 0 });
+      while (m.size > REJECT_MAX) m.delete(m.keys().next().value);
+    },
+    clear(token) { m.delete(token); },
+    get size() { return m.size; },
+  };
+}
+const REJECT_REPLY = {
+  plan: () => failRetry(403, ERR.msgr_bot_plan_required[1], REJECT_TTL_S.plan),
+  auth: () => failRetry(401, ERR.msgr_bot_unauthorized[1], REJECT_TTL_S.auth),
+};
 
 // rpc(fn, args) → JSON. PostgREST 오류는 {message, code, details}를 throw.
-export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null, planGate = null } = {}) {
+export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null, planGate = null, rejects = null } = {}) {
   if (!token) return fail(401, 'Unauthorized: token missing (use /bot<token>/<method> or Authorization: Bearer)');
   if (!METHODS.includes(method)) return fail(404, `Not Found: method ${method || '(none)'} — supported: ${METHODS.join(', ')}`);
   try {
@@ -126,6 +159,9 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       const waitMs = Math.min(maxWaitMs, Math.max(0, Number(params.timeout) || 0) * 1000);
       const start = now();
       const deadline = start + waitMs;
+      // 값싼 거절 — 기억된 거부 토큰은 DB 없이 롱폴 시간만큼 붙잡았다가 거부한다(옛 도구의 재시도 간격 = 대기 + 사다리, 종전 403과 같은 박자)
+      const known = rejects?.blocked(token);
+      if (known) { await sleep(Math.max(0, deadline - now())); return REJECT_REPLY[known](); }
       // 무료 계정 봇(2026-10-10): 판정 1회 → 롱폴 시간만큼 DB 조회 없이 붙잡았다가 403. 연결 도구는 403을 1→30초 사다리로 다시 오므로 간격 = 대기 + 사다리.
       // 판정 실패(옛 DB에 함수 없음·시간 초과)는 막지 않는다 — 5xx를 주면 Hermes가 3초 간격으로 다시 온다. 토큰 오류는 종전처럼 401.
       if (planGate) {
@@ -134,7 +170,7 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
           console.warn('[msgr-bot] plan gate skipped:', String(e?.message ?? '').slice(0, 200));
           return 'ok';
         });
-        if (verdict === 'plan_required') { await sleep(Math.max(0, deadline - now())); return fail(...ERR.msgr_bot_plan_required); }
+        if (verdict === 'plan_required') { rejects?.reject(token, 'plan'); await sleep(Math.max(0, deadline - now())); return REJECT_REPLY.plan(); }
       }
       // 이벤트(루틴 편집·결재 결정)는 옵트인(events=1)한 어댑터에게만, 요청당 한 번 조회한다. update_id·offset과 무관하고
       // 서버가 60초 임대로 중복을 막는다. 이벤트 조회는 선택 기능 — 어떤 오류든(옛 서버의 RPC 없음, 시간 초과, 교착) 메시지 수신을
@@ -145,7 +181,7 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       }) : [];
       for (;;) {
         const ups = await rpc(Number(params.delivery_protocol) === 1 ? 'msgr_bot_updates_with_delivery' : 'msgr_bot_updates', { token, after_id: Math.max(0, offset - 1), lim });
-        if (ups.length || evs?.length || now() >= deadline) return reply(200, [...(evs ?? []), ...ups]);
+        if (ups.length || evs?.length || now() >= deadline) { rejects?.clear(token); return reply(200, [...(evs ?? []), ...ups]); }
         const t = now();
         await sleep(Math.min(pollDelay(t - start), Math.max(1, deadline - t)));
       }
@@ -240,6 +276,10 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
     return reply(200, { message_id: Number(id), chat: { id: chat }, text, reply_to_message_id: src ?? undefined });
   } catch (e) {
     const name = String(e?.message ?? '').match(/msgr_[a-z_]+/)?.[0];
+    if (name === 'msgr_bot_unauthorized') { // 무효·폐기 토큰 — 받기(getUpdates)만 기억한다(폴링이 폭주의 자리, 다른 메서드는 사람이 부를 때만)
+      if (method === 'getUpdates') rejects?.reject(token, 'auth');
+      return REJECT_REPLY.auth();
+    }
     if (name && ERR[name]) return fail(ERR[name][0], ERR[name][1]);
     return fail(500, `Internal: ${String(e?.message ?? e).slice(0, 200)}`);
   }
