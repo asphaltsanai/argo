@@ -305,13 +305,72 @@ const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
    그래서 `rm -rf .assistant`·`cat .assistant/state.json`·절대 경로·중괄호·`?`·`*`는 거부, `x.assistant`·`.assistants`·`.assistant.content`는 통과.
    뒤의 점은 바로 뒤가 이름 글자일 때만 다른 이름으로 본다(`.assistant.bak`) — Windows는 경로 이름 끝의 점을 지워 `.assistant.\\state.json`·`.assistant..`이
    같은 폴더를 가리킨다(10/8 두 번째 보안 검토).
-   남는 한계: `.assist*`·`$'\x2e'assistant`처럼 글자 자체를 쪼개는 모양은 다른 보호 파일과 같이 막지 못한다(셸 리터럴 방어의 한계).
+   `.assist*`(글롭)·`$'\x2e'assistant`(ANSI-C 따옴표)는 아래 shellNamesGuarded가 막는다.
    남는 오차단: `jq '.assistant' f.json`처럼 따옴표로 감싼 키 하나 — 경로와 글자로 구별할 수 없어 fail-closed로 둔다.
    파일 도구·MCP는 이 목록과 무관하게 직속 도트 규칙(isForbidden)이 거부한다. */
 const BASH_DOT_DIR_RE = /(?<![A-Za-z0-9_.-])\.assistant(?![A-Za-z0-9_-]|\.[A-Za-z0-9_-])/i;
 // 경계 클래스에 리다이렉트·쉼표(<>,) 포함 — `>chats/b.json`(공백 없는 리다이렉트)이 위조 명령의 가장
 // 자연스러운 형태다(재검수 3R). 잔여: `../`·`$PWD/` 간접 표기는 파일 헤더의 셸 한계 범위(실판정은 isForbidden).
 const BASH_DIR_RE = new RegExp(String.raw`(^|[\s'"\x60;|&(=<>,])(\.[\\/])?(${[...WS_CONTROL_DIRS].join('|')})[\\/]`, 'i');
+
+/* 셸 확장으로 보호 이름을 숨긴 모양(2026-10-13 검수 1 — `rm ../.sync-cred*.json`·`rm ../.device-sess?on.json`이 allow였다).
+   이름 목록(BASH_GUARDED)은 글자 그대로만 찾아서, 셸이 실행 때 이름을 만들어 내는 모양을 놓쳤다. 셸이 하는 일 셋을 먼저 해 보고 다시 찾는다:
+   ① 따옴표·역슬래시 걷기 — `".sync-cred"entials.json`·`.sync\-credentials.json`은 셸에서 같은 이름이다
+   ② 중괄호 펼치기 — `.sync-cred{entials,x}.json` → `.sync-credentials.json`(펼친 단어마다 ①·③)
+   ③ 점으로 시작하는 경로 조각의 글롭(`*`·`?`·`[…]`) — 그 조각이 보호 이름(접두 등재는 접두 + 아무 글자)과 맞을 수 있으면 거절.
+      bash의 `*`·`?`·`[…]`는 이름 첫 점과 맞지 않으므로(dotglob 꺼짐 기본) 점으로 시작하지 않는 조각(`build/*.tmp`·`*.md`)은 보지 않는다 — 회사 폴더의 평범한 글롭은 그대로.
+   fail-closed 오차단: `ls .*`처럼 아무 점 파일과 맞는 넓은 글롭(보호 파일까지 지울 수 있다)·`.e*`처럼 보호 이름 접두와 겹치는 글롭.
+   ④ ANSI-C 따옴표(`$'\x2e'`)는 ①보다 먼저 글자로 푼다.
+   남는 한계(이 함수 밖): 변수로 이름을 조립(`${X}entials.json`)·`grep … | xargs rm`·이름 없이 상위 폴더를 통째로 지우는 `find .. -delete` —
+   셸 리터럴 방어로는 판정할 수 없다. 파일 도구·MCP는 이 목록과 무관하게 isForbidden(규칙)이 거부한다. */
+const SHELL_SEP = /[\s;|&()<>=\x60]+/; // 쉼표는 나누지 않는다 — 중괄호 펼치기(`{a,b}`)의 구분자다
+// ANSI-C 따옴표(`$'\x2e'sync…`)는 셸이 실행 전에 글자로 푼다 — 먼저 같은 방식으로 풀고 나서 따옴표를 걷는다(\xHH·\NNN 8진·\uHHHH)
+const ansiC = (s) => s.replace(/\$'((?:[^'\\]|\\.)*)'/g, (_, body) => body
+  .replace(/\\x([0-9a-fA-F]{1,2})/g, (__, h) => String.fromCharCode(parseInt(h, 16)))
+  .replace(/\\u([0-9a-fA-F]{1,4})/g, (__, h) => String.fromCharCode(parseInt(h, 16)))
+  .replace(/\\([0-7]{1,3})/g, (__, o) => String.fromCharCode(parseInt(o, 8))));
+const unquote = (s) => ansiC(s).replace(/['"\\]/g, '');
+function expandBraces(word, out = [], budget = { n: 0 }) {
+  if (budget.n > 128) { out.push(word); return out; } // 상한 — 적대적으로 긴 펼치기의 비용
+  const open = word.indexOf('{');
+  const close = open < 0 ? -1 : word.indexOf('}', open);
+  if (open < 0 || close < 0) { budget.n++; out.push(word); return out; }
+  const inner = word.slice(open + 1, close);
+  if (!inner.includes(',')) { budget.n++; out.push(word); return out; } // `{}`·`${X}`는 펼치기가 아니다
+  for (const alt of inner.split(',')) expandBraces(word.slice(0, open) + alt + word.slice(close + 1), out, budget);
+  return out;
+}
+function globToRe(seg) {
+  let re = '';
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else if (c === '[') { const j = seg.indexOf(']', i + 2); if (j < 0) { re += '\\['; continue; } let body = seg.slice(i + 1, j).replace(/\\/g, '\\\\'); if (body[0] === '!') body = `^${body.slice(1)}`; re += `[${body}]`; i = j; }
+    else re += c.replace(/[.+^$(){}|\]\\]/g, '\\$&');
+  }
+  try { return new RegExp(`^${re}$`, 'i'); } catch { return /^.*$/; } // 해석할 수 없는 패턴은 아무것과 맞는다고 본다(fail-closed)
+}
+const GUARDED_DOT = [...BASH_GUARDED.filter((n) => n.startsWith('.')), '.assistant']; // .assistant는 글자 대조에선 경계 규칙(BASH_DOT_DIR_RE)이지만 글롭 대조에는 이름으로 넣는다(`.assist*`)
+const GLOB_PROBES = GUARDED_DOT.flatMap((n) => [n, `${n}x`, `${n}-x.json`, `${n}.json`]);
+export function shellNamesGuarded(cmd) {
+  const plain = unquote(String(cmd ?? ''));
+  const words = plain.split(SHELL_SEP).filter(Boolean).flatMap((w) => expandBraces(w));
+  const literalHit = (t) => BASH_GUARDED.some((n) => fold(t).includes(fold(n))) || BASH_DIR_RE.test(` ${t}`) || BASH_DOT_DIR_RE.test(t);
+  if (literalHit(plain) || words.some(literalHit)) return true;
+  for (const w of words) {
+    for (const seg of w.split('/')) {
+      if (!seg.startsWith('.') || !/[*?[]/.test(seg)) continue;
+      // 글롭 앞 글자가 보호 이름의 앞부분이면 거절 — 접두 등재(`.account-secrets` → `.account-secrets-local.json`)의 뒤를 바꾼
+      // `.account-sec*-local.json`은 예시 이름 대조로는 놓친다. 점 하나뿐인 앞부분(`.*.swp`)은 아래 대조만 본다(평범한 정리 명령)
+      const lit = seg.slice(0, seg.search(/[*?[]/));
+      if (lit.length >= 2 && GUARDED_DOT.some((n) => fold(n).startsWith(fold(lit)))) return true;
+      const re = globToRe(seg);
+      if (GLOB_PROBES.some((p) => re.test(p))) return true;
+    }
+  }
+  return false;
+}
 
 /** p가 금지 구역인가 — 판정 전 자기 워크스페이스 안(inWorkspace)이 먼저 통과됐다는 전제의 2차 검사.
     canonical(실경로) 기준 — 심링크로 금지 구역을 우회하지 못한다.
@@ -621,7 +680,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 입력의 모든 문자열 잎(중첩 포함)을 훑는다 — 고정 키 목록은 다른 이름(texts·input·label)으로 우회됐다(4R). 분할 입력·조합키 한 글자씩은 못 막는다 —
       // 실효 통제는 옵트인이고 이 줄은 순진한 시도의 1차 방어다(셸 리터럴 방어와 같은 정직 표기).
       const typed = stringLeaves(input).join(' ');
-      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed) || BASH_DOT_DIR_RE.test(typed))) return denyHard();
+      if (typed.trim() && (bashHardLiterals.some((r) => fold(typed).includes(fold(r))) || BASH_GUARDED.some((n) => fold(typed).includes(fold(n))) || BASH_DIR_RE.test(typed) || BASH_DOT_DIR_RE.test(typed) || shellNamesGuarded(typed))) return denyHard();
       return allow;
     }
 
@@ -676,7 +735,7 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 이게 없으면 shell 능력이 켜진 SDK 크루가 `echo '{"bypass":true}' > capabilities.json` 한 줄로
       // 게이트를 우회한다(실측). 오탐(그 이름을 언급한 정당한 명령 거절)은 fail-closed로 수용한다.
       // 폴딩은 위 줄과 동일 기준(대소문자 무시 FS에서 CAPABILITIES.JSON 우회 차단 — #145 계열).
-      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd) || BASH_DOT_DIR_RE.test(cmd)) return denyHard();
+      if (BASH_GUARDED.some((n) => fold(cmd).includes(fold(n))) || BASH_DIR_RE.test(cmd) || BASH_DOT_DIR_RE.test(cmd) || shellNamesGuarded(cmd)) return denyHard(); // 셸 확장(글롭·중괄호·따옴표 분할)으로 숨긴 이름까지
       // 이 컴퓨터의 Argo API(루프백)를 부르는 명령 — 결재 자가 승인·루틴 삭제·주인 직접 턴 열기의 통로였다(PR #916 분리 검수 재현).
       // 모든 턴(주인 턴 포함)에서 거절한다. 주 방어는 서버의 연결 상대 판정(src/agent-peer.mjs) — 이 줄은 이유를 알려 주는 앞단이다.
       if (await shellCallsArgoApi(cmd)) return { behavior: 'deny', message: ARGO_API_SHELL_MSG[lang === 'en' ? 'en' : 'ko'] };

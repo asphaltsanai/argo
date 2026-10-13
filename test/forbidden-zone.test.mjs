@@ -534,6 +534,26 @@ test('Bash 리터럴: 과차단 없음 — 크루의 평범한 명령은 그대�
   }
 });
 
+// 셸 확장으로 보호 이름을 숨긴 모양(2026-10-13 검수 1 — 글롭·중괄호·따옴표 분할이 allow였다). 이름 목록은 글자 그대로만 찾아서
+// 셸이 실행 때 만들어 내는 이름을 놓쳤다. 보호 파일과 맞을 수 있는 모양은 거절하고, 회사 폴더의 평범한 글롭은 그대로 둔다.
+test('Bash 셸 확장: 글롭·대괄호·중괄호·따옴표 분할로 숨긴 보호 이름도 deny — 회사 폴더의 평범한 글롭은 allow', async () => {
+  const gate = makePermissionGate('my-co', 'crew-a', wsRoot);
+  const HIDDEN = [
+    'rm ../.app-gat*.json', 'rm ../.sync-cred*.json', 'rm ../.server-pres*.json', 'rm ../.device-sess?on.json', // 검수 1 재현 4개
+    'cat ../.device-session.[j]son', 'rm ../.sync-credentials.js[o]n', 'rm ../.account-secrets-*.json',          // 대괄호·접두 등재(.account-secrets)
+    'rm ../.*', 'rm -f ../.d*', 'cat .secr*',                                                                       // 넓은 글롭·회사 직속 보호 파일
+    'rm ../.sync-cred{entials,x}.json', 'cat ../.device-{session,x}.json', 'rm ../{.sync-credentials.json,x}',      // 중괄호
+    'rm ../".sync-cred"entials.json', "rm ../'.device-sess''ion.json'", 'rm ../.sync\\-credentials.json',          // 따옴표·역슬래시 분할
+    "find .. -maxdepth 1 -name '.sync*' -delete", "find .. -maxdepth 1 -name '.*' -delete",                      // find 이름 패턴
+    'rm ../.account-sec*-local.json', 'rm ../.[d]evice-id',
+    "rm ../$'\\x2e'sync-credentials.json", "cat ../$'\\056'device-session.json",                                // ANSI-C 따옴표
+    'rm -rf .assist*', "rm -rf $'\\x2e'assistant",                                                               // 경계 규칙으로 지키는 .assistant                                                       // 접두 등재의 뒤를 바꾼 글롭·앞이 대괄호
+  ];
+  for (const command of HIDDEN) assert.equal((await gate('Bash', { command })).behavior, 'deny', `허용됨: ${command}`);
+  const ORDINARY_GLOBS = ['rm build/*.tmp', 'ls *.md', 'cat notes/??.txt', 'rm -rf dist/{a,b}', "grep -r 'TODO' src/*.js", 'ls .github/workflows/*.yml', 'ls .vscode/*', 'echo "a*b"', 'cat ./.gitignore', 'rm -f .eslintcache', 'cat .env.example', 'rm -f .*.swp', 'ls .eslint*'];
+  for (const command of ORDINARY_GLOBS) assert.equal((await gate('Bash', { command })).behavior, 'allow', `과차단: ${command}`);
+});
+
 // 드리프트 트립와이어 — 목록은 손으로 관리되므로 새 도트파일이 조용히 사각을 만든다. src/를 훑어
 // "루트에 join되는 도트 리터럴"을 뽑고 미등재를 red로 잡는다(수색을 사람 기억에 맡기지 않는다 —
 // 불변식 변경 전수 수색 규칙). 새 도트파일을 추가하면 WS_DOT_FILES에도 넣어야 이 단언이 산다.
