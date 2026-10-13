@@ -7,7 +7,12 @@ const app = read('apps/messenger/src/App.jsx'); const i18n = read('apps/messenge
 test('검색: 레일 검색 칸·⌘K·ilike 이스케이프·결과 페이지(메시지·사람·에이전트·채널)', () => {
   for (const k of ['search.title', 'search.ph', 'search.hint', 'search.none', 'search.count', 'search.channels', 'search.people', 'search.agents', 'search.messages']) assert.match(i18n, new RegExp(`'${k.replace(/\./g, '\\.')}': \\['[^']+', '[^']+'\\]`), `${k} ko/en`);
   assert.match(app, /<form className="msgr-search" onSubmit=/, '검색 칸'); assert.match(app, /e\.key\.toLowerCase\(\) === 'k'\) \{ e\.preventDefault\(\); setRail\(true\); searchRef\.current\?\.focus\(\);/, '⌘K');
-  assert.match(app, /const scoped = isPersonal \? base\.is\('org_id', null\) : base\.eq\('org_id', org\.id\);/, '검색 범위 — 조직에서는 그 조직, 개인 공간에서는 조직 없는 내 방(가상 org id로 조회하면 늘 빈다)');
+  // 검색 범위 — 조직에서는 그 조직, 개인 공간에서는 조직 없는 내 방 + 내 보관 1:1(2026-10-13 결정 ④ #994 — 의도된 변경). 개인 공간은 가상 org id로 조회하지 않는다(늘 빈다).
+  const scopedLine = app.match(/const scoped = isPersonal \? ([^\n]*?) : base\.eq\('org_id', org\.id\);/);
+  assert.ok(scopedLine, '조직 공간은 그 조직(org_id = 조직)');
+  assert.match(scopedLine[1], /base\.is\('org_id', null\)/, '개인 공간: 보관 1:1이 없으면 org_id IS NULL');
+  assert.match(scopedLine[1], /base\.or\(`org_id\.is\.null,channel_id\.in\.\(/, '개인 공간: 내 보관 1:1이 있으면 org_id IS NULL 또는 그 방');
+  assert.doesNotMatch(scopedLine[1], /org\.id|eq\('org_id'/, '개인 공간 갈래는 가상 org id로 조회하지 않는다(가상 org id로 조회하면 늘 빈다)');
   assert.match(app, /scoped\.is\('deleted_at', null\)\.ilike\('body', like\)/, '본문 부분 일치·삭제 글 제외(RLS가 읽을 수 있는 채널만)');
   assert.match(app, /const like = `%\$\{qs\.replace\(\/\[%_\\\\\]\/g/, 'ilike 와일드카드 이스케이프');
   assert.match(app, /\) : page === 'search' && org \? \(\n\s*<SearchPage res=\{searchRes\}/, '페이지 분기'); assert.match(app, /function SearchPage\(\{ res, busy = false, channels, crews/, '결과 페이지(busy = 조회 중 "불러오는 중")');

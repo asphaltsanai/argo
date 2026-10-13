@@ -148,6 +148,19 @@ test('보관 뒤: 주인은 옛 글을 읽고, 새 글은 서버가 막는다 �
   assert.equal(asUser(U.a, `select public.msgr_can_write_channel('${R['a-pepper-personal']}')`), 't', '개인 1:1은 쓴다');
 });
 
+test('보관 1:1 검색(결정 ④) — 사용자 권한으로 메신저와 같은 조회: 내가 든 보관 DM과 그 구성원이 보이고, 내 보관 1:1의 글이 개인 검색 조건에 걸린다', { skip }, () => {
+  // 메신저 runSearch의 보관 행 조회(msgr_channels kind=dm·archived_at·org_id not null + 구성원 내장)와 같은 조건 — RLS(msgr_channels_select·msgr_channel_members_select)를 그대로 탄다
+  const ids = asUser(U.a, `select string_agg(id::text, ',' order by id) from public.msgr_channels where kind = 'dm' and archived_at is not null and org_id is not null`).split(',');
+  for (const n of ['a-pepper', 'a-pepper-2', 'a-pepper-archived']) assert.ok(ids.includes(R[n]), `내가 든 보관 방 ${n}`);
+  assert.ok(!ids.includes(R['b-shuri']), '남의 보관 1:1은 안 보인다');
+  assert.equal(asUser(U.a, `select string_agg(member_kind, ',' order by member_kind) from public.msgr_channel_members where channel_id = '${R['a-pepper']}'`), 'crew,user', '보관 방 구성원(사람·에이전트)이 보인다 — 내 1:1 판정 재료');
+  // 개인 공간 글 조회 조건: org_id IS NULL 또는 내 보관 1:1
+  const n = asUser(U.a, `select count(*) from public.msgr_messages where deleted_at is null and (org_id is null or channel_id in ('${R['a-pepper']}'))
+    and channel_id = '${R['a-pepper']}'`);
+  assert.equal(n, '3', '보관 방의 글이 개인 검색 조건으로 읽힌다');
+  assert.equal(asUser(U.b, `select count(*) from public.msgr_messages where channel_id = '${R['a-pepper']}'`), '0', '남은 그 글을 못 읽는다(채널 id를 알아도)');
+});
+
 test('백업 표는 사용자에게 열려 있지 않다', { skip }, () => {
   const r = asUserRaw(U.a, `select count(*) from public.msgr_legacy_dm_archive_backup`);
   assert.notEqual(r.status, 0, 'authenticated는 백업 표를 못 읽는다');

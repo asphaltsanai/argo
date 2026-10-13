@@ -43,7 +43,7 @@ import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDeniedKey, scopePendingApprovals, highPolicyOrgs, approvalDenied, approvalCmdMode, decideApproval, readRoomJoinRequests, singleFlight } from './approval-display.js';
-import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, earlierLineLabel, archivedRoomFor, archivedReadStep, clearEarlierUnread, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
+import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, earlierLineLabel, archivedRoomFor, archivedSearchRooms, ARCHIVED_ROOM_COLS, archivedReadStep, clearEarlierUnread, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -1059,12 +1059,21 @@ function Shell({ session }) {
     // 개인 공간의 글은 org가 없다 — 가상 org id로 조회하면 서버가 uuid로 못 읽어 결과가 늘 빈다(RLS가 내 방으로 이미 좁힌다).
     const sel = supabase.from('msgr_messages').select('id, channel_id, author_kind, author_user_id, crew_id, body, created_at');
     const base = blockedIds.size ? sel.or(`author_user_id.is.null,author_user_id.not.in.(${[...blockedIds].join(',')})`) : sel; // 차단한 사람의 글은 조회에서 뺀다 — '더 있음' 판정도 걸러진 결과 기준
-    const scoped = isPersonal ? base.is('org_id', null) : base.eq('org_id', org.id);
+    // 보관한 조직 DM(총괄 결정 2026-10-13 ④) — 검색할 때 한 번만 읽는다(주기 없음, 검색 1회 = 조회 1건 추가). RLS가 내가 든 방으로 좁힌다.
+    // 개인 공간: 내 보관 1:1의 글을 같은 글 조회에 더한다(org_id 없음 또는 그 방). 조직 공간: 글 조회는 그대로, 결과를 누를 때 이 행으로 읽기 전용으로 연다(Q3).
+    // 못 읽으면 종전 검색 그대로(보관 방 없이) — 진단에만 남긴다.
+    const archivedQ = q(supabase.from('msgr_channels').select(`${ARCHIVED_ROOM_COLS}, msgr_channel_members(member_kind, member_id)`).eq('kind', 'dm').not('archived_at', 'is', null).not('org_id', 'is', null))
+      .then((rows) => archivedSearchRooms(rows, { uid, ownCrewIds: new Set((ownCrews?.rows ?? []).map((r) => r.id)) })).catch((e) => { pushDiag('search-archived', e?.message ?? e); return new Map(); });
+    const archived = isPersonal ? await archivedQ : null;
+    const mineIds = archived ? [...archived.values()].filter((a) => a.mine).map((a) => a.channel.id) : [];
+    const scoped = isPersonal ? (mineIds.length ? base.or(`org_id.is.null,channel_id.in.(${mineIds.join(',')})`) : base.is('org_id', null)) : base.eq('org_id', org.id);
     const { msgs, more, failed } = await fetchSearchRows(() => q(scoped.is('deleted_at', null).ilike('body', like).order('id', { ascending: false }).limit(SEARCH_LIMIT + 1)), SEARCH_LIMIT, (e) => pushDiag('search', e?.message ?? e)); // 실패를 빈 결과로 삼키지 않는다 — failed면 결과 위에 '일부만 보입니다'(검수 E, 2026-10-01)
     if (seq !== searchSeq.current) return; setSearchBusy(false);
     if (activeOrg.current !== org.id) return;
     const lc = qs.toLowerCase();
-    setSearchRes({ q: qs, msgs, more, failed, people: members.filter((m) => (m.display_name || '').toLowerCase().includes(lc)), agents: crews.filter((c) => (c.owner_user_id === uid || crewTier(c, org) === 'company') && (c.display_name.toLowerCase().includes(lc) || (c.role_text || '').toLowerCase().includes(lc))) /* 남의 에이전트는 검색에도 없다(유건 2026-09-24) */, channels: searchChannelsByName(channels, previewChannels, lc) /* 참여 전 공개 채널도 찾는다 — 눌러 미리보기로 열고 참여(점검 A·B #2) */ });
+    const archivedRooms = archived ?? await archivedQ; // 조직 공간은 글 조회와 함께 돌았다
+    if (seq !== searchSeq.current || activeOrg.current !== org.id) return;
+    setSearchRes({ q: qs, msgs, more, failed, archived: archivedRooms, people: members.filter((m) => (m.display_name || '').toLowerCase().includes(lc)), agents: crews.filter((c) => (c.owner_user_id === uid || crewTier(c, org) === 'company') && (c.display_name.toLowerCase().includes(lc) || (c.role_text || '').toLowerCase().includes(lc))) /* 남의 에이전트는 검색에도 없다(유건 2026-09-24) */, channels: searchChannelsByName(channels, previewChannels, lc) /* 참여 전 공개 채널도 찾는다 — 눌러 미리보기로 열고 참여(점검 A·B #2) */ });
   }; // 하단 프로필(이름) 클릭 → 메뉴(내 계정·로그아웃) — 로그아웃 버튼은 여기로(유건 지시 2026-09-09)
   const [friends, setFriends] = useState([]); // 친구·요청(msgr_my_friends) — 레일 '친구' 절·알림함·설정 카드가 같이 쓴다
   const loadFriends = useCallback(async () => { setFriends(await q(supabase.rpc('msgr_my_friends')).catch(() => [])); }, []);
@@ -2205,13 +2214,16 @@ function Shell({ session }) {
     let room = null;
     if (l.archived) {
       const from = activeOrg.current;
-      const row = await q(supabase.from('msgr_channels').select('id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids, org_id, archived_at').eq('id', l.channelId).maybeSingle()).catch(() => null);
+      const row = await q(supabase.from('msgr_channels').select(ARCHIVED_ROOM_COLS).eq('id', l.channelId).maybeSingle()).catch(() => null);
       if (activeOrg.current !== from) return;
       if (!row) { setErr(t('dm.archived.fail')); return; }
       if (row.archived_at) room = { orgId: l.orgId, channel: row, crewId: l.crewId, unread: l.unread ?? 0 };
     }
     runInSpace(l.orgId, () => { if (room) setEarlierRoom(room); setChId(l.channelId); setPage('chat'); setRail(false); setSheet(null); });
   };
+  // 검색 결과가 보관 방의 글이면(총괄 결정 2026-10-13 ④, Q3) — 검색 때 읽은 행으로 그 조직에 옮겨 읽기 전용으로 연다(추가 조회 없음). 이전 대화 보기와 같은 earlierRoom.
+  // 안 읽은 수는 모른다(0) — 읽음 커서는 쓰지 않는다(archivedReadStep 'skip').
+  const openArchivedHit = (a, mid) => runInSpace(a.orgId, () => { setEarlierRoom({ orgId: a.orgId, channel: a.channel, crewId: a.crewId, unread: 0 }); setChId(a.channel.id); setPage('chat'); setRail(false); setSheet(null); setJump(mid ? { ch: a.channel.id, mid } : null); });
   // ── 개인 공간 에이전트 1:1(2026-09-30): 내 개인 크루와 한 방. 남의 크루면 그 주인(친구)과의 1:1. AI 이용 동의 전이면 동의부터 받는다 ──
   // text = 그 방 입력창에 옮겨 둘 글(조직에서 방 밖 멘션으로 쓴 글을 개인 1:1로 가져올 때 — openDm). 동의를 거쳐도 남는다. 보내기는 사람이 누른다.
   const openPersonalCrewDm = async (crewId, text = '') => {
@@ -3161,7 +3173,7 @@ function Shell({ session }) {
         ) : page === 'activity' && org ? (
           <Activity org={org} uid={uid} isAdmin={!!isAdmin} channels={channels} previewChannels={previewChannels} members={members} crews={crews} nameCrews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onNote={setNote} onError={setErr} onBack={backFromPage} onMenu={openNav} onOpenChannel={(id) => { setChId(id); setPage('chat'); }} />
         ) : page === 'search' && org ? (
-          <SearchPage res={searchRes} busy={searchBusy} channels={[...channels, ...previewChannels]} members={members} crews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, mid) => { setChId(id); setPage('chat'); setJump(mid ? { ch: id, mid } : null); }} onCrew={openers.search} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} phoneQ={isPhone ? { q: searchQ, set: setSearchQ, run: runSearch } : null} />
+          <SearchPage res={searchRes} busy={searchBusy} channels={[...channels, ...previewChannels, ...[...(searchRes?.archived?.values() ?? [])].map((a) => a.channel)]} members={members} crews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, mid) => { const a = searchRes?.archived?.get(id); if (a && !channels.some((c) => c.id === id)) { openArchivedHit(a, mid); return; } setChId(id); setPage('chat'); setJump(mid ? { ch: id, mid } : null); }} onCrew={openers.search} onDm={(id) => openDm('user', id)} onBack={backFromPage} onMenu={openNav} phoneQ={isPhone ? { q: searchQ, set: setSearchQ, run: runSearch } : null} />
         ) : page === 'inbox' && org ? (
           <Inbox items={inbox} prevSeen={inboxPrev} initialKind={inboxKind} onReadAll={() => { const now = Date.now(); setInboxPrev(now); const next = { ...inboxSeen, [org.id]: now }; setInboxSeen(next); writeInboxSeen(next); const dmIds = new Set(channels.filter((c) => c.kind === 'dm').map((c) => c.id)); const top = new Map(); for (const it of inbox) { const mid = Number(it.key.split(':')[1]); if (it.channel_id && dmIds.has(it.channel_id) && it.kind !== 'approval' && it.kind !== 'friend' && Number.isInteger(mid) && mid > (top.get(it.channel_id) ?? 0)) top.set(it.channel_id, mid); } for (const [cid, mid] of top) markRead(cid, mid); resyncBadge(); }} channels={channels} crews={shownCrews} nameOfUser={nameOfUser} dmName={dmName} onOpen={(id, it) => { if (!id) { if (it?.kind === 'system') { if (isAdmin) { setPage('settings'); setSettingsTab('org'); } return; } setPage('settings'); setSettingsTab('friends'); return; } if (!it?.joinReq && openAgentDmInstead(id, 'inbox')) return; if (it?.joinReq) { if (id === chId) { setChSheet(true); setSheetReqTick((x) => x + 1); } else sheetAfterNav.current = true; } setChId(id); setPage('chat'); }} onBack={backFromPage} onMenu={openNav} />
         ) : page === 'settings' || page === 'orgsettings' || (isPhone && page.startsWith('set-')) ? (
