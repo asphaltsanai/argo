@@ -258,6 +258,29 @@ test('고정 모드 실왕복 — 카탈로그 client_id가 있으면 DCR을 건
   assert.equal((await callConnectorTool(WS, 'fix-live', 'search_threads_demo', { query: 'q' })).ok, true);
 });
 
+// 2026-10-13 오피스 원격 MCP — 미리 등록한 클라이언트만 받는 인가 서버(Supabase OAuth 2.1, DCR 끔)는 redirect_uri를 포트까지 정확히 맞춘다.
+// 카탈로그의 고정 포트(redirect_port)로 콜백을 열어, 연결 전에 등록해 둔 주소 그대로 왕복한다
+test('고정 포트 실왕복 — redirect_port를 주면 그 포트의 /callback으로, 미리 등록한 주소와 정확히 같다', async () => {
+  const s = await newServer();
+  const { createServer } = await import('node:net');
+  const port = await new Promise((r) => { const t = createServer(); t.listen(0, '127.0.0.1', () => { const p = t.address().port; t.close(() => r(p)); }); });
+  const CID = 'argo-fixed-port-client', redirect = `http://127.0.0.1:${port}/callback`;
+  s.registerClient({ client_id: CID, redirect_uris: [redirect], token_endpoint_auth_method: 'none', grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], scope: 'spike.read' });
+  const catalog = [{ id: 'port-live', name: '고정 포트 데모', url: s.mcpUrl, scopes: ['spike.read'], note: '', oauth: { client_id: CID }, redirect_port: port }];
+  const { authUrl, done } = await connectConnector(WS, 'port-live', { catalog });
+  assert.equal(new URL(authUrl).searchParams.get('redirect_uri'), redirect, '등록한 주소 그대로');
+  await approve(authUrl);
+  assert.deepEqual(await done, { ok: true, serverId: 'port-live' });
+  assert.equal(s.counters.dcr, 0);
+});
+
+test('스키마 — redirect_port는 1024~65535 정수만', () => {
+  assert.deepEqual(connectorCatalogItemErrors({ ...OK_ITEM, redirect_port: 47321 }), []);
+  for (const bad of [80, 70000, '47321', 1.5]) assert.deepEqual(connectorCatalogItemErrors({ ...OK_ITEM, redirect_port: bad }), ['redirect_port'], String(bad));
+  assert.equal(connectorServerDef({ ...OK_ITEM, redirect_port: 47321 }).redirect_port, 47321);
+  assert.equal('redirect_port' in connectorServerDef(OK_ITEM), false, '주지 않으면 지금처럼 임의 포트');
+});
+
 test('카탈로그에 없는 id — 조용한 무동작 대신 정직 실패, 문구는 회사 언어를 따른다', async () => {
   await assert.rejects(connectConnector(WS, 'nope', { catalog: [] }), /카탈로그에 없는 커넥터/);
   await assert.rejects(connectConnector(WS, 'nope', { catalog: [], lang: 'en' }), /No such connector/);

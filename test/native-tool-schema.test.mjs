@@ -79,13 +79,14 @@ test('S3. 배선 — 네이티브 턴이 벤더로 보내는 tools 전량에 req
   } finally { await srv.close(); }
 });
 
-test('S3b. 메신저 1:1 턴의 크루 도구 전량(오피스 회사·문서함·할 일·페이지·거래·메일 포함) — 엄격 xAI 가짜 벤더가 턴을 받아 주고, 중첩 object(거래 품목 줄)까지 required가 있다', async () => {
+test('S3b. 메신저 1:1 턴의 크루 도구 전량 — 엄격 xAI 가짜 벤더가 턴을 받아 준다(오피스 도구는 2026-10-13 오피스 원격 MCP 커넥터로 옮겨 본체 크루 도구에 없다)', async () => {
   const { makeCrewServer } = await import('../src/chat.mjs');
   const ws = 'sch3b'; await createCompany(ws, '스키마3b', '사장', 'owner-uid'); const root = paths(ws).root;
   const dm = { kind: 'msgr', chatType: 'group', channelKind: 'dm', orgId: '11111111-1111-4111-8111-111111111111', channelId: 'dm-1', crewId: 'crew-1', uid: 'owner-uid', wsId: ws, origin: 'owner-uid' };
   const sink = []; makeCrewServer(ws, 's', 'S', [], 0, [], dm, 'ko', [], '', sink);
   const office = ['office', 'office_files', 'office_work', 'office_deals', 'office_mail', 'office_briefing'];
-  assert.deepEqual(office.filter((n) => !sink.some((d) => d.name === n)), [], '메신저 1:1 턴에 오피스 도구 여섯이 실린다');
+  assert.deepEqual(office.filter((n) => sink.some((d) => d.name === n)), [], '메신저 1:1 턴에 본체 오피스 도구가 없다');
+  assert.ok(sink.length >= 10, `크루 도구 ${sink.length}개`);
   const strict = await startStrictVendor({ vendor: 'xai', reply: (body) => ({ id: 'm1', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }) });
   try {
     let last; for await (const ev of nativeQuery({ wsId: ws, slug: 's', prompt: '안녕', cwd: root, systemPrompt: 'SYS', model: 'grok-4', saveSession: false,
@@ -93,8 +94,7 @@ test('S3b. 메신저 1:1 턴의 크루 도구 전량(오피스 회사·문서함
     assert.equal(last.subtype, 'success', `엄격 벤더가 거절하지 않는다: ${JSON.stringify(last.errors ?? null)}`);
     const tools = strict.calls[0].body.tools;
     assert.deepEqual(tools.filter((t) => missing(t.input_schema).length).map((t) => t.name), [], 'required 없는 object 노드를 가진 도구 0');
-    for (const n of office) assert.deepEqual(tools.find((t) => t.name === `mcp__crew__${n}`)?.input_schema.required, ['action'], n);
-    assert.deepEqual(tools.find((t) => t.name === 'mcp__crew__office_deals').input_schema.properties.lines.items.required, ['item', 'unit_price']);
+    for (const d of sink) assert.ok(tools.some((t) => t.name === `mcp__crew__${d.name}`), `${d.name}이 벤더 tools에 실린다`);
   } finally { await strict.close(); }
 });
 

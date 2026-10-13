@@ -1,6 +1,6 @@
-// 능동 비서 — 일정 감지(코드, LLM 0회). 읽기는 에이전트 일정 도구와 같은 RPC(office_event_list — stable, 쓰기 없음)를 같은 기기 세션으로 부른다.
+// 능동 비서 — 일정 감지(코드, LLM 0회). 읽기는 오피스 일정 RPC(office_event_list — stable, 쓰기 없음)를 같은 기기 세션으로 부른다.
 // 반복 회차는 화면·도구와 같은 occurrences로 편다(매주=시작 요일, 매월=없는 날 건너뜀, UNTIL 포함, 제외 날짜) — 따로 계산하지 않는다.
-import { occurrences, kstDateOf } from '../gateway/office-calendar.mjs';
+import { occurrences, kstDateOf } from './office-read.mjs';
 import { addDays, instantIn } from './rules.mjs';
 
 export const CAL_READ_MS = 15 * 60_000;     // 읽기 실패 뒤 다시 읽기까지의 최대 간격(tick.mjs) — 전체 읽기 간격은 설정 intervalMinutes(config.mjs readIntervalMs, 10·15·30·60분, 기본 15)
