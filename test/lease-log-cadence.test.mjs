@@ -120,3 +120,34 @@ test('리스 만료 경계 — 쉬는 보유자의 글은 다른 기기가 보�
   }
   assert.ok(oldest < LEASE_TTL_MS - 40_000, `다른 기기가 본 가장 오래된 글 ${oldest / 1000}초 — TTL ${LEASE_TTL_MS / 1000}초까지 여유`);
 });
+
+/* ── T1: 텔레그램 클레임 — 보유자는 60초마다만 다시 쓴다(판정·읽기는 30초) ── */
+
+const { setClaimTokens, renewTokenClaims, tokenOwnership, tokenClaimHash, _resetTokenClaimsForTest, CLAIM_REWRITE_MS, TG_CLAIM_TTL_MS } = sync;
+const CLAIM_KEY = (owner, tok) => `${owner}/.tg-claims/${tokenClaimHash(tok)}.json`;
+
+test('쉬는 클레임 보유자(토큰 5개) — 10분 동안 토큰마다 읽기는 30초, 쓰기는 60초에 한 번, 소유는 끊기지 않는다', async () => {
+  _resetTokenClaimsForTest();
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'owner-claims'; const toks = ['c1', 'c2', 'c3', 'c4', 'c5'];
+  setClaimTokens(toks);
+  let now = Date.now();
+  await renewTokenClaims(owner, { now }); // 획득(쓰기 + 확인 읽기)
+  for (const t of toks) assert.equal(tokenOwnership(t).mine, true);
+  const base = Object.fromEntries(toks.map((t) => [t, { put: f.calls.byKey.get(`PUT ${CLAIM_KEY(owner, t)}`) || 0, get: f.calls.byKey.get(`GET ${CLAIM_KEY(owner, t)}`) || 0 }]));
+  let ticks = 0; const lost = [];
+  for (let el = 0; el < 10 * 60_000; el += 30_000) {
+    now += 30_000; ticks += 1;
+    await renewTokenClaims(owner, { now });
+    for (const t of toks) if (!tokenOwnership(t).mine) lost.push(`${t}@${el}`);
+  }
+  for (const t of toks) {
+    const puts = (f.calls.byKey.get(`PUT ${CLAIM_KEY(owner, t)}`) || 0) - base[t].put;
+    const gets = (f.calls.byKey.get(`GET ${CLAIM_KEY(owner, t)}`) || 0) - base[t].get;
+    assert.ok(puts >= 9 && puts <= 10, `${t}: 10분 쓰기 ${puts}번 — 60초에 한 번(예전 30초면 20번)`);
+    assert.equal(gets, ticks, `${t}: 읽기 = 판정 수(${ticks})`);
+    assert.ok(now - f.get(CLAIM_KEY(owner, t)).ts < TG_CLAIM_TTL_MS - 30_000, `${t}: 다른 기기가 보기에 늘 살아 있는 클레임`);
+  }
+  assert.deepEqual(lost, [], '소유가 끊긴 판정 없음');
+  assert.equal(CLAIM_REWRITE_MS, 60_000);
+});

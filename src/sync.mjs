@@ -687,7 +687,10 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
    자기 기기에 저장된 토큰만 클레임해 폴링한다. 같은 토큰을 두 기기에 연결하면 나중 기기가 'other'로 물러나
    카드에 "다른 기기에서 수신 중"이 보인다. 토큰 원문은 어디에도 올리지 않는다(sha256 지문만). */
 export const TG_CLAIM_TTL_MS = LEASE_TTL_MS;
-const CLAIM_RENEW_MS = 30_000; // 갱신 주기 — 토큰마다 요청이 나가므로 리스(8s)보다 성기게(TTL 120s의 1/4)
+const CLAIM_RENEW_MS = 30_000; // 판정 주기 — 토큰마다 읽기가 나가므로 리스(8s)보다 성기게(TTL 120s의 1/4)
+/** 확인된 보유자의 다시 쓰기 간격 — 원격 글이 내 것이고 이만큼 새것이면 읽기만 한다(TTL의 1/2, 리스 LEASE_RENEW_MS와 같은 규칙).
+    예전에는 30초 판정마다 토큰별로 다시 썼다(토큰 20개 계정 하나가 시간당 약 3,800건 — 2026-10-13 로그 수집 과금). (export: 회귀 테스트용) */
+export const CLAIM_REWRITE_MS = TG_CLAIM_TTL_MS / 2;
 const CLAIM_NEVER = -Infinity; // renewedAt 센티널 '한 번도 안 돌았음/즉시 실행' — 0이면 작은 now를 주는 하네스에서 레이트리밋이 조용히 옛 동작(재검수 L-C)
 const claimState = (globalThis.__argoTgClaims ??= { tokens: new Set(), byHash: new Map(), renewedAt: CLAIM_NEVER, bootAt: Date.now(), removed: new Set() });
 const CLAIM_DIR = '.tg-claims';
@@ -768,6 +771,12 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     if (claimDecision(cur, me, now) === 'other') {
       if (prev?.mine) console.log(`[argo] 텔레그램 토큰 클레임 양보 → ${deviceLabel(cur.deviceId)} (${hash.slice(0, 6)})`);
       claimState.byHash.set(hash, { mine: false, holder: cur.deviceId, ts: now });
+      continue;
+    }
+    // 갱신 생략 — 이미 확인된 보유자이고 원격 글도 내 것이며 CLAIM_REWRITE_MS 안에 썼다. 읽기만 했으니 보유 시각은 그 글을 쓴 시각 그대로 둔다
+    // (쓰기 실패 때 TTL 안 유지 판정의 기준 — 아래 upErr 분기).
+    if (prev?.mine && cur?.deviceId === me && now - Number(cur.ts) < CLAIM_REWRITE_MS && now - Number(cur.ts) >= 0) {
+      claimState.byHash.set(hash, { mine: true, holder: me, ts: now, ownedAt: Number(cur.ts) });
       continue;
     }
     const nonce = randomUUID();
