@@ -150,6 +150,15 @@ jobs:
             done
             echo "✗ 공증 3회 모두 미완"; return 1
           }
+          # 스테이플·검증 헬퍼 — 애플 CloudKit 연결 끊김(NSURLError -1005, Error 68)이 공증 Accepted 뒤에도 난다(2026-10-13 0.1.59 인텔). 30초 간격 5회까지.
+          staple() {
+            local f="$1" attempt
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler staple "$f" && xcrun stapler validate "$f"; then return 0; fi
+              echo "⚠ 스테이플·검증 실패($attempt/5): $(basename "$f") — 30초 후 재시도"; sleep 30
+            done
+            echo "✗ 스테이플·검증 5회 모두 실패: $(basename "$f")"; return 1
+          }
           KEYCHAIN_PW="$(openssl rand -base64 24)"
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$P12"
           security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
@@ -175,8 +184,7 @@ jobs:
           echo "=== 공증: .app ==="
           ditto -c -k --keepParent --sequesterRsrc "$APP" "$APP_ZIP"
           notarize "$APP_ZIP" || exit 1
-          xcrun stapler staple "$APP"
-          xcrun stapler validate "$APP"
+          staple "$APP" || exit 1
           echo "=== 업데이터 아티팩트 재생성 ==="
           MACOS_DIR="$BUNDLE_DIR/macos"
           APP_BASENAME="$(basename "$APP")"
@@ -193,8 +201,7 @@ jobs:
           rm -rf "$DMG_STAGE"
           codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$DMG_TMP"
           notarize "$DMG_TMP" || exit 1
-          xcrun stapler staple "$DMG_TMP"
-          xcrun stapler validate "$DMG_TMP"
+          staple "$DMG_TMP" || exit 1
           rm -f "$DMG_DIR"/*.dmg
           if [ -n "$ORIG_DMG" ]; then cp "$DMG_TMP" "$ORIG_DMG"; else cp "$DMG_TMP" "$DMG_DIR/argo-messenger.dmg"; fi
           ls -la "$DMG_DIR"

@@ -240,6 +240,18 @@ jobs:
             echo "✗ 공증 3회 모두 미완(애플 큐 지연/장애 지속)"; return 1
           }
 
+          # 스테이플·검증 헬퍼 — stapler는 애플 CloudKit(티켓 조회)에 붙는데, 인텔 러너에서 연결 끊김(NSURLError -1005,
+          # Error 68)이 공증 Accepted 뒤에도 잇달아 났다(2026-10-13 0.1.105 인텔 3회 연속). 일시 오류는 30초 간격으로 5회까지 다시 한다.
+          # 공증 자체가 안 된 파일은 5회 모두 실패해 그대로 멈춘다(미공증본 유출 없음).
+          staple() {
+            local f="$1" attempt
+            for attempt in 1 2 3 4 5; do
+              if xcrun stapler staple "$f" && xcrun stapler validate "$f"; then return 0; fi
+              echo "⚠ 스테이플·검증 실패($attempt/5): $(basename "$f") — 30초 후 재시도"; sleep 30
+            done
+            echo "✗ 스테이플·검증 5회 모두 실패: $(basename "$f")"; return 1
+          }
+
           # (1) 재서명용 임시 키체인 — 랜덤 비번은 이 스텝 셸에만 존재(GITHUB_ENV 노출 없음)
           KEYCHAIN_PW="$(openssl rand -base64 24)"
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$P12"
@@ -288,8 +300,7 @@ jobs:
           echo "=== 공증: .app ==="
           ditto -c -k --keepParent --sequesterRsrc "$APP" "$APP_ZIP"
           notarize "$APP_ZIP" || exit 1
-          xcrun stapler staple "$APP"
-          xcrun stapler validate "$APP"
+          staple "$APP" || exit 1
           echo "✓ .app 공증·스테이플 완료"
 
           # (4a) 업데이터 tar.gz(+.sig) 재생성 — 스테이플된 .app으로. Collect 글롭이 그대로 집도록 원래 이름 유지
@@ -313,8 +324,7 @@ jobs:
           codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" --keychain "$KEYCHAIN" "$DMG_TMP"
           echo "=== 공증: dmg ==="
           notarize "$DMG_TMP" || exit 1
-          xcrun stapler staple "$DMG_TMP"
-          xcrun stapler validate "$DMG_TMP"
+          staple "$DMG_TMP" || exit 1
           rm -f "$DMG_DIR"/*.dmg
           if [ -n "$ORIG_DMG" ]; then cp "$DMG_TMP" "$ORIG_DMG"; else cp "$DMG_TMP" "$DMG_DIR/argo_aarch64.dmg"; fi
           ls -la "$DMG_DIR"
