@@ -60,7 +60,7 @@ export async function middleware(req) {
   // /api/billing/webhook — 호출 주체가 레몬스퀴지 서버(세션 없음). 인증은 라우트 자체의
   // HMAC 서명 검증(fail-closed)이 담당한다 — 미들웨어가 막으면 결제 이벤트가 영영 도달 못 한다
   // (상주 스모크 실측 2026-07-28: 미들웨어 401 '로그인이 필요합니다'가 라우트보다 먼저 응답).
-  // /oauth/consent — 오피스 동의 화면으로 넘기기만 하는 경로(app/oauth-consent.mjs). 이 기기의 로그인과 무관하다 —
+  // /oauth/consent — 오피스 동의 화면으로 넘기기만 하는 경로(src/oauth-consent.mjs). 이 기기의 로그인과 무관하다 —
   //   동의는 오피스에서 오피스 로그인으로 받으므로, 여기서 /login으로 돌리면 커넥터 연결이 본체 로그인에 막힌다.
   const isPublic = p === '/login' || p === '/legal' || p === '/oauth/consent' || p === '/api/ping' || p === '/api/billing/webhook' || p.startsWith('/auth') || p.startsWith('/api/auth/pair') || p.startsWith('/api/device/');
   // 기기 연동 모드 — 마커 쿠키는 UX 게이트(리다이렉트 회피)일 뿐, 권한은 라우트 currentUser(기기 파일)가 검증.

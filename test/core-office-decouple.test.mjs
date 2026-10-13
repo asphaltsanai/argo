@@ -81,8 +81,8 @@ test('지운 파일 — 오피스 크루 도구·패널 관문·로컬 오피스
 
 // 운영 Supabase의 Site URL(localhost:3001) + Authorization Path(/oauth/consent) → 본체가 오피스 동의 화면으로 넘긴다
 test('OAuth 동의 넘김 — 쿼리를 그대로 붙여 오피스 /oauth/consent로, 목적지는 고정', async () => {
-  const { officeConsentTarget } = await import('../app/oauth-consent.mjs');
-  const { OFFICE_CONSENT_URL } = await import('../app/oauth-consent.mjs');
+  const { officeConsentTarget } = await import('../src/oauth-consent.mjs');
+  const { OFFICE_CONSENT_URL } = await import('../src/oauth-consent.mjs');
   const ko = CONNECTOR_CATALOG.find((c) => c.id === 'argo-office');
   assert.equal(new URL(OFFICE_CONSENT_URL).origin, new URL(ko.url).origin, '커넥터와 같은 오피스');
   assert.equal(officeConsentTarget('http://localhost:3001/oauth/consent?authorization_id=abc-123'),
