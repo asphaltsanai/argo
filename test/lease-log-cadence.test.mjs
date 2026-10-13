@@ -211,3 +211,46 @@ test('클레임 읽기 오류가 TTL 넘게 이어지면 TTL에 한 번만 써 �
   assert.equal(puts(), 1, `TTL + 60초 동안 쓰기 ${puts()}번 — 자가 복구 한 번`);
   assert.equal(tokenOwnership('e1').mine, false, '확인 읽기도 실패 — 보수적으로 미보유');
 });
+
+/* ── L1: 단일 기기 보유자의 리스 읽기 간격 — 15초(넘겨받기 대기 22초보다 7초 짧게), 깨면 바로 ── */
+
+const { leaseReadInterval, waitLeaseTick, LEASE_SOLO_READ_MS, HANDOVER_WAIT_MS } = sync;
+
+test('읽기 간격 — 단일 기기의 확인된 보유자만 15초, 엄격 판정·예비·미보유·넘겨받는 중·읽기 실패 중은 8초', () => {
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  assert.equal(LEASE_SOLO_READ_MS, 15_000);
+  assert.ok(LEASE_SOLO_READ_MS <= HANDOVER_WAIT_MS - 7_000, '옛 버전의 넘겨받는 기기도 담당을 시작하기 전에 이 보유자가 남의 글을 읽는다');
+  holder(f, 'owner-iv'); assert.equal(leaseReadInterval(), 15_000, '단일 기기 보유자');
+  holder(f, 'owner-iv', { sawPeer: true }); assert.equal(leaseReadInterval(), 8_000, '다른 기기를 본 계정(엄격 판정 — 확인 기한 18초)');
+  holder(f, 'owner-iv'); process.env.ARGO_STANDBY_LEADER = '1';
+  try { assert.equal(leaseReadInterval(), 8_000, '예비 기기'); } finally { delete process.env.ARGO_STANDBY_LEADER; }
+  holder(f, 'owner-iv'); lease().ownedAt = 0; assert.equal(leaseReadInterval(), 8_000, '확인된 보유가 아님(기동 기본값)');
+  holder(f, 'owner-iv'); lease().leader = false; assert.equal(leaseReadInterval(), 8_000, '담당 아님');
+  holder(f, 'owner-iv'); lease().pending = { token: 'p', ts: Date.now() }; assert.equal(leaseReadInterval(), 8_000, '넘겨받는 중');
+  holder(f, 'owner-iv'); lease().readFailSince = Date.now(); assert.equal(leaseReadInterval(), 8_000, '읽기 실패 중');
+});
+
+test('쉬는 단일 기기 보유자 — 10분 동안 리스 읽기 40번(예전 75번)·쓰기 10번 이하, 담당은 끊기지 않는다', async () => {
+  mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'owner-solo-loop'; holder(f, owner);
+  const each = []; let el = 0;
+  while (el < 10 * 60_000) { const step = leaseReadInterval(); el += step; mock.timers.tick(step); awakeNow(null); await renewLease(owner, { runnerUsable: true }); each.push(isCloudLeader()); }
+  const gets = f.calls.byKey.get(`GET ${LEASE_KEY(owner)}`); const puts = f.calls.byKey.get(`PUT ${LEASE_KEY(owner)}`) || 0;
+  assert.equal(gets, 40, `읽기 ${gets}번`);
+  assert.ok(puts >= 8 && puts <= 10, `쓰기 ${puts}번`);
+  assert.deepEqual(each.filter((x) => !x), []);
+});
+
+test('잠들었다 깨면 기다리던 판정을 바로 끝낸다 — 깸 하나에 한 번만(판정이 checkedAt을 남기지 않아도 2초 고리가 되지 않게)', async () => {
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  holder(f, 'owner-wake');
+  let slept = 0; const sleep = async (d) => { slept += d; };
+  globalThis.__argoSyncAwake.wokeAt = Date.now() + 1; // 방금 깼다(마지막 확인보다 뒤)
+  assert.equal(await waitLeaseTick(15_000, sleep), 'woke', '첫 관찰(2초)에서 끝낸다');
+  assert.ok(slept <= 2_000, `기다린 시간 ${slept}ms`);
+  mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  slept = 0;
+  assert.equal(await waitLeaseTick(6_000, async (d) => { slept += d; mock.timers.tick(d); }), 'timeout', '같은 깸으로 다시 끝내지 않는다');
+  assert.equal(slept, 6_000, '끝까지 기다린다');
+});

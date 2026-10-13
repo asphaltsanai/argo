@@ -1982,10 +1982,37 @@ async function leaseTick() {
   await renewLease(owner, { runnerUsable: await probeRunnerUsable(targets) });
   if (holdsDaemonLease('gateway')) await renewTokenClaims(owner).catch((e) => console.warn('[argo] 텔레그램 토큰 클레임 갱신 실패:', String(e.message).slice(0, 80))); // 토큰 단위 소유 — 리더와 별개
 }
-/** 리스 타이머 — 동기화 루프와 따로 CYCLE_MS마다 leaseTick을 돈다(한 번에 하나: 앞 판정이 걸리면 끝난 뒤 바로 다음). 요청은 종전 동기화 주기마다 한 번과 같다.
+/** 리스 타이머 — 동기화 루프와 따로 leaseReadInterval()마다(보통 CYCLE_MS, 단일 기기 보유자는 LEASE_SOLO_READ_MS) leaseTick을 돈다(한 번에 하나: 앞 판정이 걸리면 끝난 뒤 바로 다음).
     기동 뒤 첫 리스 읽기가 오류였으면 BOOT_RETRY_MS 뒤에 한 번만 다시 읽는다 — 읽기 오류면 단일 기기도 담당이 아니므로(leaseUnreadable) 일시 오류 하나로 첫 담당이
     한 주기(8초) 늦어지지 않게(D 4차 검수: 약 9.5초). 요청은 기동 때 한 번만 1건 늘어난다. */
 const BOOT_RETRY_MS = 1_000;
+/** 단일 기기 보유자의 리스 읽기 간격(2026-10-13 로그 수집 과금 — 리스 읽기 한 번 = edge GET + storage GET 로그 2줄, 계정 64곳 중 61곳이 기기 한 대).
+    다른 기기를 본 적 없는 계정(엄격 판정 아님)의 확인된 보유자만 CYCLE_MS(8초) 대신 이 간격으로 읽는다. 엄격 판정(다른 기기를 본 계정·예비 기기)은
+    확인 기한(LEASE_CONFIRM_VALID_MS) 때문에 그대로 CYCLE_MS다. 상한은 넘겨받기 대기(HANDOVER_WAIT_MS)보다 LEASE_SOLO_SLACK_MS 짧게:
+    더 높은 역할의 기기(argo run 우선)가 이 보유자의 리스를 가져갈 때, 그 기기는 옛 버전이어도 HANDOVER_WAIT_MS를 기다린 뒤 담당을 시작하므로
+    이 보유자는 그 안에 남의 글을 읽고 물러난다(겹침 0). 운영 값 15초(22초 − 7초). 짧은 주기 시험(ARGO_SYNC_CYCLE_MS)에서도 같은 관계가 유지된다.
+    (export: 회귀 테스트용) */
+const LEASE_SOLO_SLACK_MS = 7_000;
+export const LEASE_SOLO_READ_MS = Math.max(CYCLE_MS, HANDOVER_WAIT_MS - LEASE_SOLO_SLACK_MS);
+/** 다음 리스 판정까지의 간격 — 단일 기기의 확인된 보유자(넘겨받는 중·읽기 실패 중이 아님)만 LEASE_SOLO_READ_MS, 나머지는 CYCLE_MS. (export: 회귀 테스트용) */
+export function leaseReadInterval() {
+  if (strictLease()) return CYCLE_MS;
+  if (!(leaseState.leader && leaseState.ownedAt > 0) || leaseState.pending || (leaseState.readFailSince || 0) > 0) return CYCLE_MS;
+  return LEASE_SOLO_READ_MS;
+}
+/** 리스 판정 사이를 기다린다 — 깨어 있음 관찰 간격(2초)으로 나눠 기다리다가 잠들었다 깬 것을 알면 바로 끝낸다. 단일 기기는 깬 뒤 리스를 다시 확인하기 전까지
+    담당이 아니므로(isCloudLeader) 간격이 길어진 만큼 깬 뒤 공백이 늘지 않게 한다. (export: 회귀 테스트용) */
+export async function waitLeaseTick(ms, sleep = (d) => new Promise((r) => setTimeout(r, d))) {
+  const until = Date.now() + ms;
+  for (let left = ms; left > 0; left = until - Date.now()) {
+    await sleep(Math.min(AWAKE_TICK_MS, left));
+    observeAwake();
+    // 깸 하나에 한 번만 일찍 끝낸다 — 판정이 checkedAt을 남기지 않는 경로가 있어도 2초마다 읽는 고리가 되지 않게.
+    const woke = awake.wokeAt || 0;
+    if (woke > (leaseState.checkedAt || 0) && woke > (leaseState.wakeHandled || 0)) { leaseState.wakeHandled = woke; return 'woke'; }
+  }
+  return 'timeout';
+}
 function startLeaseLoop() {
   if (globalThis.__argoLeaseLoop) return;
   globalThis.__argoLeaseLoop = true;
@@ -1995,12 +2022,12 @@ function startLeaseLoop() {
       const t0 = Date.now();
       const readsBefore = leaseState.reads || 0;
       try { await leaseTick(); } catch (e) { console.warn('[argo] 실행 담당 판정 실패:', String(e?.message || e).slice(0, 120)); }
-      let wait = Math.max(0, CYCLE_MS - (Date.now() - t0));
+      let wait = Math.max(0, leaseReadInterval() - (Date.now() - t0));
       if (firstRead && (leaseState.reads || 0) > readsBefore) { // 이 판정에서 처음 리스를 읽었다
         firstRead = false;
         if ((leaseState.readFailSince || 0) > 0) wait = Math.min(wait, BOOT_RETRY_MS);
       }
-      await new Promise((r) => setTimeout(r, wait));
+      await waitLeaseTick(wait);
     }
   })();
 }
