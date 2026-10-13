@@ -237,13 +237,14 @@ export const CONNECTOR_CATALOG = [
   },
   {
     // 아르고 오피스 원격 MCP(2026-10-13 오피스 독립 앱 분리 — 유건 지시). 에이전트는 오피스를 이 커넥터로만 쓴다(본체의 오피스 크루 도구는 지웠다).
-    // 인증은 Supabase Auth의 OAuth 2.1 서버(자동 등록 DCR — 고정 client_id 없음). 쓰기는 오피스 서버가 '확인할 변경'으로 올리고 사람이 오피스 화면에서 실행한다 —
+    // 인증은 Supabase Auth의 OAuth 2.1 서버(DCR 끔 — 운영에 미리 등록한 공개 클라이언트 'Argo', PKCE). 쓰기는 오피스 서버가 '확인할 변경'으로 올리고 사람이 오피스 화면에서 실행한다 —
     // 그래서 도구는 전부 readOnlyHint이고 여기서 결재를 더 걸지 않는다(같은 쓰기에 결재 카드와 오피스 확인이 겹치지 않게).
     id: 'argo-office',
     name: '아르고 오피스',
     url: 'https://argo-office.vercel.app/api/mcp',
     // 미리 등록한 클라이언트만 받는다(DCR 끔, 총괄 결정 2026-10-13) — Supabase는 redirect_uri를 포트까지 맞추므로 고정 포트. 등록 주소: http://127.0.0.1:47317/callback
-    // TODO(운영 등록 뒤): oauth: { client_id: '<Supabase에 등록한 Argo 공개 클라이언트 id>' } — 없으면 연결이 DCR을 시도해 실패한다
+    // 공개 클라이언트 id(비밀 아님, 2026-10-13 운영 등록) — 오피스 Vercel env OFFICE_MCP_CLIENTS와 같은 값이어야 한다.
+    oauth: { client_id: '5f13cfbb-8ba1-4d55-993c-496f3134bc44' },
     redirect_port: 47317,
     note: '일정·할 일·페이지·거래처·거래·문서함·메일을 읽고, 바꾸는 일은 오피스 화면의 확인할 변경으로 올립니다.',
   },
@@ -268,6 +269,7 @@ export const CONNECTOR_CATALOG_EN = [
     id: 'argo-office',
     name: 'Argo Office',
     url: 'https://argo-office.vercel.app/api/mcp',
+    oauth: { client_id: '5f13cfbb-8ba1-4d55-993c-496f3134bc44' },
     redirect_port: 47317,
     note: 'Reads calendar, tasks, pages, customers, deals, files and mail; changes are filed as pending changes you run in Office.',
   },
