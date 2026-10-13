@@ -124,7 +124,7 @@ export async function scanTitle(file, { from = 0, title = null } = {}) {
 /** 기기 세션으로 만든 클라이언트 또는 null(로그인 없음·세션 사망). _mkClient·_fresh는 테스트 주입용. */
 async function sessionClient(root, { _mkClient, _fresh } = {}) {
   const fresh = _fresh ?? (await import('./devicesession.mjs')).getFreshDeviceSession;
-  const sess = await fresh({ root, ...(_mkClient ? { _mkClient } : {}) });
+  const sess = await fresh({ root, ...(_mkClient ? { _mkClient } : {}), _gateClient: null }); // 최소 앱 버전은 파일 판정만 — 짧게 끝나는 명령이 확인 요청을 기다리지 않게(src/app-gate.mjs)
   if (!sess) return null;
   const mk = _mkClient ?? (await import('@supabase/supabase-js')).createClient;
   return mk(sess.url, sess.anonKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${sess.access_token}` } } });
