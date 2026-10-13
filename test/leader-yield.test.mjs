@@ -13,7 +13,7 @@ const ROOT = await mkdtemp(join(tmpdir(), 'argo-yield-'));
 process.env.ARGO_ROOT = ROOT;
 process.env.ARGO_SYNC = '1';
 
-const { renewLease, _setSyncClientForTest, shouldYieldAcquire, YIELD_GRACE_MS, LEASE_TTL_MS } = await import('../src/sync.mjs');
+const { renewLease, _setSyncClientForTest, shouldYieldAcquire, YIELD_GRACE_MS, LEASE_TTL_MS, LEASE_RENEW_MS } = await import('../src/sync.mjs');
 const { getDeviceId } = await import('../src/workspace.mjs');
 
 /* ── 판정식 (순수) ── */
@@ -99,18 +99,21 @@ test('배선: 러너 있으면 정상 획득 + 양보 타이머 리셋', async (
 
 // 2026-09-23 DB 점검: 보유 기기가 동기화 주기(8초)마다 리스를 다시 올려 storage.objects에 업서트가 쌓였다
 // (기기 25대 × 분당 7.5회 — 누적 업데이트 4,255만 건의 한 축). 보유 중이면 TTL/4(30초)마다만 갱신한다.
-test('배선: 확인된 보유자는 30초 안에는 리스를 다시 쓰지 않고(읽기는 매번 — 탈취 감지), 30초가 지나면 다시 쓴다', async () => {
+test('배선: 확인된 보유자는 60초(LEASE_RENEW_MS) 안에는 리스를 다시 쓰지 않고(읽기는 매번 — 탈취 감지), 60초가 지나면 다시 쓴다', async () => {
   const me = await getDeviceId();
   const { client, calls } = fakeClient({ deviceId: me, token: 't0', ts: Date.now() });
   _setSyncClientForTest(client);
   setLease({ leader: true, ownedAt: Date.now() - 5_000 });
   await renewLease('owner-r1', { runnerUsable: true });
-  assert.equal(calls.upload, 0, '30초 안 — 쓰기 없음');
+  assert.equal(calls.upload, 0, '60초 안 — 쓰기 없음');
   assert.ok(calls.download >= 1, '읽기는 매 주기(검수 #689 M2)');
   assert.equal(lease().leader, true);
-  setLease({ leader: true, ownedAt: Date.now() - (LEASE_TTL_MS / 4 + 1_000) });
+  setLease({ leader: true, ownedAt: Date.now() - (LEASE_TTL_MS / 4 + 10_000) }); // 40초 — 예전 갱신 차례(30초)는 지났다
   await renewLease('owner-r1', { runnerUsable: true });
-  assert.equal(calls.upload, 1, '30초 지나면 갱신');
+  assert.equal(calls.upload, 0, '40초 — 아직 쓰지 않는다(2026-10-13 로그 수집: 30초 → 60초)');
+  setLease({ leader: true, ownedAt: Date.now() - (LEASE_RENEW_MS + 1_000) });
+  await renewLease('owner-r1', { runnerUsable: true });
+  assert.equal(calls.upload, 1, '60초 지나면 갱신');
   assert.equal(lease().leader, true);
 });
 

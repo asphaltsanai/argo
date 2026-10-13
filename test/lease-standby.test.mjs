@@ -14,7 +14,7 @@ process.env.ARGO_ROOT = await mkdtemp(join(tmpdir(), 'argo-standby-'));
 process.env.ARGO_SYNC = '1';
 writeFileSync(join(process.env.ARGO_ROOT, '.device-session.json'), JSON.stringify({ url: 'https://example.invalid', anonKey: 'anon', access_token: 'a.b.c', refresh_token: 'r', expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: 'u-standby', email: '' } }), { mode: 0o600 });
 for (const k of ['ARGO_PREFER_LEADER', 'ARGO_NO_LEADER', 'ARGO_STANDBY_LEADER']) delete process.env[k];
-const { renewLease, isCloudLeader, standbyIdle, _setSyncClientForTest, LEASE_TTL_MS, YIELD_GRACE_MS, HANDOVER_WAIT_MS, AWAKE_MIN_MS = 30_000, LEASE_CONFIRM_VALID_MS = 0 } = await import('../src/sync.mjs');
+const { renewLease, isCloudLeader, standbyIdle, _setSyncClientForTest, LEASE_TTL_MS, LEASE_RENEW_MS, YIELD_GRACE_MS, HANDOVER_WAIT_MS, AWAKE_MIN_MS = 30_000, LEASE_CONFIRM_VALID_MS = 0 } = await import('../src/sync.mjs');
 const { existsSync, readFileSync, rmSync } = await import('node:fs');
 const { leaseRole } = await import('../src/lease-role.mjs');
 const { getDeviceId } = await import('../src/workspace.mjs');
@@ -129,14 +129,14 @@ test('예비 기기는 맥을 두 대 이상 봤으면 남의 리스가 만료�
   assert.equal(f.doc().preferred, undefined);
 });
 
-test('예비 기기가 담당일 때 갱신 간격은 일반 기기와 같다 — 30초 안에는 쓰지 않는다(DB 위생)', async () => {
+test('예비 기기가 담당일 때 갱신 간격은 일반 기기와 같다 — 60초 안에는 쓰지 않는다(DB 위생)', async () => {
   role('standby');
   const f = fakeClient(fresh(ME, { standby: true }));
   _setSyncClientForTest(f.client); reset({ leader: true, ownedAt: Date.now() - 5_000 });
   await renewLease('owner-s3', { runnerUsable: true });
   assert.equal(f.calls.upload, 0);
   assert.equal(lease().leader, true);
-  reset({ leader: true, ownedAt: Date.now() - (LEASE_TTL_MS / 4 + 1_000) });
+  reset({ leader: true, ownedAt: Date.now() - (LEASE_RENEW_MS + 1_000) });
   await renewLease('owner-s3', { runnerUsable: true });
   assert.equal(f.calls.upload, 1);
   assert.equal(f.doc().standby, true, '갱신 글에도 표지가 남는다');
