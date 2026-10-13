@@ -172,15 +172,19 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       const fn = delivery ? 'msgr_bot_updates_with_delivery' : 'msgr_bot_updates';
       const args = { token, after_id: Math.max(0, offset - 1), lim };
       const blockPlan = async () => { rejects?.reject(token, 'plan'); await sleep(Math.max(0, deadline - now())); return REJECT_REPLY.plan(); };
-      let ups = null;
+      let ups = null; let gateSkipped = false;
       if (delivery && gateInUpdates) {
         try { ups = await rpc(fn, { ...args, gate: true }); }
         catch (e) {
-          if (/msgr_bot_plan_required/.test(String(e?.message ?? ''))) return blockPlan();
-          if (!missingRpcFn(e)) throw e; // 토큰 오류 등은 아래 공통 처리로
+          const m = String(e?.message ?? '');
+          if (/msgr_bot_unauthorized/.test(m)) throw e; // 토큰 오류는 아래 공통 처리(401)
+          if (/msgr_bot_plan_required/.test(m)) return blockPlan();
+          // 네 인자 함수가 없는 옛 DB면 종전 경로(msgr_bot_gate). 그 밖의 오류(판정 함수 drop → 42883, is_pro_for·중지 기록·설정 오류, 시간 초과)는
+          // 배포본처럼 막지 않는다(fail-open — 검수 2 #999): 판정 없이 아래 루프의 gate 없는 조회로 다시 받는다(오류가 날 때만 1회 더).
+          if (!missingRpcFn(e)) { console.warn('[msgr-bot] plan gate in updates skipped:', m.slice(0, 200)); gateSkipped = true; }
         }
       }
-      if (ups === null && planGate) {
+      if (ups === null && planGate && !gateSkipped) {
         const verdict = await planGate(token).catch((e) => {
           if (/msgr_bot_unauthorized/.test(String(e?.message ?? ''))) throw e;
           console.warn('[msgr-bot] plan gate skipped:', String(e?.message ?? '').slice(0, 200));

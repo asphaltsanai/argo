@@ -48,11 +48,12 @@ test('새 엣지 + 옛 DB(네 인자 함수 없음): 종전 경로로 물러난�
   assert.deepEqual(free.names(), ['msgr_bot_updates_with_delivery', 'msgr_bot_gate']);
 });
 
-test('첫 조회의 다른 오류(토큰 폐기·시간 초과)는 물러나지 않는다 — 토큰 오류는 401(종전), 시간 초과는 종전처럼 실패 응답', async () => {
+test('첫 조회의 다른 오류는 msgr_bot_gate로 물러나지 않는다 — 토큰 오류는 401(종전), 시간 초과가 이어지면 gate 없는 재조회도 실패해 종전처럼 실패 응답', async () => {
   const revoked = world({ updates: () => { throw new Error('msgr_bot_unauthorized'); } });
   const r = await revoked.poll();
   assert.equal(r.status, 401);
   assert.ok(!revoked.names().includes('msgr_bot_gate'), '토큰 오류에 판정 경로로 물러나지 않는다');
+  assert.equal(revoked.calls.length, 1, '토큰 오류는 다시 조회하지 않는다(로그 1줄)');
   const slow = world({ updates: () => { throw new Error('canceling statement due to statement timeout'); } });
   const r2 = await slow.poll();
   assert.ok(r2.status >= 500, `시간 초과는 실패 응답(${r2.status})`);
@@ -76,4 +77,20 @@ test('옛 연결 경로(delivery_protocol 없음 → msgr_bot_updates)와 gateIn
   await oldCaller.poll({ timeout: 0, delivery_protocol: 1 });
   assert.deepEqual(oldCaller.names(), ['msgr_bot_gate', 'msgr_bot_updates_with_delivery']);
   assert.equal(oldCaller.calls[1][1].gate, undefined);
+});
+
+// 검수 2 #999(MEDIUM) — 배포본은 판정이 실패하면 막지 않는다(fail-open). 판정이 첫 조회에 합쳐져도 판정 쪽 오류(함수 drop → 42883,
+// is_pro_for·중지 기록·설정 오류)가 수신을 끊으면 안 된다: 경고만 남기고 판정 없이(msgr_bot_gate도 부르지 않고) gate 없는 조회로 다시 받는다.
+test('첫 조회의 판정 쪽 오류(42883 함수 없음 등)는 막지 않는다 — 판정 없이 gate 없는 조회로 다시 받아 200(배포본 fail-open과 같음)', async () => {
+  const up = { update_id: 5, message: { message_id: 5, text: 'hi' } };
+  const w = world({ updates: (a) => { if (a.gate) throw new Error('function public.msgr_bot_gate(text) does not exist'); return [up]; }, gate: 'plan_required' });
+  const r = await w.poll();
+  assert.equal(r.status, 200, '판정 오류로 수신이 끊기지 않는다');
+  assert.deepEqual(r.body.result, [up]);
+  assert.deepEqual(w.names(), ['msgr_bot_updates_with_delivery', 'msgr_bot_updates_with_delivery'], '오류가 날 때만 1회 더 — msgr_bot_gate는 부르지 않는다');
+  assert.deepEqual(w.calls.map(([, a]) => a.gate ?? null), [true, null]);
+  for (const msg of ['canceling statement due to statement timeout', 'relation "public.msgr_crew_pauses" does not exist']) {
+    const x = world({ updates: (a) => { if (a.gate) throw new Error(msg); return []; } });
+    assert.equal((await x.poll({ timeout: 0, delivery_protocol: 1 })).status, 200, msg);
+  }
 });
