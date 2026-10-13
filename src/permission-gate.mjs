@@ -23,11 +23,6 @@ import { addApproval, loadApprovals, consumeShellApproval } from './approvals.mj
 // 불변식의 재발 — v0.1.34까지의 `join(homedir(),'.argo')` 같은 **상수 join**은 그 폴더만 훑어 관용됐고,
 // #187의 동적 join이 트리거였다). env 부재는 비실재 환경(launchd·Windows·systemd 전부 설정) —
 // 그래도 비면 틸드 확장을 fail-closed(deny)로 보수화한다(아래 isForbidden).
-/** argo office CLI를 부르는 셸 명령(10/10 분리 검수 MEDIUM-1, 2026-10-13 로컬 오피스 MCP 제거 뒤에도 업무 현황 명령 report·hold·tasks에 그대로) — 명령 자리의 argo(·argo.mjs) office, 또는 그 모듈 파일.
-    따옴표·역슬래시를 지운 뒤 본다(보안 리뷰 10/10: `sh -c "argo office …"`·`node "$P/bin/argo.mjs" office`·`ar""go`가 통과했다) — 그래서 `grep "argo office"`도 거절된다(fail-closed 오탐 수용).
-    여전히 1차 방어다(변수 간접 `a=office; argo $a`는 못 본다). 주 판정은 CLI가 스스로 하는 조상 프로세스 표지 확인(office-cli agentTurnState — 그것도 방지턱이다. 한계는 agent-peer markedAncestor 주석). */
-export const ARGO_OFFICE_SHELL_RE = /(^|[\s;&|(`])(\S*\/)?argo(\.mjs)?\s+office\b|office-(tools-cli|mcp|cli)\.mjs/;
-export const shellCallsArgoOffice = (cmd) => ARGO_OFFICE_SHELL_RE.test(String(cmd ?? '').replace(/["'\\]/g, ''));
 const homeDir = () => process.env.HOME ?? process.env.USERPROFILE ?? '';
 
 // 경로 인자를 갖는 읽기 도구 — 워크스페이스 경계를 적용한다(P1-5). TodoWrite는 경로가 없어 별도(항상 허용).
@@ -679,7 +674,6 @@ export function makePermissionGate(wsId, slug, wsRoot, from = null, lang = 'ko',
       // 이 컴퓨터의 Argo API(루프백)를 부르는 명령 — 결재 자가 승인·루틴 삭제·주인 직접 턴 열기의 통로였다(PR #916 분리 검수 재현).
       // 모든 턴(주인 턴 포함)에서 거절한다. 주 방어는 서버의 연결 상대 판정(src/agent-peer.mjs) — 이 줄은 이유를 알려 주는 앞단이다.
       if (await shellCallsArgoApi(cmd)) return { behavior: 'deny', message: ARGO_API_SHELL_MSG[lang === 'en' ? 'en' : 'ko'] };
-      if (shellCallsArgoOffice(cmd)) return { behavior: 'deny', message: lang === 'en' ? 'Agents do not run the argo office CLI from the shell — use the Argo Office connector (use_connector) if it is connected.' : '에이전트는 argo office CLI를 셸로 쓰지 않는다 — 아르고 오피스 커넥터(use_connector)가 연결돼 있으면 그것을 써라.' };
       // 메신저 문맥 턴(주인 턴 포함)의 고위험 셸 명령은 결재를 거친다(D28) — 모델이 request_approval을 부르지 않아도 코드가 카드를 만든다.
       // 승인된 같은 명령(이 크루·이 채널)은 한 번 허용한다. 대기 중이면 새 카드를 만들지 않고 그 결재를 가리킨다.
       if (opts.msgr) {
