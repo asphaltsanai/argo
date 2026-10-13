@@ -43,7 +43,7 @@ import { useLongPress, longPressHandlers } from './long-press.js';
 import { groupFlags } from './msg-group.mjs';
 import { t as tm } from './i18n.js';
 import { plainField, approvalPlainFields, orgDocTitle, approvalOneLineSummary, approvalGrade, approvalSummaryKey, approvalPageItems, approvalDecider, phoneApprovalDecider, decidableApprovals, approvalOnlyKey, approvalDeniedKey, scopePendingApprovals, highPolicyOrgs, approvalDenied, approvalCmdMode, decideApproval, readRoomJoinRequests, singleFlight } from './approval-display.js';
-import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, earlierLineLabel, archivedRoomFor, archivedSearchRooms, ARCHIVED_ROOM_COLS, archivedReadStep, clearEarlierUnread, saveAgentLook, fillAgentLooks, ownRowsReader, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
+import { agentRowState, AGENT_FILTERS, AGENT_FAV_KEY, groupAgents, rowForSpace, agentRoomTarget, agentStateRow, personalRoomFor, personalRoomKnown, agentDmRedirect, agentDmRoute, earlierAgentDms, earlierLines, earlierLineLabel, archivedRoomFor, archivedSearchRooms, ARCHIVED_ROOM_COLS, archivedReadStep, clearEarlierUnread, saveAgentLook, fillAgentLooks, ownRowsReader, withAgentCol, loadUntilListed, spaceMoveNotice, spaceMoveBack, MOVE_NOTICE_MS, agentSections, groupIsFav, favChanges, readAgentFav } from './agent-groups.mjs'; // 폰 에이전트 탭 — 같은 에이전트 한 줄·상단 메뉴·즐겨찾기(유건 2026-10-02), 1:1은 개인 방 하나(2026-10-03)
 import { toggleId, foldAll, allFolded } from './collapse-set.mjs';
 import { useLang } from '@argo/i18n';
 import { useTheme, THEMES } from '@argo/theme';
@@ -1496,8 +1496,10 @@ function Shell({ session }) {
   const syncEpochRef = useRef(syncEpoch); syncEpochRef.current = syncEpoch;
   const readOwnCrews = useMemo(() => ownRowsReader(async () => {
     const cols = 'id, org_id, owner_user_id, ws_id, slug, display_name, role_text, hosting, status, last_seen_at, avatar_url, created_at';
-    if (Date.now() - faceCol.missingAt > 600_000) try { return await readWithSeen(`${cols}, face`, (c) => q(supabase.from('msgr_crews').select(c).eq('owner_user_id', uid).in('status', ['active', 'available']))); } catch { /* 옛 서버(face 열 없음) */ }
-    return readWithSeen(cols, (c) => q(supabase.from('msgr_crews').select(c).eq('owner_user_id', uid).in('status', ['active', 'available']))); // 접속 시각 = 기기 심박을 합친 계산 열(crew-seen.mjs)
+    // 에이전트 id(agent_id, 3단계 U1)는 안쪽에서 — 옛 DB의 '열 없음'을 접속 시각 폴백(readWithSeen)보다 먼저 거른다(agent-groups.mjs withAgentCol)
+    const run = (c) => withAgentCol(c, (cc) => q(supabase.from('msgr_crews').select(cc).eq('owner_user_id', uid).in('status', ['active', 'available'])));
+    if (Date.now() - faceCol.missingAt > 600_000) try { return await readWithSeen(`${cols}, face`, run); } catch { /* 옛 서버(face 열 없음) */ }
+    return readWithSeen(cols, run); // 접속 시각 = 기기 심박을 합친 계산 열(crew-seen.mjs)
   }), [uid]);
   const newerOwn = (own) => (cur) => (cur && cur.at >= own.at ? cur : own);
   // 얼굴·사진 채우기(분리 검수 2026-10-05 #3) — 로그인 뒤 첫 읽기로 한 번만(agent-groups.mjs fillAgentLooks: 저장한 적 없는 열만, 실패는 다음 로그인 때). 추가 읽기 0,
