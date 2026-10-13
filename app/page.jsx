@@ -11,6 +11,9 @@ import { homeListView } from './home-list.mjs';
 import ArchivedCompaniesCard from './archived-companies'; // 보관한 회사 되돌리기 — 회사가 하나뿐이면 설정이 사라지므로 홈에도 입구(UM3)
 import { archivedEntryCount } from './lib/archived-view.mjs';
 
+const FIRST_SYNC_POLL_MS = 3000; // 첫 동기화 중 목록 다시 부르기 간격(로컬 파일 읽기, DB 아님) — 기기 1대 × 분당 20회, 목록이 비어 있고 동기화 중일 때만
+const FIRST_SYNC_POLL_MAX_MS = 10 * 60_000; // 상한 — 상태가 굳어도 끝없이 부르지 않는다
+
 export default function Home() {
   const { t, lang } = useLang();
   const router = useRouter();
@@ -23,6 +26,9 @@ export default function Home() {
   const [error, setError] = useState('');
   const [listFailed, setListFailed] = useState(false); // 회사 목록 조회 실패 — 끝없는 해골 대신 오류 + 다시 시도(F13)
   const [listTry, setListTry] = useState(0);
+  const [syncing, setSyncing] = useState(false); // 새 기기 첫 동기화 중(/api/companies syncing) — 빈 목록이면 "내려받는 중" + 목록 다시 부르기(2026-10-13 유건 사례)
+  const [syncPoll, setSyncPoll] = useState(0); // 다시 부르기 실패도 다음 회차로 넘기는 박자
+  const syncPollStart = useRef(0);
   const [archivedCount, setArchivedCount] = useState(0); // 보관한 회사 수 — 1개 이상이면 입구를 보인다(목록을 못 받으면 0 = 입구 없음)
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archivedMsg, setArchivedMsg] = useState(null); // 되돌리기 결과 안내 — 카드(개수 0이면 사라짐·온보딩↔목록에서 자리가 바뀌어 다시 마운트)가 아니라 홈이 들고 있는다(2차 L2)
@@ -51,11 +57,26 @@ export default function Home() {
     // 도착하면 en 화면에 한국어 프리셋이 눌러앉는다(응답 역전). 늦은 응답은 버린다.
     let alive = true;
     setListFailed(false);
-    api(`/api/companies?lang=${lang}`).then((d) => { if (!alive) return; setCompanies(d.companies); setPresets(d.presets ?? []); }).catch(() => { if (alive) setListFailed(true); });
+    api(`/api/companies?lang=${lang}`).then((d) => { if (!alive) return; setCompanies(d.companies); setPresets(d.presets ?? []); setSyncing(!!d.syncing); }).catch(() => { if (alive) setListFailed(true); });
     api('/api/me').then((d) => { if (!alive) return; setMe(d); setAuthOn(!!d.authOn); }).catch(() => {});
     api('/api/archived-companies').then((d) => { if (alive) setArchivedCount(archivedEntryCount(d.items)); }).catch(() => { if (alive) setArchivedCount(0); });
     return () => { alive = false; };
   }, [lang, listTry]);
+
+  // 첫 동기화 중이고 목록이 비어 있으면 짧은 주기로 목록을 다시 부른다 — 회사가 나타나거나 동기화가 끝나면(또는 상한) 멈춘다.
+  // 종전에는 마운트 때 한 번만 불러, 동기화가 회사를 다 내려받아도 빈 목록("회사 만들기")에 머물렀다 — 같은 회사를 새로 만들 위험.
+  useEffect(() => {
+    if (!syncing || !companies || companies.length > 0) { syncPollStart.current = 0; return; }
+    if (!syncPollStart.current) syncPollStart.current = Date.now();
+    if (Date.now() - syncPollStart.current > FIRST_SYNC_POLL_MAX_MS) { setSyncing(false); return; }
+    let alive = true;
+    const id = setTimeout(() => {
+      api(`/api/companies?lang=${lang}`)
+        .then((d) => { if (!alive) return; setCompanies(d.companies); setSyncing(!!d.syncing); setSyncPoll((n) => n + 1); })
+        .catch(() => { if (alive) setSyncPoll((n) => n + 1); });
+    }, FIRST_SYNC_POLL_MS);
+    return () => { alive = false; clearTimeout(id); };
+  }, [syncing, companies, lang, syncPoll]);
 
   // 온보딩 러너 상태 — 카드가 연결/제거 시 쏘는 argo:refresh로 즉시 재판정(연결되면 3단계가 풀린다)
   useEffect(() => {
@@ -217,6 +238,13 @@ export default function Home() {
             <span style={{ fontSize: 13, flex: '1 1 200px', minWidth: 0 }}>{t(runnerNotice.invalid ? 'home.runnerReconnect' : 'home.runnerNotice', { name: runnerNotice.name })}</span>
             <span className="btn btn-primary sm" style={{ flex: 'none', maxWidth: '100%' }}>{t('deck.aiKey.cta')}</span>
           </Link>
+        )}
+        {onboarding && syncing && (
+          /* 새 기기 첫 동기화 중 — 회사가 아직 안 내려왔을 뿐이다. 같은 회사를 새로 만들지 않게 먼저 알린다(목록은 위 효과가 다시 부른다) */
+          <div role="status" className="card fade-up" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', marginBottom: 22, minWidth: 0 }}>
+            <Spinner />
+            <span style={{ fontSize: 13, flex: '1 1 200px', minWidth: 0 }}>{t('home.firstSync')}</span>
+          </div>
         )}
         <div className="fade-up" style={{ marginBottom: 30 }}>
           <div className="microlabel" style={{ marginBottom: 12 }}>{t('home.boarding')}</div>

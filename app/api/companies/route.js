@@ -2,6 +2,7 @@ import { createCompany } from '../../../src/workspace.mjs';
 import { listCompanies } from '../../../src/hub.mjs';
 import { applyPreset, PRESETS, presetFor } from '../../../src/presets.mjs';
 import { seedRunnerCreds } from '../../../src/runners.mjs';
+import { firstSyncPending } from '../../../src/sync.mjs';
 import { AUTH_ON, currentUser, tenantDenied, authError, requestLang, langFromCookieHeader } from '../../auth.mjs';
 
 export async function GET(req) {
@@ -23,6 +24,8 @@ export async function GET(req) {
   // 프리셋 picker 라벨 — 위에서 정한 표시 언어를 따른다. presetFor가 en 미비 키를 ko로 폴백.
   return Response.json({
     companies,
+    // 새 기기 첫 동기화 중 — 홈이 빈 목록이면 "내려받는 중"을 보이고 끝날 때까지 목록을 다시 부른다. 게스트는 계정 회사를 못 보므로 해당 없음
+    syncing: !(AUTH_ON && user.id === 'local') && firstSyncPending(),
     presets: Object.keys(PRESETS).map((key) => {
       const p = presetFor(key, lang);
       return { key, label: p.label, desc: p.desc };
