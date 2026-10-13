@@ -119,14 +119,26 @@ test('경로가 없으면(ready 0개) 첫 틱에 동기화·확인 1번씩, 그 
   assert.equal(IDLE_CLAIM_MS, 30 * 60_000);
 });
 
-test('ready 경로가 있으면 확인은 30초마다(첫 알림 지연 종전 그대로), 동기화는 60초마다(3분 신선도의 1/3)', async () => {
+test('ready 경로가 있으면 확인은 30초마다(첫 알림 지연 종전 그대로), 동기화는 65초 지난 첫 틱마다(서버 60초 생략 기준보다 길게, 3분 신선도 안)', async () => {
   const w = loop({ conns: connections });
-  await w.run(10 * 60_000); // 20틱
+  await w.run(10 * 60_000); // 30초 틱 20번
   assert.equal(w.count('msgr_notification_claim'), 20, '매 틱 확인');
-  assert.equal(w.count('msgr_notification_routes_sync'), 10, '두 틱에 한 번 동기화');
-  assert.equal(ROUTE_SYNC_MS, 60_000);
+  assert.equal(ROUTE_SYNC_MS, 65_000);
   const syncs = w.calls.filter((c) => c.name === 'msgr_notification_routes_sync').map((c) => c.at);
-  assert.ok(syncs.every((at, i) => i === 0 || at - syncs[i - 1] <= 60_000), '동기화 간격은 60초를 넘지 않는다 — 서버 3분 신선도 안');
+  assert.deepEqual(syncs, [0, 90_000, 180_000, 270_000, 360_000, 450_000, 540_000], '30초 틱에서는 90초마다(65초가 지난 첫 틱)');
+  const gaps = syncs.slice(1).map((at, i) => at - syncs[i]);
+  assert.ok(gaps.every((g) => g > 60_000), '서버가 쓰기를 건너뛰는 60초 이하로 부르지 않는다');
+  assert.ok(gaps.every((g) => g < 180_000), '서버 3분 신선도 안에서 다시 쓴다');
+});
+
+test('동기화 간격은 서버 쓰기 생략 기준(마이그레이션의 60초)보다 길어야 한다 — 같거나 짧으면 서버가 건너뛰어 갱신이 두 배로 밀린다(검수 1, #996)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const sql = readFileSync(new URL('../supabase/migrations/20260923210000_msgr_notification_routes_quiet.sql', import.meta.url), 'utf8');
+  const secs = [...sql.matchAll(/last_seen_at < now\(\)-interval '(\d+) seconds'/g)].map((m) => Number(m[1]));
+  assert.ok(secs.length >= 2, '서버의 쓰기 생략 기준(route·node)을 찾는다');
+  for (const s of secs) assert.ok(ROUTE_SYNC_MS > s * 1000 + 2_000, `ROUTE_SYNC_MS(${ROUTE_SYNC_MS}ms)는 서버 기준 ${s}초 + 흔들림 여유 2초보다 길다`);
+  const fresh = Number(sql.match(/n\.last_seen_at>=now\(\)-interval '(\d+) minutes'/)[1]);
+  assert.ok(ROUTE_SYNC_MS * 2 < fresh * 60_000, '두 번 놓쳐도 서버 신선도(분) 안');
 });
 
 test('경로가 막 ready가 된 순간 — 그 틱에 바로 동기화하고 확인한다(첫 알림이 늦지 않는다)', async () => {

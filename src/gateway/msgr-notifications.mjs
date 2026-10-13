@@ -10,13 +10,15 @@ const missingRpc = (error) => ['PGRST202', '42883'].includes(error?.code);
 
 /* 유휴 호출 줄이기(2026-10-13 로그 수집 과금 — 이 루프가 기기·회사마다 30초에 RPC 2개, 하루 39만 건). DB 위생 규칙 2·3:
    - 경로 동기화(msgr_notification_routes_sync)는 보낼 경로 목록(라벨·ready)이 바뀌었을 때, 또는 ready 경로가 있으면 ROUTE_SYNC_MS마다만.
-     서버 판정은 노드 3분 신선도(n.last_seen_at >= now()-3분, 20260923210000)라 60초 = 기한의 1/3. ready 경로가 없으면 신선도가 필요 없다.
+     서버 판정은 노드 3분 신선도(n.last_seen_at >= now()-3분, 20260923210000)라 65초 ≈ 기한의 1/3(서버 60초 쓰기 생략 기준보다 길게). ready 경로가 없으면 신선도가 필요 없다.
    - 수신함 확인(msgr_notification_claim)은 ready 경로가 있을 때만 매번(30초 — 첫 알림 지연 종전 그대로). 없으면 서버 조회가 늘 빈다(노드 ready 조인).
      다만 확인 RPC가 하던 정리(5분 넘은 claimed → uncertain, 24시간 넘은 pending → skipped, 권한 철회 → skipped)는 경로가 꺼져도 남아야 해서
      IDLE_CLAIM_MS(30분)마다 한 번은 부른다 — 정리 시각이 최대 30분 늦을 뿐 결과는 같다.
    - 경로가 막 ready가 되면 목록이 바뀐 것이라 그 틱에 바로 동기화하고 확인한다(첫 알림이 늦지 않게).
    기억은 프로세스 메모리(회사·기기·계정마다) — 재시작하면 첫 틱에 한 번 동기화한다. 동기화가 실패하면 기억을 남기지 않아 다음 틱에 다시 한다. */
-export const ROUTE_SYNC_MS = 60_000;
+// 서버 쓰기 생략 기준(같은 내용·last_seen_at < now()-60초면 쓰기)과 같은 값을 쓰면 안 된다 — 60.0x초에 불러도 서버는 지연 흔들림으로 60초 이하로 보고
+// 쓰기를 건너뛰어 실제 갱신이 약 120초 뒤로 밀린다(검수 1, #996). 기준보다 넉넉히 길게: 65초(test/msgr-notifications가 서버 기준 초과를 잠근다).
+export const ROUTE_SYNC_MS = 65_000;
 export const IDLE_CLAIM_MS = 30 * 60_000;
 const routeMemo = (globalThis.__argoNotifyRouteMemo ??= new Map()); // `${uid}:${wsId}:${device}` → { routes, syncedAt, claimedAt }
 export function notificationPlan(memo, routes, t) {
