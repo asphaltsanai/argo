@@ -1,6 +1,6 @@
 // 서버가 정하는 최소 앱 버전(유건 2026-10-13 "옛 버전 기기는 일시정지 화면에 업데이트 버튼을 띄우고, 무조건 업데이트하게 한다").
 // 0.1.101 이하 앱은 서버가 멈출 장치가 없어 15초마다 Supabase를 불렀다(로그 과금의 약 10%). 앞으로 옛 버전이 생기면 이 장치로 멈춘다:
-//  - 서버 값: argo_min_app_version('desktop')(msgr_settings 'min_app_version' 한 줄, 20261013180000). 행이 없으면 막지 않는다.
+//  - 서버 값: argo_min_app_version('desktop')(msgr_settings 'min_app_version' 한 줄, 20261013190000). 행이 없으면 막지 않는다.
 //  - 이 앱이 그보다 낮으면 getFreshDeviceSession이 세션 없음(null)을 돌려준다 — 동기화·메신저 브리지·알림·메일이 모두 "세션 없음" 경로로 호출 0.
 //  - 화면은 /api/app-gate를 보고 일시 정지 화면(업데이트 버튼)을 띄운다(app/app-gate.jsx).
 // 판정은 데이터 루트의 파일(.app-gate.json)이 정본이다 — Next는 이 모듈을 라우트·동기화 루프에 따로 번들해 메모리가 갈리고(devicesession.mjs 주석),
@@ -19,8 +19,10 @@ export const APP_GATE_RETRY_MS = 5 * 60_000;        // 확인 실패(오프라�
 const fileOf = (root) => join(root, APP_GATE_FILE);
 let memo = null; // { root, stamp, data } — 파일 도장(mtime+size)이 같을 때만 쓴다
 
-/** 이 버전이 최소 버전보다 낮은가(순수). 최소 버전이 없거나 이 앱 버전을 모르면 거짓 */
-export const belowMin = (version, min) => !!min && !!version && cmpVersion(version, min) < 0;
+/** 이 버전이 최소 버전보다 낮은가(순수). 최소 버전이 없거나 이 앱 버전을 모르면 거짓.
+    '0.0.0'도 모름으로 본다 — 번들에서 버전을 못 읽으면 0.0.0이 되던 설치본 결함(0.1.101 실측, app-version.mjs)에서 최신 앱을 막지 않게. */
+const unknownVersion = (v) => !v || cmpVersion(v, '0.0.0') === 0;
+export const belowMin = (version, min) => !!min && !unknownVersion(version) && cmpVersion(version, min) < 0;
 
 /** 파일의 마지막 판정 { min, checkedAt } — 없으면 { min: null, checkedAt: 0 } */
 export function readAppGate(root) {

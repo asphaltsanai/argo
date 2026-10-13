@@ -31,6 +31,9 @@ test('비교(순수): 낮은 버전만 막는다 — 같은 버전(경계)·높�
   assert.equal(G.belowMin('0.2.0', '0.1.107'), false);
   assert.equal(G.belowMin('0.1.106', null), false, '서버 값 없음');
   assert.equal(G.belowMin(null, '0.1.107'), false, '버전 미상 — 비교할 수 없으면 막지 않는다');
+  assert.equal(G.belowMin('0.0.0', '0.1.107'), false, "'0.0.0'도 모름 — 번들에서 버전을 못 읽던 설치본 결함(0.1.101)에서 최신 앱을 막지 않는다");
+  assert.equal(G.belowMin('v0.0.0', '0.1.107'), false);
+  assert.equal(G.belowMin('0.0.1', '0.1.107'), true, '0.0.0만 모름으로 본다');
 });
 
 test('최소 버전 미만이면 기기 세션이 없다(동기화·메신저·알림 호출 0의 관문) — 서버 확인 뒤 다음 호출부터', async () => {
