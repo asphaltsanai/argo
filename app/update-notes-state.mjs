@@ -32,6 +32,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.104': Object.freeze(['updates.note.keepAgents', 'updates.note.proFiles', 'updates.note.officePanel']),
   // 0.1.105 — msgrDiagnose: 메신저 연결 진단 카드(#979) · runnerAuthExpired: 실행기 로그인 만료 안내·재로그인 시 해제(#980·#984) · codexKorean: codex 답 한글 깨짐(#982) · codexChatgpt: ChatGPT 계정 codex 작업 실패(#975)
   '0.1.105': Object.freeze(['updates.note.msgrDiagnose', 'updates.note.runnerAuthExpired', 'updates.note.codexKorean', 'updates.note.codexChatgpt']),
+  // 0.1.106 — firstSyncHome: 새 기기 첫 동기화 중 홈 '내려받는 중'·목록 다시 부르기(#988) · officeConnector: 오피스를 내장 도구 대신 외부 서비스 연결(원격 MCP)로(#989)
+  '0.1.106': Object.freeze(['updates.note.firstSyncHome', 'updates.note.officeConnector']),
 });
 
 export function stableVersion(value) {

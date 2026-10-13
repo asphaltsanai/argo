@@ -1,9 +1,9 @@
 // 능동 비서 — 메일 출처(오피스 Gmail) 읽기. 구글 토큰은 오피스 서버에만 있고(office_mail_secrets 봉인), 본체는 기기 세션 JWT로 오피스 메일 서버 함수
-// (apps/office/api/mail/[op].js)를 부른다 — 에이전트 메일 도구(src/gateway/office-mail.mjs)와 같은 방법·같은 주소(ARGO_OFFICE_ORIGIN, https 또는 루프백만).
+// (apps/office/api/mail/[op].js)를 부른다 — 오피스 서버 함수와 같은 주소(ARGO_OFFICE_ORIGIN, https 또는 루프백만).
 // 비서가 부를 수 있는 서버 동작은 MAIL_WATCH_CALLS 셋뿐이다(읽기만 — 테스트가 서버 라우터와 같이 잠근다). 보내기·초안 쓰기·라벨 바꾸기·본문 읽기(read)는 없다:
 // 메일이 무엇을 시키든 비서 경로에는 메일을 내보내거나 바꾸는 호출이 없다(설계 9.1·9.2).
 // 계정 목록은 office_mail_accounts(본인 행만 — RLS) 읽기 1번. 오류는 코드로 돌려준다(호출부가 상태에 남기고 다음 차례에 다시 — 커서는 처리한 것으로만 옮긴다).
-import { officeOrigin, DEFAULT_ORIGIN } from '../gateway/office-files.mjs';
+import { officeOrigin, DEFAULT_ORIGIN } from './office-read.mjs';
 
 /** 비서가 부르는 오피스 메일 서버 동작과 메서드 — 서버는 목록·검색·thread를 POST 본문으로만 받는다(GET이면 405). */
 export const MAIL_WATCH_CALLS = Object.freeze({ sync: 'POST', list: 'POST', thread: 'POST' });
