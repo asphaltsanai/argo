@@ -27,7 +27,7 @@ const sse = (res, text, usage = { input_tokens: 1, output_tokens: 1 }) => {
   res.writeHead(200, { 'content-type': 'text/event-stream' }); for (const [e, d] of ev) res.write(`event: ${e}\ndata: ${JSON.stringify(d)}\n\n`); res.end();
 };
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
     if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
       const body = JSON.parse(b || '{}'); const all = JSON.stringify(body.messages ?? []);
       // SDK 자동 제목 생성은 첫 글 전체(요약 지시면 <conversation>까지)를 감싸 보낸다 — 요약으로 세지 않고 따로 센다(Argo는 title을 줘서 끈다)

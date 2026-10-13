@@ -15,7 +15,7 @@ for (const key of ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 
 
 const calls = [];
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
     const body = JSON.parse(b || '{}');
     const kind = (body.tools ?? []).length ? 'turn' : 'summary';
     calls.push({ kind, body });

@@ -248,7 +248,7 @@ test('상주·워커(ARGO_TENANT_OWNER) — 로그인·회전에서 msgr_profile
 
 // ── 턴 10회 동안 msgr_profiles 조회 0, 매 턴 지시문에 이름 ──
 const supa = { profiles: 0, total: 0 };
-const listen = (handler) => new Promise((r) => { const s = http.createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => handler(req, res, b)); }); s.listen(0, '127.0.0.1', () => r(s)); });
+const listen = (handler) => new Promise((r) => { const s = http.createServer((req, res) => { let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => handler(req, res, b)); }); s.listen(0, '127.0.0.1', () => r(s)); });
 const supaServer = await listen((req, res) => { supa.total++; if (req.url.includes('msgr_profiles')) supa.profiles++; res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"display_name":"다른이름"}'); });
 const systems = [];
 const vendor = await listen((req, res, b) => {

@@ -28,7 +28,7 @@ const { classifyRunnerError } = await import('../src/runners/error-class.mjs');
 async function fakeMessages(script) {
   const bodies = [];
   const srv = createServer((req, res) => {
-    let d = ''; req.on('data', (c) => { d += c; });
+    let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; });
     req.on('end', () => {
       const body = JSON.parse(d || '{}'); bodies.push({ url: req.url, headers: req.headers, body });
       const step = script[Math.min(bodies.length - 1, script.length - 1)];

@@ -53,7 +53,7 @@ test('real SDK CLI Bash preserves adopted shim after SDK env sanitization', { sk
     const toolResults = [];
     let modelRequests = 0;
     const server = createServer((req, res) => {
-      let body = ''; req.on('data', chunk => { body += chunk; });
+      let body = ''; req.setEncoding('utf8'); req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         if (req.method !== 'POST' || !req.url.startsWith('/v1/messages')) {
           res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}'); return;

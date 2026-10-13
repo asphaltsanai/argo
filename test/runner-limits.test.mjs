@@ -23,7 +23,7 @@ const NOW = Math.floor(Date.now() / 1000);
 let limitHeaders = {};
 const sse = (res, evs) => { res.writeHead(200, { 'content-type': 'text/event-stream', ...limitHeaders }); for (const [e, d] of evs) res.write(`event: ${e}\ndata: ${JSON.stringify(d)}\n\n`); res.end(); };
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
     if (req.method === 'POST' && req.url.startsWith('/v1/messages')) {
       return sse(res, [['message_start', { type: 'message_start', message: { id: 'm', type: 'message', role: 'assistant', model: 'claude-x', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } }],
         ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],

@@ -15,7 +15,7 @@ import { monthCostByRunner } from './usage.mjs'; // usage는 workspace만 의존
 import { recordCodexRollout } from './runner-limits.mjs'; // 구독 잔여 한도(K91)
 import { exec, exists, scrubServerSecrets } from './runners/shared.mjs';
 import { RUNNERS, RUNNER_AUTH, hostOptInAllowed, isCliRunner, isCliTurn, pickRunner, oauthFormatError, isHiddenRunner, isRetiredRunner } from './runners/catalog.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli, codexOutdatedError, codexPinStale, codexUnsetModel } from './runners/codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexEffortArgs, CODEX_LOCKUP_RE, reprovisionCodexCli, codexOutdatedError, codexPinStale, codexUnsetModel, codexAuthMode } from './runners/codex.mjs';
 import { execCodexAppServer } from './runners/codex-appserver.mjs';
 import { createCodexJsonReader, humanizeCodexJsonError } from './runners/codex-json.mjs';
 import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
@@ -185,7 +185,8 @@ export async function externalExec({ runner, model, cwd, prompt, timeoutMs = CLI
       const cmd = await codexCmd(); // 관리본(핀) 우선 > 즉석 조달 > PATH 폴백(2026-08-25 반전) — 사용자 설치 없이도 돈다
       // 모델을 비운 턴은 고정 모델로 — `-m` 없이 돌리면 서버 기본 모델이 바이너리 버전마다 바뀐다(codexUnsetModel, 검수 2026-10-08 HIGH).
       // 강도 인자는 크루가 준 모델로 계산한다(비운 모델 = 옛 사상 max→xhigh) — 0.1.97과 같은 인자에 -m만 더한다.
-      const runModel = model || codexUnsetModel(cmd);
+      // ChatGPT 계정은 고정하지 않는다(계정마다 모델이 달라 400 — codexUnsetModel 주석, 2026-10-13).
+      const runModel = model || codexUnsetModel(cmd, auth?.mode === 'none' ? null : await codexAuthMode(auth.dst));
       // JSON 모드 — 단계가 stdout JSONL로 흐른다. 경고·실패 문구는 사람 모드와 같은 stderr 줄로 되살려 아래 판정(잠김·apiError·업데이트 안내)이
       // 종전과 같은 글을 보게 한다(codex-json.mjs 머리 주석 — 실측). 명령 출력이 stdout으로 옮겨 오므로 stdout 버퍼는 사람 모드 stderr가 쓰던 만큼 넉넉히.
       const json = codexJsonMode(cmd);
@@ -372,6 +373,7 @@ export async function runnerStatus(wsId, { forPick = false } = {}) {
       keyUrl: meta.keyUrl,
       hostInstalled: host[id]?.installed ?? false,
       hostAuthed: host[id]?.authed ?? false, // 호스트 CLI 로그인/env (OAuth 폴백 경로)
+      ...(host[id]?.authAt ? { hostAuthAt: host[id].authAt } : {}), // 이 컴퓨터 로그인 파일의 수정 시각(터미널에서 다시 로그인하면 바뀐다) — 키체인 보관(macOS claude)은 알 수 없어 없다
       hostAuthUnknown: host[id]?.authUnknown ?? false, // 키링 자격(antigravity) — 로그인 판정 불가, UI는 단정 금지
       hidden: isHiddenRunner(id), // 숨김 러너(gemini·http) — 명판·목록은 빼고, 판정(pickRunner 명시 지정)은 그대로 쓴다
       retired: isRetiredRunner(id), // 제공 종료(gemini 구독 CLI)만 — 데크 배너·재연결 안내의 열쇠. http는 숨김이되 정상
@@ -379,6 +381,7 @@ export async function runnerStatus(wsId, { forPick = false } = {}) {
         connected: true,
         type: credType(cred.type),
         masked: cred.type === 'host' ? '' : maskCred(cred.value),
+        ...(typeof cred.savedAt === 'string' ? { savedAt: cred.savedAt } : {}), // 저장·갱신 시각만(자격 내용 아님) — 배너가 다시 로그인 전 만료 기록을 무시하는 기준(#980 LOW-2). 이 필드 도입 전 자격엔 없다
         // 저장 검증 도입 전(철회된 웹 브리지 등)에 들어온 무효 형식 토큰 — 카드가 "재연결 필요"를 보여준다
         ...(cred.type === 'oauth' && oauthFormatError(id, cred.value, 'ko') ? { invalid: true } : {}),
         // host 마커는 이 컴퓨터 CLI 로그인이 살아 있어야 유효 — 로그아웃·미설치면 "재연결 필요".

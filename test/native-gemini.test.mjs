@@ -30,7 +30,7 @@ const { makePermissionGate } = await import('../src/permission-gate.mjs');
 async function fakeGemini(script) {
   const calls = [];
   const srv = createServer((req, res) => {
-    let d = ''; req.on('data', (c) => { d += c; });
+    let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; });
     req.on('end', () => {
       calls.push({ url: req.url, headers: req.headers, body: JSON.parse(d || '{}') });
       const step = script[Math.min(calls.length - 1, script.length - 1)];

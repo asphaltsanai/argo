@@ -21,12 +21,13 @@
 //    구분되는 1급 분류(OpenRouter 402/429와 대칭). AUTH_ERR_RE 자가치유를 오발동시키지 않는다.
 import { terminateOwnedProcessTree, watchOwnedProcessTree } from './process-tree.mjs';
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makePermissionGate } from '../permission-gate.mjs';
 import { scrubServerSecrets } from './shared.mjs';
-import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexUnsetModel } from './codex.mjs';
+import { codexHome, codexCmd, importCodexAuth, recoverCodexAuth, writeCodexTurnConfig, codexUnsetModel, codexAuthMode } from './codex.mjs';
 import { codexModelEffort } from '../model-effort.mjs';
 
 /** 크루 effort → app-server ReasoningEffort 값(순수). CLI 인자(codexEffortArgs)와 같은 사상 —
@@ -123,8 +124,11 @@ export function runAppServerSession({ input, output, prompt, model = '', unsetMo
     if (signal) signal.addEventListener('abort', () => finish(rejectP, Object.assign(new Error('중단됨'), { aborted: true })), { once: true });
 
     let buf = '';
+    // StringDecoder — 조각(Buffer)마다 toString으로 이으면 한글 한 글자(3바이트)가 조각 경계에 걸릴 때 U+FFFD 세 개로 깨져 답에 "���"가 섞였다
+    // (2026-10-13 전수 수색 — #981 시험 가짜 서버와 같은 결함). 문자열 조각(시험의 PassThrough 등)은 그대로 잇는다.
+    const dec = new StringDecoder('utf8');
     output.on('data', (d) => {
-      buf += d.toString();
+      buf += typeof d === 'string' ? d : dec.write(d);
       let i;
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i).trim();
@@ -225,6 +229,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     auth = await importCodexAuth(baseHome, CODEX_HOME);
     await writeCodexTurnConfig(CODEX_HOME, mcpServers);
     const cmd = await codexCmd(); // 관리본(핀) 우선 — exec 경로와 같은 조달 규율
+    const unsetModel = codexUnsetModel(cmd, auth?.mode === 'none' ? null : await codexAuthMode(auth.dst)); // ChatGPT 계정은 비움(계정마다 모델이 달라 400 — codexUnsetModel 주석, 2026-10-13)
     // windowsHide — exec()(shared.mjs)와 동형. 없으면 윈도우 사이드카에서 턴마다 콘솔 창이 뜬다
     // (2026-08-21 제보 계열, 분리 검수 MEDIUM-3). 스폰 실패·비정상 종료는 아래 child 이벤트로 잡는다.
     child = spawn(cmd.file, [...cmd.args, 'app-server'], {
@@ -249,7 +254,7 @@ export async function execCodexAppServer({ model, cwd, prompt, timeoutMs = 30 * 
     const { reply } = await Promise.race([
       runAppServerSession({
         input: child.stdin, output: child.stdout,
-        prompt, model, unsetModel: codexUnsetModel(cmd), effort, cwd, timeoutMs, signal, onSteerable, onEvent,
+        prompt, model, unsetModel, effort, cwd, timeoutMs, signal, onSteerable, onEvent,
         judge: makeApprovalJudge(cwd, { workRoots, lang }),
       }),
       childFail,

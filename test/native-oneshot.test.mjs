@@ -20,7 +20,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 async function fakeMessages(script) {
   const bodies = [];
   const srv = createServer((req, res) => {
-    let d = ''; req.on('data', (c) => { d += c; });
+    let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; });
     req.on('end', () => {
       bodies.push(JSON.parse(d || '{}'));
       const step = script[Math.min(bodies.length - 1, script.length - 1)];

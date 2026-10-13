@@ -12,6 +12,14 @@ const NO_CACHE_CONTROL = (body) => (cacheMarks(body).length ? 'Invalid request c
 const walkSchemas = (s, out = []) => { if (!s || typeof s !== 'object') return out; out.push(s); for (const v of Object.values(s.properties ?? {})) walkSchemas(v, out); if (s.items) walkSchemas(s.items, out); for (const k of ['anyOf', 'oneOf', 'allOf', 'prefixItems']) for (const v of s[k] ?? []) walkSchemas(v, out); return out; };
 
 /** 벤더별 규칙 — Anthropic Messages 와이어(/v1/messages) 본문을 본다. */
+/** codex CLI(OpenAI, ChatGPT 계정) — 그 계정의 모델 목록 밖 모델은 400으로 거절한다(실측 2026-10-13 맥 two codex 0.162.1: gpt-6-astra·gpt-5.6-sol·
+    gpt-6.1-sol 모두 이 문구, -m 없으면 계정 목록의 기본 gpt-6-luna로 응답. 맥 one 상주 로그 10/12·10/13에도 같은 문구). 목록은 계정(플랜)마다 다르다.
+    API 키 계정은 이 규칙 밖. 가짜 codex(test/codex-gpt61-sol-wiring.test.mjs)가 이 규칙으로 거절한다. → 거절 문구(codex stderr 한 줄) | null */
+export function codexChatgptReject({ authMode, model, accountModels = [] }) {
+  if (authMode !== 'chatgpt' || !model || accountModels.includes(model)) return null;
+  return `ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The '${model}' model is not supported when using Codex with a ChatGPT account."}}`;
+}
+
 export const VENDOR_RULES = {
   // xAI(Grok) — 사용자 제보 2026-09-06(v0.1.62): object 스키마에 required 배열이 없으면 `400 Invalid request content: Schema validation failed: [standard_violation] /required: null is not of type "array"`
   xai: [
@@ -86,7 +94,7 @@ export async function startStrictVendor({ vendor = 'xai', reply = null, contextL
   const calls = [];
   const other = OTHER_WIRES[vendor];
   const srv = createServer((req, res) => {
-    let d = ''; req.on('data', (c) => { d += c; });
+    let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; });
     req.on('end', () => {
       let body = {}; try { body = JSON.parse(d || '{}'); } catch { /* 빈 본문 */ }
       const tokens = contextLimit === null ? null : countTokens(d);

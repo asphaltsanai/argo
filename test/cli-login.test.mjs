@@ -11,7 +11,7 @@ const call = (port, { method = 'GET', path = '/', host, body, headers = {} } = {
   const base = body ? { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' } : {};
   const all = Object.fromEntries(Object.entries({ ...base, ...(host ? { host } : {}), ...headers }).filter(([, v]) => v != null));
   const req = request({ host: '127.0.0.1', port, method, path, headers: all }, (res) => {
-    let data = ''; res.on('data', (c) => (data += c)); res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers }));
+    let data = ''; res.setEncoding('utf8'); res.on('data', (c) => (data += c)); res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers }));
   });
   req.on('error', reject); if (body) req.write(typeof body === 'string' ? body : JSON.stringify(body)); req.end();
 });

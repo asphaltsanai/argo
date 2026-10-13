@@ -54,7 +54,7 @@ async function fakeSupabase({ lists, fail = {} }) {
   const reqs = [];
   const left = Object.fromEntries(Object.entries(lists).map(([k, v]) => [k, [...v]]));
   const srv = createServer((req, res) => {
-    let body = ''; req.on('data', (c) => { body += c; }); req.on('end', () => {
+    let body = ''; req.setEncoding('utf8'); req.on('data', (c) => { body += c; }); req.on('end', () => {
       const j = body ? JSON.parse(body) : {};
       reqs.push({ method: req.method, url: req.url, auth: req.headers.authorization, apikey: req.headers.apikey, body: j });
       const rpc = req.url.match(/^\/rest\/v1\/rpc\/(\w+)$/)?.[1];

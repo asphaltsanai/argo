@@ -219,7 +219,7 @@ test('TB5. (핀) 길이 초과가 아닌 400은 재시도·자리표시 없이 �
   // 3번째 호출만 길이와 무관한 400(xAI 스키마 거절 문구)
   const read = reader('messages', 9); const calls = [];
   const srv = createServer((req, res) => {
-    let d = ''; req.on('data', (c) => { d += c; });
+    let d = ''; req.setEncoding('utf8'); req.on('data', (c) => { d += c; });
     req.on('end', () => {
       const body = JSON.parse(d); calls.push(body);
       const bad = calls.length === 3;

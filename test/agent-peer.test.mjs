@@ -180,7 +180,7 @@ const reached = [];
 installAgentPeerGuard();
 installAgentPeerGuard(); // 멱등 — 두 번 감싸지 않는다
 const handler = (req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
     reached.push(`${req.method} ${req.url} ${b}`);
     res.setHeader('content-type', 'application/json'); res.end('{"ok":true}');
   });
@@ -317,7 +317,7 @@ test('사람 자리(서버의 자손도 표지도 아닌 별도 세션 프로세
   const srvEnv = { ...process.env }; delete srvEnv[AGENT_MARK]; delete srvEnv.ARGO_AGENT_PEER_CHECK;
   const srvCode = `import http from 'node:http'; import fs from 'node:fs';`
     + ` const m = await import(${JSON.stringify(MOD)}); m.installAgentPeerGuard();`
-    + ` const reached = []; const s = http.createServer((q,r)=>{ let b=''; q.on('data',c=>b+=c); q.on('end',()=>{ if(q.url==='/api/ping'){r.end('{\\"argo\\":true}');return;} reached.push(q.method); r.setHeader('content-type','application/json'); r.end(JSON.stringify({ok:true,reached:reached.length})); }); });`
+    + ` const reached = []; const s = http.createServer((q,r)=>{ let b=''; q.setEncoding('utf8'); q.on('data',c=>b+=c); q.on('end',()=>{ if(q.url==='/api/ping'){r.end('{\\"argo\\":true}');return;} reached.push(q.method); r.setHeader('content-type','application/json'); r.end(JSON.stringify({ok:true,reached:reached.length})); }); });`
     + ` s.listen(0,'127.0.0.1',()=>fs.writeFileSync(${JSON.stringify(portFile)}, String(s.address().port))); setTimeout(()=>process.exit(0), 30000);`;
   const srv = spawn(process.execPath, ['--input-type=module', '-e', srvCode], { env: srvEnv, detached: true, stdio: 'ignore' });
   srv.unref();
@@ -336,7 +336,7 @@ test('사람 자리(서버의 자손도 표지도 아닌 별도 세션 프로세
 // ── HIGH-1: 가드 아래에서도 제외 표시된 중계 서버는 자손(러너 CLI)의 요청을 받는다 ──
 test('제외 표시(PEER_GUARD_EXEMPT)된 중계 서버는 자손 자식의 POST도 200 — 도구 중계가 전멸하지 않는다', async () => {
   const got = [];
-  const relay = http.createServer((q, r) => { let b = ''; q.on('data', (c) => { b += c; }); q.on('end', () => { got.push(q.method); r.end('{"ok":true}'); }); });
+  const relay = http.createServer((q, r) => { let b = ''; q.setEncoding('utf8'); q.on('data', (c) => { b += c; }); q.on('end', () => { got.push(q.method); r.end('{"ok":true}'); }); });
   relay[PEER_GUARD_EXEMPT] = true;
   await new Promise((r) => relay.listen(0, '127.0.0.1', r));
   after(() => relay.close());

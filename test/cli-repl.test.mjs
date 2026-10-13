@@ -19,7 +19,7 @@ await mkdir(HOME, { recursive: true });
 
 // 가짜 Messages 엔드포인트 — 메시지에 SLOW가 있으면 답을 오래 끈다(답하는 중 Ctrl+C 확인용)
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => (b += c)); req.on('end', () => {
     if (!(req.method === 'POST' && req.url.startsWith('/v1/messages'))) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}'); }
     const body = JSON.parse(b || '{}');
     const slow = JSON.stringify(body.messages ?? []).includes('SLOW');

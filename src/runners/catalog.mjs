@@ -224,7 +224,8 @@ export const CODEX_DEFAULT_MODEL = 'gpt-5.6-sol';
     그리고 CLI 원샷(기억 정리·교정 감지·페르소나·직함·루틴 초안·대화 요약). 예전엔 `-m` 없이 돌아 서버 기본 모델을 썼는데, 서버 기본은
     바이너리 버전마다 바뀐다(0.157.1 = gpt-6-astra, 0.159.3 = gpt-6.1-sol·기본 강도 low — 2026-10-07 머리글 실측). 핀 승격이 이 턴들의
     모델·강도를 말없이 바꾸지 않게 0.157.1(0.1.97) 시절 실제로 돌던 모델을 넣는다(강도 인자는 크루 값 그대로 — 비우면 Astra 서버 기본 medium).
-    넣는 자리는 codex.mjs codexUnsetModel(핀 이상 관리본일 때만). 바꾸려면 유건 결정 뒤 여기만. */
+    넣는 자리는 codex.mjs codexUnsetModel(핀 이상 관리본일 때만, ChatGPT 계정은 넣지 않음 — 계정마다 모델이 달라 400, 2026-10-13 총괄 승인).
+    바꾸려면 유건 결정 뒤 여기만. */
 export const CODEX_UNSET_MODEL = 'gpt-6-astra';
 
 /** 폐기 모델 → 대체 모델(러너별) — 목록에서 뺀 id를 이미 고른 에이전트를 **원격 카탈로그 없이도**(오프라인·첫 실행·ARGO_MODEL_CATALOG=off)

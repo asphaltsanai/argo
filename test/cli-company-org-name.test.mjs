@@ -24,7 +24,7 @@ const reqs = [];
 let ORGS = [{ name: '메신저조직A', deleted_at: null }];
 let LINKS = []; // [{ ws_id, org: { name, deleted_at } }]
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => (b += c)); req.on('end', () => {
     reqs.push({ method: req.method, url: req.url });
     if (req.method === 'GET' && req.url.startsWith('/rest/v1/msgr_org_members') && !ORGS) { // 조회 실패(서버 오류)
       res.writeHead(500, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ code: 'XX000', message: 'boom' }));

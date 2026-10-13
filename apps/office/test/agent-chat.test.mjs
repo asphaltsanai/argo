@@ -90,47 +90,28 @@ test('전송 통로 — 글에 meta·reply_to를 싣고, 응답을 잃으면 같
 });
 
 
-// 쓰기 확인 카드(2단계 PR1) — 카드 목록·상태·확인 글 쓰기
-import { proposalsOf, proposalState, proposalFields, fieldLabelKey, sendConfirm } from '../src/core/agent-chat.js';
+// 대기 변경(2026-10-13 오피스 원격 MCP) — 행 모양 거르기, '자세히' 칸, 칸 이름 사전, [실행] 호출
+import { cleanActions, pendingOf, actionFields, fieldLabelKey, runAction } from '../src/core/agent-actions.js';
 import { AGENT_DICT } from '../src/ui/agent-panel-i18n.js';
-import { officeToolSpecs } from '../../../src/gateway/office-tools.mjs';
+import { officeToolSpecs } from '../server/agent/tools.js';
 
-test('카드 목록은 에이전트 글의 검증된 제안만', () => {
-  const p = { pid: 'p1', tool: 'office_work', args: {}, summary: '할 일 추가: a' };
-  assert.deepEqual(proposalsOf({ author_kind: 'crew', meta: { office_proposals: [p, { pid: 'x', summary: 'b' }, null, { pid: 'p2' }] } }), [p]);
-  assert.deepEqual(proposalsOf({ author_kind: 'user', meta: { office_proposals: [p] } }), [], '사람 글의 제안은 카드가 아니다');
-  assert.deepEqual(proposalsOf({ author_kind: 'crew', meta: {} }), []);
+test('대기 변경 행 — 모양이 맞는 것만, 모르는 상태는 대기 중으로, 대기 중만 고르기', () => {
+  const rows = cleanActions([{ id: 'a', tool: 'office_work', action: 'task_add', summary: '할 일 추가: a', args: { action: 'task_add', title: 'a' }, status: 'pending' },
+    { id: 'b', tool: 'office_work', action: 'task_add', summary: 'x', status: 'done' }, { id: 'c', tool: 'office_work', action: 'task_add', summary: 'y', status: 'hack' }, null, { id: 1, tool: 'office_work' }, { id: 'd' }]);
+  assert.deepEqual(rows.map((r) => [r.id, r.status]), [['a', 'pending'], ['b', 'done'], ['c', 'pending']]);
+  assert.deepEqual(pendingOf(rows).map((r) => r.id), ['a', 'c']);
+  // 카드 한 줄은 저장된 요약이 아니라 실행될 인자로 다시 만든다(검수 2 HIGH-1 — 요약을 꾸며 다른 일을 승인받지 못하게)
+  const forged = cleanActions([{ id: 'f', tool: 'office_work', action: 'task_set', summary: '할 일 추가: 무해한 일', args: { action: 'task_set', id: 't9', status: 'done' }, status: 'pending' }]);
+  assert.equal(forged[0].summary, '할 일 고치기(끝내기) (id t9)');
+  assert.equal(cleanActions([{ id: 'e', tool: 'office_work', action: 'task_add', summary: 'x', args: { action: 'task_add', title: 'Call' }, status: 'pending' }], 'en')[0].summary, 'Add task: Call');
+  assert.deepEqual(cleanActions(null), []);
 });
 
-test('카드 상태 — 열림 → 실행 요청함(확인 글) → 실행함(결과 표지)', () => {
-  const thread = [bot(42, 10)];
-  assert.equal(proposalState(thread, 42, 'p1'), 'open');
-  thread.push({ ...me(43, '실행: 할 일 추가'), meta: { source: PANEL_SOURCE, office_confirm: { reply: 42, pid: 'p1' } } });
-  assert.equal(proposalState(thread, 42, 'p1'), 'sent');
-  assert.equal(proposalState(thread, 42, 'p2'), 'open', '다른 카드는 그대로');
-  thread.push({ ...bot(44, 10), meta: { office_result: { reply: 42, pid: 'p1' } } });
-  assert.equal(proposalState(thread, 42, 'p1'), 'done', 'status 없는 표지 = 처리함');
-  for (const [status, want] of [['ran', 'done'], ['error', 'failed'], ['not_found', 'failed'], ['unknown', 'unknown']])
-    assert.equal(proposalState([bot(42, 10), { ...bot(45, 10), meta: { office_result: { reply: 42, pid: 'p1', status } } }], 42, 'p1'), want, status);
-});
-
-test('카드 자세히 — action 빼고 칸 이름·값, 긴 값은 자른다', () => {
-  const f = proposalFields({ args: { action: 'customer_set', id: 'c1', account: '국민 123', notes: '가'.repeat(400), empty: '', lines: [{ item: 'A', unit_price: 1 }] } });
+test('대기 변경 자세히 — action 빼고 칸 이름·값, 긴 값은 자른다', () => {
+  const f = actionFields({ args: { action: 'customer_set', id: 'c1', account: '국민 123', notes: '가'.repeat(400), empty: '', lines: [{ item: 'A', unit_price: 1 }] } });
   assert.deepEqual(f.map((x) => x.key), ['id', 'account', 'notes', 'lines']);
   assert.equal(f[2].value.length, 301);
   assert.equal(f[3].value, '[{"item":"A","unit_price":1}]');
-});
-
-test('확인 글 — 대화 뿌리에 붙이고 같은 카드는 한 건(client_msg_id 고정)', async () => {
-  const inserted = [];
-  const sb = { from: () => ({
-    insert: (row) => { inserted.push(row); return { select: () => ({ single: async () => (inserted.length === 1 ? { data: { id: 50 } } : { error: { code: '23505', message: 'dup' } }) }) }; },
-    select: () => ({ eq() { return this; }, maybeSingle: async () => ({ data: { id: 50 } }) }),
-  }) };
-  const args = { channel: 'ch', uid: 'u1', root: 10, replyId: 42, pid: 'p1', body: '실행: 할 일 추가' };
-  assert.equal(await sendConfirm(sb, args), 50);
-  assert.equal(await sendConfirm(sb, args), 50, '두 번째는 이미 있는 글 번호');
-  assert.deepEqual(inserted[0], { channel_id: 'ch', author_kind: 'user', author_user_id: 'u1', body: '실행: 할 일 추가', client_msg_id: 'oc:42:p1', meta: { source: PANEL_SOURCE, office_confirm: { reply: 42, pid: 'p1' } }, reply_to: 10, thread_root: 10 });
 });
 
 // 다국어 상시 규칙 — 카드 '자세히'의 칸 이름이 한국어 모드에서 영어 키로 보이지 않게, 쓰기 도구의 모든 칸이 사전에 있어야 한다(검수 L-b)
@@ -148,33 +129,14 @@ test('카드 칸 이름 — 오피스 도구의 모든 인자 칸에 ko·en 이�
   assert.equal(fieldLabelKey({ tool: 'office_work', key: 'title' }, has), 'agent.field.title');
 });
 
-// 단계 보기(2단계 PR2) — 방송·답 글의 단계를 모양만 맞춰 받는다
-import { liveSteps, keptSteps } from '../src/core/agent-chat.js';
-
-test('단계 — 모르는 단계 코드는 작업으로, 에이전트 답의 요약만, 비면 없음', () => {
-  assert.deepEqual(liveSteps({ steps: [{ stage: 'memory', detail: '견적.md' }, { stage: 'hack', detail: 'x' }, null, 'y'] }), [{ stage: 'memory', detail: '견적.md' }, { stage: 'work', detail: 'x' }]);
-  assert.deepEqual(liveSteps({}), []);
-  assert.deepEqual(keptSteps({ author_kind: 'crew', meta: { office_steps: { n: 30, steps: [{ stage: 'shell', detail: 'ls' }] } } }), { n: 30, steps: [{ stage: 'shell', detail: 'ls' }] });
-  assert.equal(keptSteps({ author_kind: 'user', meta: { office_steps: { n: 1, steps: [{ stage: 'shell' }] } } }), null, '사람 글의 단계는 보이지 않는다');
-  assert.equal(keptSteps({ author_kind: 'crew', meta: { office_steps: { n: 2, steps: [] } } }), null);
-  assert.deepEqual(keptSteps({ author_kind: 'crew', meta: { office_steps: { n: -1, steps: [{ stage: 'web', detail: 'a.com' }] } } }), { n: 1, steps: [{ stage: 'web', detail: 'a.com' }] });
-});
-
-// 직무별 배분(2단계 PR3) — 맡은 동료 모으기, 맡길 동료 글
-import { delegatedTo, sendRoute } from '../src/core/agent-chat.js';
-
-test('맡은 동료 — 게이트웨이가 실은 성공한 위임(이름·직무)만, 겹치면 하나, 단계 요약의 시도는 보지 않는다', () => {
-  assert.deepEqual(delegatedTo({ author_kind: 'crew', meta: { office_delegates: [{ name: '루나', role: '영업' }, { name: '루나', role: '영업' }, { name: '' }, null] } }), [{ name: '루나', role: '영업' }]);
-  assert.deepEqual(delegatedTo({ author_kind: 'crew', meta: { office_steps: { n: 1, steps: [{ stage: 'delegate', detail: '없는이름' }] } } }), [], '실패했을 수 있는 시도는 표시하지 않는다');
-  assert.deepEqual(delegatedTo({ author_kind: 'user', meta: { office_delegates: [{ name: '루나' }] } }), []);
-});
-
-test('맡길 동료 글 — 대화 뿌리에 붙이고 meta에 동료 이름', async () => {
-  const inserted = [];
-  const sb = { from: () => ({ insert: (row) => { inserted.push(row); return { select: () => ({ single: async () => (inserted.length === 1 ? { data: { id: 77 } } : { error: { code: '23505', message: 'dup' } }) }) }; },
-    select: () => ({ eq() { return this; }, maybeSingle: async () => ({ data: { id: 77 } }) }) }) };
-  const args = { channel: 'ch', uid: 'u1', root: 10, name: '루나', body: '루나에게 맡겨 줘: 견적', clientId: 'or:5:루나' };
-  assert.equal(await sendRoute(sb, args), 77);
-  assert.equal(await sendRoute(sb, args), 77, '같은 요청·같은 동료를 다시 골라도 한 건');
-  assert.deepEqual(inserted[0], { channel_id: 'ch', author_kind: 'user', author_user_id: 'u1', body: '루나에게 맡겨 줘: 견적', client_msg_id: 'or:5:루나', meta: { source: PANEL_SOURCE, office_route: '루나' }, reply_to: 10, thread_root: 10 });
+test('[실행] — 세션 토큰을 실어 오피스 서버에 보내고, 이미 처리된 행(409)은 gone', async () => {
+  const sb = { auth: { getSession: async () => ({ data: { session: { access_token: 'jwt1' } } }) } };
+  const sent = [];
+  const fetchImpl = async (url, init) => { sent.push({ url, init }); return new Response(JSON.stringify({ id: 'a', status: 'done', result: 'ok' }), { status: 200 }); };
+  assert.deepEqual(await runAction('a', 'ko', { sb, fetchImpl }), { status: 'done', result: 'ok' });
+  assert.match(sent[0].url, /\/api\/agent\/actions$/);
+  assert.equal(sent[0].init.headers.authorization, 'Bearer jwt1');
+  assert.deepEqual(JSON.parse(sent[0].init.body), { id: 'a', lang: 'ko' });
+  assert.deepEqual(await runAction('a', 'ko', { sb, fetchImpl: async () => new Response('{}', { status: 409 }) }), { status: 'gone' });
+  await assert.rejects(runAction('a', 'ko', { sb, fetchImpl: async () => new Response('{"error":"db"}', { status: 502 }) }));
 });

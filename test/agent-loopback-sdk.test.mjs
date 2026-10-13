@@ -24,7 +24,7 @@ const http = require('node:http'); const fs = require('node:fs');
 const [queueFile, resultFile] = process.argv.slice(1);
 const sse = (res, evs) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); for (const [e, d] of evs) res.write('event: ' + e + '\\ndata: ' + JSON.stringify(d) + '\\n\\n'); res.end(); };
 const start = () => ({ type: 'message_start', message: { id: 'm' + Date.now(), type: 'message', role: 'assistant', model: 'claude-x', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } });
-const s = http.createServer((req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+const s = http.createServer((req, res) => { let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
   if (!(req.method === 'POST' && req.url.startsWith('/v1/messages'))) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}'); }
   const body = JSON.parse(b || '{}'); const last = (body.messages || []).at(-1);
   const rs = Array.isArray(last && last.content) ? last.content.filter((c) => c.type === 'tool_result') : [];
@@ -52,7 +52,7 @@ const { installAgentPeerGuard } = await import('../src/agent-peer.mjs');
 installAgentPeerGuard();
 const reached = [];
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+  let b = ''; req.setEncoding('utf8'); req.on('data', (c) => { b += c; }); req.on('end', () => {
     res.setHeader('content-type', 'application/json');
     if (req.url === '/api/ping') return res.end('{"argo":true}');
     reached.push(`${req.method} ${req.url}`); res.end('{"ok":true}');

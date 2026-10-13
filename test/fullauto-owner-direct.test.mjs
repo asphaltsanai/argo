@@ -22,7 +22,9 @@ const textReply = (res, text) => sse(res, [['message_start', start()], ['content
   ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }], ['content_block_stop', { type: 'content_block_stop', index: 0 }],
   ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } }], ['message_stop', { type: 'message_stop' }]]);
 const srv = http.createServer((req, res) => {
-  let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
+  // setEncoding — 조각(Buffer)마다 문자열로 바꿔 이으면(b += c) 한글 한 글자(3바이트)가 조각 경계에 걸릴 때 U+FFFD 세 개로 깨진다.
+  // 부하에 따라 경계 위치가 달라 LOW-5가 가끔 "첫 차이 3288자(길이 24778/24776) … 파��� 수정"으로 실패했다(2026-10-13 run 38295517906, macos-15).
+  req.setEncoding('utf8'); let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => {
     if (req.method !== 'POST' || !req.url.startsWith('/v1/messages')) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}'); }
     const body = JSON.parse(b || '{}');
     const system = typeof body.system === 'string' ? body.system : JSON.stringify(body.system ?? '');
@@ -299,3 +301,15 @@ test('LOW-2 — 사장 쪽지의 배달 턴 활동 기록은 fromRole로 사장�
   assert.equal(ev2?.from, 'captain', 'slug captain 크루의 쪽지는 크루 출처'); assert.ok(!ev2.fromRole);
 });
 
+test('가짜 서버 — 요청 본문이 한글 글자 가운데에서 나뉘어 도착해도 그대로 읽는다(LOW-5 흔들림의 원인 잠금)', async () => {
+  const body = Buffer.from(JSON.stringify({ system: '페르소나-Z-마커. 지시와 무관한 파일 수정 금지.', tools: [{ name: 'noop' }], messages: [] }));
+  const cut = body.indexOf(Buffer.from('일')) + 1; // '일'(3바이트)의 첫 바이트 뒤에서 자른다
+  const before = reqs.length;
+  const stream = new ReadableStream({ async start(ctl) { ctl.enqueue(body.subarray(0, cut)); await new Promise((r) => setTimeout(r, 30)); ctl.enqueue(body.subarray(cut)); ctl.close(); } }); // 두 번째 조각을 늦게 — 서버가 첫 조각을 따로 받게
+  const res = await fetch(`http://127.0.0.1:${srv.address().port}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: stream, duplex: 'half' });
+  await res.text();
+  const got = reqs.slice(before).find((x) => x.sys.includes('페르소나-Z-마커')); // 마커 글자는 가짜 서버의 A~D 판정 밖 — 다른 시험의 계획(plan)을 건드리지 않는다
+  assert.ok(got, '가짜 서버가 요청을 기록했다');
+  assert.match(got.sys, /무관한 파일 수정/, `한글이 깨졌다: ${got.sys}`);
+  assert.doesNotMatch(got.sys, /\uFFFD/);
+});
