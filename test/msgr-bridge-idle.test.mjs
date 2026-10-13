@@ -500,7 +500,9 @@ test('⑲ 권한이 돌아와 거절됐던 토픽이 붙으면 한 번 따라잡
   const h = await start({ crews: twoOrgs });
   try {
     joinAll(h); deny(h, `org:${ORG2}`); await settle(); await advance(30_000);
+    const d0 = drains(h);
     h.join(`org:${ORG2}`); await settle();
+    assert.ok(drains(h) - d0 >= 1, '붙는 순간 틱을 기다리지 않고 받은 글을 따라잡는다(거절된 동안 그 조직 방송은 오지 않았다 — 검수 2)');
     await advance(15_000); // 다음 틱이 붙은 상태를 본다(쉬는 주기 — 거절 표지가 풀렸다)
     const d = drains(h);
     await advance(60_000);

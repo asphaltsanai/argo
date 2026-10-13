@@ -2482,17 +2482,18 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
   // 구독 상태 콜백 — 끊기면(CHANNEL_ERROR·TIMED_OUT·CLOSED) 바로 '안 붙음'으로 적어 두고(다음 15초 틱 판정 전에 realtime-js가 다시 붙여도 따라잡기를 놓치지 않게),
   // 붙는 순간(첫 구독 포함) 받은 글을 따라잡는다 — 조회와 구독 사이, 끊긴 사이에 온 글은 방송이 다시 오지 않는다
   // 끊김을 본 순간에도 받은 글을 한 번 본다 — 소켓이 죽은 뒤 끊김을 알기까지(realtime-js 심박 최대 약 50초) 온 글의 방송은 오지 않았다. 그 뒤로는 15초 조회
-  const onStatus = (status, _err, ch) => { if (stopped) return; if (status !== 'SUBSCRIBED') { if (ch?.__org && ch.__denied) return; /* 권한 거절된 조직 토픽 — 판정 밖, 재가입 실패마다 깨우지 않는다 */ const was = wasHealthy; wasHealthy = false; if (was) tick('wake').catch(() => {}); return; } if (checkHealth().rejoined) tick('wake').catch(() => {}); };
+  const onStatus = (status, _err, ch, wasDenied = false) => { if (stopped) return; if (status !== 'SUBSCRIBED') { if (ch?.__org && ch.__denied) return; /* 권한 거절된 조직 토픽 — 판정 밖, 재가입 실패마다 깨우지 않는다 */ const was = wasHealthy; wasHealthy = false; if (was) tick('wake').catch(() => {}); return; } if (checkHealth().rejoined || wasDenied) tick('wake').catch(() => {}); };
   // 같은 토픽은 한 클라이언트에서 채널 객체 하나다(realtime-js channel()) — 같은 계정의 회사 여럿이 같이 쓰면 두 번째 subscribe의 콜백은 등록되지 않는다.
   // 콜백을 채널에 하나 두고 회사마다 듣는 함수를 더한다(그래도 판정의 정본은 채널 상태 — joined)
   const attach = (ch) => {
     (ch.__watchers ??= new Set()).add(onStatus);
     ch.__dispatch ??= (status, err) => {
       ch.__status = status;
+      const wasDenied = !!ch.__denied; // 거절됐던 토픽이 붙는 순간은 판정이 이미 참(거절 토픽은 판정 밖)이라 rejoined가 안 선다 — 따로 넘겨 따라잡게 한다(검수 2)
       if (status === 'SUBSCRIBED' || status === 'CLOSED') ch.__denied = null;
       else if (ch.__org && status === 'CHANNEL_ERROR' && RT_DENIED.test(String(err?.message ?? ''))) ch.__denied = String(err.message).slice(0, 160);
       noteRtFailure(ch.topic ?? '?', status, err);
-      for (const f of ch.__watchers) f(status, err, ch);
+      for (const f of ch.__watchers) f(status, err, ch, wasDenied);
     };
     ch.subscribe(ch.__dispatch);
   };
