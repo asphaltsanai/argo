@@ -1228,6 +1228,7 @@ const DICT = {
   'home.emptyShip': ['빈 배', 'Empty ship'],
   'home.morningBriefingIncluded': [' · 아침 브리핑 포함', ' · includes morning briefing'],
   'home.myCompanies': ['내 회사', 'My Companies'],
+  'home.firstSync': ['다른 기기에서 쓰던 회사를 내려받는 중입니다. 다 내려오면 여기에 바로 나타나니, 같은 회사를 새로 만들지 않아도 됩니다.', 'Downloading your companies from your other devices. They will show up here as soon as they arrive, so there is no need to create them again.'],
   'home.noCompanies': ['아직 회사가 없습니다. 위에서 첫 회사를 만들어보세요.', 'No companies yet. Create your first one above.'],
   'home.createdSuffix': [' 생성', ''],
   'home.memoryCount': ['기억 {n}', 'Memory {n}'],
