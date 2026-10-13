@@ -65,13 +65,23 @@ function result(call, action) {
   try { return { data: action(), error: null }; } catch (e) { return { data: null, error: { message: e.message } }; } // 서버 오류는 supabase-js처럼 error로 돌려준다
 }
 
+// or('a.is.null,b.in.(x,y)') — 괄호 안 쉼표는 나누지 않는다(PostgREST와 같게). 지원: is.null·eq·neq·in.(…)·not.in.(…), 모르는 연산은 참(종전 관대함 그대로)
+function orParts(expr) { const out = []; let depth = 0, cur = ''; for (const ch of String(expr)) { if (ch === '(') depth++; if (ch === ')') depth--; if (ch === ',' && depth === 0) { out.push(cur); cur = ''; } else cur += ch; } if (cur) out.push(cur); return out; }
+function orMatch(r, k, o, v) {
+  const list = (x) => x.replace(/^\(|\)$/g, '').split(',');
+  if (o === 'is' && v === 'null') return (r[k] ?? null) === null;
+  if (o === 'neq') return r[k] !== v; if (o === 'eq') return r[k] === v;
+  if (o === 'in') return list(v).includes(String(r[k]));
+  if (o === 'not' && v.startsWith('in.')) return !list(v.slice(3)).includes(String(r[k]));
+  return true;
+}
 function query(table) {
   let op = 'select', values, cols = '*', one = false, countOpt = null;
   const filters = [], eqs = []; // eqs: 호출 기록에 남기는 등호 조건(가상 조직 id가 서버로 새는지 검사)
   const api = {
     select(c = '*', opts = null) { cols = c; countOpt = opts; return api; }, eq(k, v) { eqs.push([k, v]); filters.push(r => r[k] === v); return api; }, neq(k, v) { filters.push(r => r[k] !== v); return api; }, is(k, v) { filters.push(r => (r[k] ?? null) === v); return api; },
     in(k, vs) { filters.push(r => vs.includes(r[k])); return api; }, gt(k, v) { filters.push(r => r[k] > v); return api; }, lt(k, v) { filters.push(r => r[k] < v); return api; },
-    order() { return api; }, limit() { return api; }, contains() { return api; }, or(expr) { const alts = String(expr).split(',').map((x) => x.split('.')).filter((x) => x.length >= 3); if (alts.length) filters.push((r) => alts.some(([k, o, ...v]) => (o === 'is' && v.join('.') === 'null' ? (r[k] ?? null) === null : o === 'neq' ? r[k] !== v.join('.') : o === 'eq' ? r[k] === v.join('.') : true))); return api; }, ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; }, // or: 'a.is.null,a.neq.x' 꼴만(보관 방 안 읽은 수 — 서버처럼 내 글 제외). 주석이 줄 가운데 있으면 뒤의 maybeSingle·single이 지워진다(10/13 화면 확인에서 발견)
+    order() { return api; }, limit() { return api; }, contains() { return api; }, or(expr) { const alts = orParts(expr).map((x) => x.split('.')).filter((x) => x.length >= 3); if (alts.length) filters.push((r) => alts.some(([k, o, ...v]) => orMatch(r, k, o, v.join('.')))); return api; }, not(k, o, v) { if (o === 'is' && v === null) filters.push((r) => (r[k] ?? null) !== null); else throw new Error(`fixture: not(${k}, ${o}) 미지원`); return api; }, ilike() { return api; }, maybeSingle() { one = true; return api; }, single() { one = true; return api; }, // or: 'a.is.null,a.neq.x' 꼴만(보관 방 안 읽은 수 — 서버처럼 내 글 제외). 주석이 줄 가운데 있으면 뒤의 maybeSingle·single이 지워진다(10/13 화면 확인에서 발견)
     upsert(v) { op = 'upsert'; values = v; return api; }, update(v) { op = 'update'; values = v; return api; }, delete() { op = 'delete'; return api; }, insert(v) { op = 'insert'; values = v; return api; },
     then(resolve, reject) {
       const slow = state.slow?.[`${table}:${op}`]; // 화면 확인용 지연(window.__psFixture.slow = { 'msgr_crews:select': 1500 }) — 돌리는 동안 연타(검수 #5)
@@ -91,6 +101,10 @@ function query(table) {
           });
         } else if (op === 'update') rows.forEach(r => Object.assign(r, values));
         else if (op === 'delete') state.tables[table] = all.filter(r => !rows.includes(r));
+        if (table === 'msgr_channels' && op === 'select' && cols.includes('msgr_channel_members(')) { // 채널 + 구성원 내장(검색의 보관 1:1 조회) — 서버처럼 그 방 구성원 전부
+          const members = [...(state.tables.msgr_channel_members ?? []), ...(state.tables.msgr_personal_members ?? [])];
+          rows = rows.map((c) => ({ ...c, msgr_channel_members: members.filter((m) => m.channel_id === c.id).map(({ member_kind, member_id }) => ({ member_kind, member_id })) }));
+        }
         if (table === 'msgr_channel_members' && cols.includes('msgr_channels')) rows = rows.map(r => ({ ...r, msgr_channels: [...(state.tables.msgr_channels || []), ...(state.tables.msgr_personal_channels || [])].find(c => c.id === r.channel_id) }));
         return structuredClone(one ? rows[0] ?? null : rows);
       })).then((r) => (countOpt?.count && !r.error ? { data: countOpt.head ? null : r.data, count: r.data.length, error: null } : r)).then(resolve, reject); // select('id', { count, head }) — 서버처럼 개수만
