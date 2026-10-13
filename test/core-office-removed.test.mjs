@@ -29,6 +29,8 @@ const ALLOWED = {
   'src/sync.mjs': [1, '옛 비서 상태 폴더를 계속 올리지 않는 이유 주석'],
   'app/c/[ws]/routines/page.jsx': [1, '지운 하트비트 칸을 설명하는 주석'],
   'app/c/[ws]/settings/page.jsx': [1, '오피스 진입 버튼을 뺀 내력 주석'],
+  'app/i18n.jsx': [1, '0.1.107 업데이트 안내 updates.note.officeSplit 한 줄(오피스 분리를 사용자에게 알리는 문구 — 결합 코드 아님)'],
+  'app/update-notes-state.mjs': [2, '0.1.107 업데이트 안내 항목 줄과 그 주석(officeSplit 키 — 결합 코드 아님)'],
   'app/api/companies/[ws]/files/route.js': [1, '"오피스·아카이브" 파일 종류 주석(문서 형식 — Argo 오피스 아님)'],
 };
 
