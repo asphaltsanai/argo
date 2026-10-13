@@ -139,29 +139,15 @@ export function createRejectMemory({ now = Date.now } = {}) {
     get size() { return m.size; },
   };
 }
-/* 'ok' 판정 기억(2026-10-13 로그 과금 축소) — msgr_bot_gate(무료 주인 차단 판정)는 getUpdates마다 1회라 봇당 분당 약 3회였다.
-   같은 토큰이 'ok'를 받으면 GATE_OK_TTL_S 동안 판정 RPC를 부르지 않는다. 정책 값: 주인이 Pro를 해지·만료해도 이 인스턴스에서 봇이 막히기까지 최대 60초 늦다
-   ('ok' → 거절 지연). 거절 쪽(plan_required)은 기억하지 않고 매번 판정해 거부 기억(createRejectMemory)에 넘긴다 — 무료 → Pro로 바뀐 봇은 종전대로 거부 기억 TTL 뒤 풀린다.
-   거부 기억과 다른 Map이다(키도 만료도 섞이지 않는다). 판정 실패로 통과시킨 경우(옛 DB·시간 초과의 fail-open)는 기억하지 않는다. 토큰 오류(401)·거부 판정이 나오면 지운다.
-   기억은 이 엣지 인스턴스 메모리뿐 — DB에 쓰지 않는다. 토큰은 메모리 키로만 쓰고 기록하지 않는다. */
-export const GATE_OK_TTL_S = 60;
-const GATE_OK_MAX = 5_000; // 메모리 상한 — 넘으면 가장 오래된 것부터 버린다
-export function createGateOkMemory({ now = Date.now } = {}) {
-  const m = new Map(); // token → 만료 시각(ms)
-  return {
-    fresh(token) { const until = m.get(token); if (until == null) return false; if (now() < until) return true; m.delete(token); return false; },
-    remember(token) { m.delete(token); m.set(token, now() + GATE_OK_TTL_S * 1000); while (m.size > GATE_OK_MAX) m.delete(m.keys().next().value); },
-    forget(token) { m.delete(token); },
-    get size() { return m.size; },
-  };
-}
+// 네 인자 함수가 아직 없는 DB(PostgREST PGRST202 — 함수·인자 조합을 못 찾음). 다른 오류(시간 초과·권한)는 물러나지 않는다
+const missingRpcFn = (e) => e?.code === 'PGRST202' || /Could not find the function/i.test(String(e?.message ?? ''));
 const REJECT_REPLY = {
   plan: () => failRetry(403, ERR.msgr_bot_plan_required[1], REJECT_TTL_S.plan),
   auth: () => failRetry(401, ERR.msgr_bot_unauthorized[1], REJECT_TTL_S.auth),
 };
 
 // rpc(fn, args) → JSON. PostgREST 오류는 {message, code, details}를 throw.
-export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null, planGate = null, rejects = null, gateOk = null } = {}) {
+export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null, planGate = null, rejects = null, gateInUpdates = false } = {}) {
   if (!token) return fail(401, 'Unauthorized: token missing (use /bot<token>/<method> or Authorization: Bearer)');
   if (!METHODS.includes(method)) return fail(404, `Not Found: method ${method || '(none)'} — supported: ${METHODS.join(', ')}`);
   try {
@@ -178,18 +164,33 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       // 값싼 거절 — 기억된 거부 토큰은 DB 없이 롱폴 시간만큼 붙잡았다가 거부한다(옛 도구의 재시도 간격 = 대기 + 사다리, 종전 403과 같은 박자)
       const known = rejects?.blocked(token);
       if (known) { await sleep(Math.max(0, deadline - now())); return REJECT_REPLY[known](); }
-      // 무료 계정 봇(2026-10-10): 판정 1회 → 롱폴 시간만큼 DB 조회 없이 붙잡았다가 403. 연결 도구는 403을 1→30초 사다리로 다시 오므로 간격 = 대기 + 사다리.
-      // 판정 실패(옛 DB에 함수 없음·시간 초과)는 막지 않는다 — 5xx를 주면 Hermes가 3초 간격으로 다시 온다. 토큰 오류는 종전처럼 401.
-      if (planGate && !gateOk?.fresh(token)) { // 'ok'를 받은 지 GATE_OK_TTL_S 안이면 판정을 건너뛴다(위 createGateOkMemory)
-        let skipped = false;
+      // 무료 계정 봇(2026-10-10): 막히면 롱폴 시간만큼 DB 조회 없이 붙잡았다가 403(+ Retry-After). 연결 도구는 403을 사다리로 다시 오므로 간격 = 대기 + 사다리.
+      // 판정 자리(2026-10-13 로그 과금 축소 ①): gateInUpdates면 롱폴 첫 조회(msgr_bot_updates_with_delivery, gate => true)가 판정까지 한다 — 별도 msgr_bot_gate 호출 없음.
+      //   DB가 아직 네 인자 함수가 없으면(마이그레이션 20261013180000 전·되돌림 — PGRST202) 종전 경로로 물러난다: msgr_bot_gate 1회 + 세 인자 조회.
+      //   옛 연결 경로(delivery_protocol 없음 — msgr_bot_updates)도 종전 경로. 판정 실패(옛 DB에 함수 없음·시간 초과)는 막지 않는다(5xx면 Hermes가 3초 간격으로 다시 온다). 토큰 오류는 401.
+      const delivery = Number(params.delivery_protocol) === 1;
+      const fn = delivery ? 'msgr_bot_updates_with_delivery' : 'msgr_bot_updates';
+      const args = { token, after_id: Math.max(0, offset - 1), lim };
+      const blockPlan = async () => { rejects?.reject(token, 'plan'); await sleep(Math.max(0, deadline - now())); return REJECT_REPLY.plan(); };
+      let ups = null; let gateSkipped = false;
+      if (delivery && gateInUpdates) {
+        try { ups = await rpc(fn, { ...args, gate: true }); }
+        catch (e) {
+          const m = String(e?.message ?? '');
+          if (/msgr_bot_unauthorized/.test(m)) throw e; // 토큰 오류는 아래 공통 처리(401)
+          if (/msgr_bot_plan_required/.test(m)) return blockPlan();
+          // 네 인자 함수가 없는 옛 DB면 종전 경로(msgr_bot_gate). 그 밖의 오류(판정 함수 drop → 42883, is_pro_for·중지 기록·설정 오류, 시간 초과)는
+          // 배포본처럼 막지 않는다(fail-open — 검수 2 #999): 판정 없이 아래 루프의 gate 없는 조회로 다시 받는다(오류가 날 때만 1회 더).
+          if (!missingRpcFn(e)) { console.warn('[msgr-bot] plan gate in updates skipped:', m.slice(0, 200)); gateSkipped = true; }
+        }
+      }
+      if (ups === null && planGate && !gateSkipped) {
         const verdict = await planGate(token).catch((e) => {
-          if (/msgr_bot_unauthorized/.test(String(e?.message ?? ''))) { gateOk?.forget(token); throw e; }
+          if (/msgr_bot_unauthorized/.test(String(e?.message ?? ''))) throw e;
           console.warn('[msgr-bot] plan gate skipped:', String(e?.message ?? '').slice(0, 200));
-          skipped = true;
           return 'ok';
         });
-        if (verdict === 'plan_required') { gateOk?.forget(token); rejects?.reject(token, 'plan'); await sleep(Math.max(0, deadline - now())); return REJECT_REPLY.plan(); }
-        if (verdict === 'ok' && !skipped) gateOk?.remember(token);
+        if (verdict === 'plan_required') return blockPlan();
       }
       // 이벤트(루틴 편집·결재 결정)는 옵트인(events=1)한 어댑터에게만, 요청당 한 번 조회한다. update_id·offset과 무관하고
       // 서버가 60초 임대로 중복을 막는다. 이벤트 조회는 선택 기능 — 어떤 오류든(옛 서버의 RPC 없음, 시간 초과, 교착) 메시지 수신을
@@ -199,10 +200,11 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
         return [];
       }) : [];
       for (;;) {
-        const ups = await rpc(Number(params.delivery_protocol) === 1 ? 'msgr_bot_updates_with_delivery' : 'msgr_bot_updates', { token, after_id: Math.max(0, offset - 1), lim });
+        if (ups === null) ups = await rpc(fn, args);
         if (ups.length || evs?.length || now() >= deadline) { rejects?.clear(token); return reply(200, [...(evs ?? []), ...ups]); }
         const t = now();
         await sleep(Math.min(pollDelay(t - start), Math.max(1, deadline - t)));
+        ups = null;
       }
     }
     if (method === 'getFile') { // 텔레그램 모양: file_id → file_path(단수명 서명 URL). 봇이 그 채널에 있을 때만(RPC msgr_bot_file이 판정) — 첨부가 봇에 안 가던 결함(2026-09-11 밤)
@@ -296,7 +298,7 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
   } catch (e) {
     const name = String(e?.message ?? '').match(/msgr_[a-z_]+/)?.[0];
     if (name === 'msgr_bot_unauthorized') { // 무효·폐기 토큰 — 받기(getUpdates)만 기억한다(폴링이 폭주의 자리, 다른 메서드는 사람이 부를 때만)
-      if (method === 'getUpdates') { rejects?.reject(token, 'auth'); gateOk?.forget(token); }
+      if (method === 'getUpdates') rejects?.reject(token, 'auth');
       return REJECT_REPLY.auth();
     }
     if (name && ERR[name]) return fail(ERR[name][0], ERR[name][1]);

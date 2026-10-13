@@ -6,8 +6,8 @@
 --   열린 중지 기록(msgr_crew_pauses, resumed_at null)이 있으면 Pro가 된 뒤라도 sweep이 재개(커서를 지금 끝으로)할 때까지 막는다 —
 --   재개 전에 받게 하면 멈춘 동안 쌓인 글을 한꺼번에 받는다. 결제는 entitlements 트리거가 바로 재개하고, 조직 좌석은 10분 크론 안.
 -- 스위치: msgr_settings bot_plan_gate = 'off'면 항상 'ok'(행이 없으면 켜짐).
--- 되돌리기: insert into public.msgr_settings(key,value) values('bot_plan_gate','off') on conflict (key) do update set value='off';
---           또는 drop function public.msgr_bot_gate(text) (엣지는 판정 실패를 '막지 않음'으로 본다).
+-- 되돌리기: 스위치만 쓴다 — insert into public.msgr_settings(key,value) values('bot_plan_gate','off') on conflict (key) do update set value='off';
+--           함수 drop 금지(2026-10-13 수정 — 20261013180000부터 롱폴 조회가 이 함수를 부른다. 엣지는 판정 실패를 막지 않지만 그 경로는 비상용이다).
 create or replace function public.msgr_bot_gate(token text) returns text
   language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare b public.msgr_bots; uid uuid;
