@@ -15,7 +15,7 @@ const HIT = /office|오피스/i;
 /** 남겨도 되는 곳과 그 줄 수 — 이유. */
 const ALLOWED = {
   'src/gateway/msgr-handoff.mjs': [10, '오피스 출처 글(meta.source office_*)은 풀 오토 제외 — 권한을 내리는 안전장치(isOfficeSource, 옛 글·오피스 앱이 넣는 글에 그대로 필요)'],
-  'src/gateway/msgr.mjs': [16, '같은 안전장치의 배선(officeChain·job.office — 넘김·DM 전달에도 내리는 방향으로만)'],
+  'src/gateway/msgr.mjs': [17, '같은 안전장치의 배선(officeChain·job.office — 넘김·DM 전달·옛 1:1에서 옮긴 이어 실행에도 내리는 방향으로만)'],
   'src/chat.mjs': [5, '같은 안전장치를 설명하는 주석(풀 오토·호칭 제외), 지운 패널 결재 목적지 주석'],
   'src/connectors.mjs': [1, '커넥터 풀 오토 제외 주석(같은 안전장치)'],
   'src/user-name.mjs': [2, '오피스에서 맡긴 턴은 호칭 제외(같은 안전장치) 주석'],

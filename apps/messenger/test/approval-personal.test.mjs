@@ -169,6 +169,6 @@ test('연결 — 채널의 결재 슬립은 개인 공간 표지를 받아 판�
 });
 
 test('핀 — 업무 패널은 개인 공간에서 계속 숨기고, 결재 OS 알림은 관리자에게만(바꾸지 않는다)', () => {
-  assert.match(app, /\{!isPersonal && <button type="button" className="btn sm msgr-work-button"/);
+  assert.match(app, /\{!isPersonal && !archived && <button type="button" className="btn sm msgr-work-button"/); // 보관한 옛 1:1(읽기 전용)도 숨긴다 — 1:1 하나로 합치기(#857)의 의도한 변경
   assert.match(app, /if \(!payload \|\| payload\.status !== 'pending' \|\| !r\.isAdmin \|\| !shouldNotify\(payload\.channel_id\)\) return;/);
 });

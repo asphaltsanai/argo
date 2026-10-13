@@ -24,9 +24,10 @@ export const LOCATION = Object.freeze({
  *  - orgTopic: 입력 중·받음 방송을 조직 토픽으로 보내는가(공개 채널만). 기존 roomTopic/startTyping의 full.
  *  - sessionless: 채널 세션을 잇지 않는다(DM이거나 기억 안 남김). 기존 run·runMessengerContinuation의 sessionId 분기.
  *  - personal: 조직 없는 방인가(대화 위치 기준). 기존 `!ch.org_id`.
+ *  - archived: 보관한 방(읽기 전용 — 옛 조직 1:1 보관, 1:1 하나로 합치기 2단계). 기존 `!!ch.archived_at`.
  */
 export function chatLocation(ch) {
-  if (!ch) return { kind: LOCATION.NONE, orgId: null, personal: false, dm: false, deliveryDm: false, relayDm: false, orgTopic: false, sessionless: false, memoryOff: false };
+  if (!ch) return { kind: LOCATION.NONE, orgId: null, personal: false, dm: false, archived: false, deliveryDm: false, relayDm: false, orgTopic: false, sessionless: false, memoryOff: false };
   const orgId = ch.org_id ?? null;
   const dm = ch.kind === 'dm';
   const pair = String(ch.personal_pair ?? '');
@@ -35,7 +36,7 @@ export function chatLocation(ch) {
     : (dm ? (pair.startsWith('crew:') ? LOCATION.PERSONAL_CREW_DM : LOCATION.PERSONAL_FRIEND_DM) : LOCATION.PERSONAL_GROUP);
   const memoryOff = ch.crew_memory === false;
   return {
-    kind, orgId, personal: !ch.org_id, dm,
+    kind, orgId, personal: !ch.org_id, dm, archived: !!ch.archived_at,
     deliveryDm: dm && (ch.org_id !== null || pair.startsWith('crew:')),
     relayDm: dm && ch.org_id != null,
     orgTopic: ch.kind === 'public',
