@@ -1956,7 +1956,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       return DEFER;
     }
     // onStopRequested: 방송(u:<owner>의 'stop_request')을 놓친 기기의 폴백 — 30초 심박마다 stop_requested_at을 확인한다.
-    const stopHeartbeat = executionHeartbeat(wsId, db, job, { onStopRequested: () => { interruptTurn(wsId, job.slug, { source: 'messenger', tag: job.msgId }).catch((e) => console.error(`[argo] msgr 심박 중단 처리 실패(${wsId}/${job.slug}/${job.msgId}):`, e.message)); stopPanelChildren(wsId, job.msgId).catch(() => {}); } });
+    const stopHeartbeat = executionHeartbeat(wsId, db, job, { onStopRequested: () => { interruptTurn(wsId, job.slug, { source: 'messenger', tag: job.msgId }).catch((e) => console.error(`[argo] msgr 심박 중단 처리 실패(${wsId}/${job.slug}/${job.msgId}):`, e.message)); } });
     activeCtx.set(ctxKey, ctx);
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId, topic: early?.full === (ch.kind === 'public') ? early : null }); if (!early) stageLog(job, 'broadcast', now()); // 받음 방송에 쓴 방 토픽을 그대로 잇는다(방 채널을 두 번 열지 않는다). 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
     let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {};
