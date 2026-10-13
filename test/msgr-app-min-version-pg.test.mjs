@@ -63,3 +63,13 @@ test('정해진 키만 — 같은 표의 비밀값 행은 어떤 인자로도 �
     assert.ok(direct.status !== 0 || last(direct.stdout) === '', `${role}이 표를 직접 읽지 못한다`);
   }
 });
+
+test('확인 호출은 쓰기 0 — 기기마다 30분에 한 번 불러도 트랜잭션 번호가 생기지 않는다(DB 위생 5)', { skip }, () => {
+  sql(`insert into public.msgr_settings (key, value) values ('min_app_version', '0.1.107') on conflict (key) do update set value = excluded.value`);
+  const before = sql(`select xmin::text from public.msgr_settings where key = 'min_app_version'`);
+  for (const role of ['authenticated', 'anon']) {
+    assert.equal(last(as(role, `select public.argo_min_app_version('desktop'); select coalesce(txid_current_if_assigned()::text, 'none')`)), 'none', `${role} 확인 호출에 쓰기 없음`);
+  }
+  assert.equal(sql(`select xmin::text from public.msgr_settings where key = 'min_app_version'`), before, '행 xmin 그대로');
+  sql(`delete from public.msgr_settings where key = 'min_app_version'`);
+});
