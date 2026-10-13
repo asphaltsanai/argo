@@ -1803,6 +1803,15 @@ export function syncStatus() {
   const companies = Object.fromEntries(Object.entries(status.companies).filter(([, c]) => c?.skipped !== 'no-owner'));
   return { ...status, on: syncOn(), leader: isCloudLeader(), companies };
 }
+/** 새 기기의 첫 동기화가 아직 끝나지 않았는가(홈 화면용, 순수 판독) — 동기화가 켜져 있고 ① 원격에서 처음 발견한 회사를 내려받는 중이거나
+    ② 사이클이 한 번도 끝나지 않았고 기기 전체 오류(자격 없음·다른 프로세스가 동기화 중·요금제 차단)도 없다. 오류가 있으면 거짓 — 끝나지 않는 "내려받는 중"을 막는다.
+    회사 id·파일 등은 싣지 않는다(같은 기기의 다른 사용자에게 보여도 되는 값만). 2026-10-13 유건 실제 사례: 새 기기 첫 로그인 뒤 회사가 다 내려와도 홈이 빈 목록에 머물렀다. */
+export function firstSyncPending() {
+  if (!syncOn() || lockState.elsewhere || status.paywalled) return false;
+  if (status.restoring) return true;
+  return status.lastTs === null && !status.lastError;
+}
+
 /** 한 회사 화면용 상태 — 회사 가드(guardCompany)는 그 회사만 보므로, 같은 기기의 게스트·다른 계정이 자기 회사 화면을 열어도
     다른 회사의 실패·빈 항목 파일 경로가 보이지 않게 companies는 그 회사 것만 싣는다. lastError는 기기 전체 오류(자격 만료·다른 프로세스
     동기화 중 등 — 회사 접두 없음)가 있으면 그것, 아니면 이 회사 오류(companies[ws].error)다. 회사 접두(`<회사 ID>: `)가 붙은 lastError는
@@ -1950,7 +1959,13 @@ function startLeaseLoop() {
   })();
 }
 
+/** 한 사이클 — 진행 중 여부(cycling)와 원격에서 처음 발견한 회사 복원 중 여부(restoring)를 화면용 상태에 남긴다(firstSyncPending). */
 async function cycle() {
+  status.cycling = true;
+  try { return await cycleOnce(); } finally { status.cycling = false; status.restoring = false; }
+}
+
+async function cycleOnce() {
   if (!(await ensureClient())) { status.lastError = '동기화 자격 없음/만료 — 재로그인 필요'; return; }
   // 크로스 프로세스 락 — 같은 root를 다른 살아있는 프로세스가 동기화 중이면 파일 동기화는 대기(이중 동기화=대형 유실 차단)
   lockState.elsewhere = !(await holdSyncLock());
@@ -2053,6 +2068,7 @@ async function cycle() {
     if (tombs.has(wsId)) continue; // 보관된 회사 — 클라우드 사본이 남아 있어도 복원하지 않는다
     if (!targets.has(wsId)) { targets.set(wsId, owner); restoreSet.add(wsId); }
   }
+  status.restoring = restoreSet.size > 0; // 새 기기가 내 회사를 처음 내려받는 중 — 홈이 빈 목록 대신 "내려받는 중"을 보인다(사이클 끝에 cycle()이 지운다)
   const owners = [...new Set(targets.values())];
   // ARGO_SYNC_OWNER/페어링/세션 어디에도 오너가 없던 서비스 셀프호스트 — 로컬 회사에서 찾은 오너로 한 번 더 시도
   if (!keyOwner && owners[0]) await ensureAccountKey(client(), owners[0]);
