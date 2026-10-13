@@ -8,6 +8,25 @@ import { sessionClient } from './msgr.mjs';
 
 const missingRpc = (error) => ['PGRST202', '42883'].includes(error?.code);
 
+/* 유휴 호출 줄이기(2026-10-13 로그 수집 과금 — 이 루프가 기기·회사마다 30초에 RPC 2개, 하루 39만 건). DB 위생 규칙 2·3:
+   - 경로 동기화(msgr_notification_routes_sync)는 보낼 경로 목록(라벨·ready)이 바뀌었을 때, 또는 ready 경로가 있으면 ROUTE_SYNC_MS마다만.
+     서버 판정은 노드 3분 신선도(n.last_seen_at >= now()-3분, 20260923210000)라 60초 = 기한의 1/3. ready 경로가 없으면 신선도가 필요 없다.
+   - 수신함 확인(msgr_notification_claim)은 ready 경로가 있을 때만 매번(30초 — 첫 알림 지연 종전 그대로). 없으면 서버 조회가 늘 빈다(노드 ready 조인).
+     다만 확인 RPC가 하던 정리(5분 넘은 claimed → uncertain, 24시간 넘은 pending → skipped, 권한 철회 → skipped)는 경로가 꺼져도 남아야 해서
+     IDLE_CLAIM_MS(30분)마다 한 번은 부른다 — 정리 시각이 최대 30분 늦을 뿐 결과는 같다.
+   - 경로가 막 ready가 되면 목록이 바뀐 것이라 그 틱에 바로 동기화하고 확인한다(첫 알림이 늦지 않게).
+   기억은 프로세스 메모리(회사·기기·계정마다) — 재시작하면 첫 틱에 한 번 동기화한다. 동기화가 실패하면 기억을 남기지 않아 다음 틱에 다시 한다. */
+export const ROUTE_SYNC_MS = 60_000;
+export const IDLE_CLAIM_MS = 30 * 60_000;
+const routeMemo = (globalThis.__argoNotifyRouteMemo ??= new Map()); // `${uid}:${wsId}:${device}` → { routes, syncedAt, claimedAt }
+export function notificationPlan(memo, routes, t) {
+  const key = JSON.stringify(routes);
+  const ready = routes.some((r) => r.ready === true);
+  const sync = !memo || memo.routes !== key || (ready && t - memo.syncedAt >= ROUTE_SYNC_MS);
+  const claim = ready || !memo || t - (memo.claimedAt ?? -Infinity) >= IDLE_CLAIM_MS;
+  return { key, ready, sync, claim };
+}
+
 // Connections belong to the notification recipient, never to the crew that did
 // the work. Advertise labels/readiness only; credentials stay on this Argo node.
 export function notificationRoutes(company, connections, agents = []) {
@@ -20,7 +39,7 @@ export function notificationRoutes(company, connections, agents = []) {
 
 export async function deliverMessengerNotifications(wsId, {
   session = sessionClient, readCompany = loadCompany, readConnections = loadConnections,
-  readAgents = listAgents, readDeviceId = getDeviceId, send, attempt = randomUUID(),
+  readAgents = listAgents, readDeviceId = getDeviceId, send, attempt = randomUUID(), memo = routeMemo, now = Date.now,
 } = {}) {
   const c = await session();
   if (!c) return { available: false, reason: 'signed_out', deliveries: [] };
@@ -31,12 +50,21 @@ export async function deliverMessengerNotifications(wsId, {
   const [connections, agents] = await Promise.all([readConnections(wsId), readAgents(wsId)]);
   const deviceId = await readDeviceId();
   const routes = notificationRoutes({ ...company, id: wsId }, connections, agents);
-  const synced = await c.client.rpc('msgr_notification_routes_sync', { p_ws: wsId, p_routes: routes, p_device: deviceId });
-  if (missingRpc(synced.error)) return { available: false, reason: 'upgrade', deliveries: [] };
-  if (synced.error) throw new Error('Notification connections could not be synchronized');
+  const memoKey = `${c.uid}:${wsId}:${deviceId}`;
+  const t = now();
+  const plan = notificationPlan(memo.get(memoKey), routes, t);
+  if (plan.sync) {
+    const synced = await c.client.rpc('msgr_notification_routes_sync', { p_ws: wsId, p_routes: routes, p_device: deviceId });
+    if (missingRpc(synced.error)) return { available: false, reason: 'upgrade', deliveries: [] };
+    if (synced.error) throw new Error('Notification connections could not be synchronized');
+    memo.set(memoKey, { ...memo.get(memoKey), routes: plan.key, syncedAt: t });
+    while (memo.size > 1000) memo.delete(memo.keys().next().value); // 회사·기기·계정 조합 상한
+  }
   // Do not claim work if no sender is installed. Claiming reserves one outbound
   // attempt; an interrupted/ambiguous attempt must not become a duplicate send.
   if (typeof send !== 'function') return { available: true, deliveries: [] };
+  if (!plan.claim) return { available: true, deliveries: [], idle: true }; // ready 경로가 없고 정리 주기 전 — 확인할 것이 없다
+  memo.set(memoKey, { ...memo.get(memoKey), claimedAt: t });
   const claimed = await c.client.rpc('msgr_notification_claim', { p_ws: wsId, p_attempt: attempt, p_device: deviceId });
   if (missingRpc(claimed.error)) return { available: false, reason: 'upgrade', deliveries: [] };
   if (claimed.error) throw new Error('Notification delivery queue could not be read');
