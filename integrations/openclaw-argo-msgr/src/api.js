@@ -6,8 +6,14 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createHash, randomUUID } from 'node:crypto';
 // 아르고 메신저 봇 API 클라이언트(순수 JS — 플러그인과 node 단위 테스트가 같이 쓴다). 텔레그램 규율: /bot<token>/<method>, {ok,result}, offset=ack.
+// 거부 응답의 대기 초 — 본문 parameters.retry_after(텔레그램 규약)가 먼저, 없으면 HTTP Retry-After(초). 양수만, 상한 1시간(2026-10-13)
+export const RETRY_AFTER_MAX_S = 3600;
+export function retryAfterOf(body, header) {
+  for (const v of [body?.parameters?.retry_after, header]) { const s = Number(v); if (Number.isFinite(s) && s > 0) return Math.min(s, RETRY_AFTER_MAX_S); }
+  return null;
+}
 export class ArgoMsgrError extends Error {
-  constructor(status, description) { super(`${status}: ${description}`); this.status = status; this.description = description; }
+  constructor(status, description, retryAfter = null) { super(`${status}: ${description}`); this.status = status; this.description = description; this.retryAfter = retryAfter; }
 }
 export const MAX_LEN = 20000;                 // 서버 본문 상한(msgr_messages.body)
 export const POLL_TIMEOUT_S = 20;             // 서버 상한 25초
@@ -36,7 +42,7 @@ export function makeApi({ url, token, fetchImpl = globalThis.fetch, outboxDir = 
     else if (params) { const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)])); target += `?${q}`; }
     const r = await fetchImpl(target, init);
     const body = await r.json().catch(() => ({ ok: false, error_code: r.status, description: `bad json (${r.status})` }));
-    if (!body?.ok) throw new ArgoMsgrError(Number(body?.error_code ?? r.status ?? 500), String(body?.description ?? 'unknown'));
+    if (!body?.ok) throw new ArgoMsgrError(Number(body?.error_code ?? r.status ?? 500), String(body?.description ?? 'unknown'), retryAfterOf(body, r.headers?.get?.('retry-after')));
     return body.result;
   };
   const prefix = createHash('sha256').update(base + '\0' + token).digest('hex');
@@ -129,7 +135,7 @@ export function redactSecrets(text) {
 //   (Hermes도 handle_message가 턴을 백그라운드로 돌린다). 서버는 한 번 준 원문을 실행 기록으로 다시 주지 않으므로 offset을 바로 올려도 된다.
 // - CC 영수증은 지금처럼 기다린다(저장 실패면 offset을 올리지 않고 재시도).
 /** @param {any} api @param {any} opts */
-export async function pollLoop(api, { onMessage, onEvent = async () => {}, log = () => {}, signal, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+export async function pollLoop(api, { onMessage, onEvent = async () => {}, log = () => {}, signal, sleep = (ms, sig) => new Promise((r) => { const t = setTimeout(r, ms); sig?.addEventListener?.('abort', () => { clearTimeout(t); r(); }, { once: true }); }) }) {
   let offset = 0, backoff = 1000;
   while (!signal?.aborted) {
     try {
@@ -148,6 +154,11 @@ export async function pollLoop(api, { onMessage, onEvent = async () => {}, log =
     } catch (e) {
       if (signal?.aborted) return;
       if (e instanceof ArgoMsgrError && e.status === 401) { log(`argo-msgr: token rejected (${e.description}) — rotate the token in Argo Messenger settings`); return; }
+      if (e instanceof ArgoMsgrError && e.retryAfter) { // 서버가 다시 올 때를 정했다(무료 주인 403·429) — 사다리 대신 그만큼 쉬고, 중단 신호면 바로 나온다
+        log(`argo-msgr: poll error ${String(e?.message ?? e)} — server asked to retry in ${e.retryAfter}s`);
+        await sleep(e.retryAfter * 1000, signal); // 중단 신호면 타이머를 지우고 바로 나온다(긴 대기가 종료를 붙잡지 않게)
+        continue;
+      }
       log(`argo-msgr: poll error ${String(e?.message ?? e)} — retry in ${backoff / 1000}s`);
       await sleep(backoff); backoff = Math.min(backoff * 2, 30_000);
     }
