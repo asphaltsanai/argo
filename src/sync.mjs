@@ -122,6 +122,10 @@ export function _walkCacheForTest() { return walkCache; }
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
 const LOCK_STALE_MS = Math.max(CYCLE_MS * 3, 120_000);
 export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다 (export: 회귀 테스트용)
+/** 확인된 보유자의 다시 쓰기 간격 — TTL의 1/2(60초). 다른 기기는 글의 ts + TTL까지 살아 있는 리스로 보므로, 다시 쓰기가 한 번 실패해도
+    다음 판정에서 다시 쓸 여유가 남는다. 30초(TTL/4)이던 것을 로그 수집 과금(2026-10-13: 리스 쓰기 한 번 = edge POST + storage POST·Put·AdminDelete)
+    때문에 늘렸다(DB 위생 규칙 2: 신선도 기한의 1/2~1/4). (export: 회귀 테스트용) */
+export const LEASE_RENEW_MS = LEASE_TTL_MS / 2;
 
 // 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선하되,
 // 호스티드 클라이언트에선 serviceCredsAllowed()가 서비스 모드를 금지해 세션이 쓰인다(ensureClient 참조).
@@ -437,7 +441,7 @@ export const shouldYieldAcquire = (runnerUsable, yieldSince, now = Date.now()) =
       지나 스스로 물러난다 — 넘겨받는 쪽이 대기(HANDOVER_WAIT_MS)를 마칠 때 앞 담당은 이미 아니다.
     · 단일 기기(다른 기기를 본 적 없음): 배포본처럼 표시(leader)를 따른다. 리스를 못 읽어도 표시를 바꾸지 않는다. 다만
       - 보유자는 내 리스 글이 만료되기 전(마지막 쓰기 + TTL − 여유)까지만이다 — 갱신하지 못하면(세션 끊김·네트워크) 만료 뒤 다른 기기가 가져간다. 맥 우선·서버 예비에서
-        맥은 서버가 한 번 맡기 전까지 서버의 글을 본 적이 없어 단일 기기로 판정된다. 리스 판정은 동기화와 따로 30초마다 갱신하므로 긴 동기화로 꺼지지 않는다.
+        맥은 서버가 한 번 맡기 전까지 서버의 글을 본 적이 없어 단일 기기로 판정된다. 리스 판정은 동기화와 따로 돌고 보유자는 60초(LEASE_RENEW_MS)마다 다시 쓰므로 긴 동기화로 꺼지지 않는다.
       - 기동 첫 리스 판정이 끝나기 전(최대 SOLO_BOOT_WAIT_MS)과, 잠들었다 깬 뒤 리스를 다시 확인하기 전은 아니다 — 그 사이 다른 기기가 처음으로 맡았을 수 있다
         (맥 앱이 켜지는 순간·깬 직후 첫 스케줄러 틱이 낡은 표시로 루틴을 다시 돌리지 않게).
     · 동기화 꺼짐(기기 세션 없음·ARGO_SYNC=0) = 단일 기기라 담당 — 예비 기기만 아니다(맥이 담당인지 알 수 없다). */
@@ -578,7 +582,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 넘겨받기 확인 — 남의 새 리스를 가져오며 쓴 내 글이 HANDOVER_WAIT_MS 동안 그대로면, 앞 담당은 그 사이 이 글을 읽고 물러났거나 확인 기한이 지나 스스로 담당을 놓았다.
   // 이제 담당을 시작한다. 그 시간이 지나기 전에는 읽기만 하고 쓰지도 담당하지도 않는다(nudge로 주기가 빨라져도 대기가 줄지 않게 — HANDOVER_WAIT_MS 주석).
   // 내 글(토큰)이 그대로일 때만이다 — 같은 기기 id라도 다른 토큰이면(재시작 경쟁의 다른 프로세스) 넘겨받은 것으로 치지 않고 아래 획득을 다시 거친다.
-  // 다시 쓰지 않는다(쓰기 합계 1 — DB 위생). 보유 시각은 그 글을 쓴 시각이다: 30초 갱신 규칙의 기준.
+  // 다시 쓰지 않는다(쓰기 합계 1 — DB 위생). 보유 시각은 그 글을 쓴 시각이다: 60초 갱신 규칙(LEASE_RENEW_MS)의 기준.
   if (live && cur.deviceId === me && leaseState.pending && cur.token === leaseState.pending.token) {
     if (Date.now() - leaseState.pending.ts < HANDOVER_WAIT_MS) { leaseState.checkedAt = Date.now(); return; }
     leaseState.token = leaseState.pending.token;
@@ -597,9 +601,9 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 기기의 잔존 리스가 fresh해도 "갱신"이 아니라 양보 판정을 1회 거친다 — 앱 재시작·재부팅으로 러너 없는
   // 리더가 원상복구되던 우회 차단. 진짜 보유 프로세스(ownedAt>0)의 갱신은 막지 않는다(교대 요동 방지).
   const acquiring = !(live && cur?.deviceId === me && leaseState.ownedAt > 0);
-  // 확인된 보유자가 TTL/4(30초) 안에 썼으면 다시 쓰지 않는다 — 읽기는 매 주기 해서 다른 기기의 탈취·경합은 그대로 바로 안다(검수 #689 M2).
+  // 확인된 보유자가 LEASE_RENEW_MS(60초) 안에 썼으면 다시 쓰지 않는다 — 읽기는 매 판정 해서 다른 기기의 탈취·경합은 그대로 안다(검수 #689 M2).
   // 동기화 주기(8초)마다 업서트하던 것이 storage.objects에 죽은 행을 쌓았다(2026-09-23 DB 점검: 기기 25대 × 분당 7.5회).
-  if (!acquiring && leaseState.leader && Date.now() - leaseState.ownedAt < LEASE_TTL_MS / 4) { leaseState.checkedAt = Date.now(); return; }
+  if (!acquiring && leaseState.leader && Date.now() - leaseState.ownedAt < LEASE_RENEW_MS) { leaseState.checkedAt = Date.now(); return; }
   if (acquiring && shouldYieldAcquire(runnerUsable, leaseState.yieldSince)) {
     if (!leaseState.yieldSince) {
       leaseState.yieldSince = Date.now();
@@ -628,6 +632,16 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     const heldByMe = holdsLeaseOnWriteFailure(leaseState);
     console.warn(`[argo] 리스 갱신 실패 — ${heldByMe ? '보유 리스 TTL 내: 리더 유지' : '리더 강등'}: ${String(upErr.message || upErr).slice(0, 80)}`);
     if (!heldByMe) { dropLease(); leaseState.pending = null; }
+    leaseState.checkedAt = Date.now();
+    return;
+  }
+  // 갱신 — 확인된 보유자가 방금 읽은 글이 내가 마지막으로 쓴 글(토큰) 그대로였다. 다시 읽어 승자를 확인하지 않는다(텔레그램 클레임 갱신과 같은 규칙):
+  // 살아 있는 남의 리스는 더 높은 역할만 가져가고, 그 쓰기는 다음 판정의 읽기가 안다(위 양보 분기). 확인 읽기는 신규 획득·넘겨받기·자가 복구에만 남긴다.
+  // 엄격 판정의 담당 기한(validUntil)은 읽기가 늘린다 — 여기서 늘리지 않는다. 토큰은 새 글의 것으로 바꿔 다음 읽기가 확인으로 이어지게 한다.
+  if (!acquiring && !preempt && !escaping && leaseState.leader && leaseState.token && cur?.token === leaseState.token) {
+    leaseState.token = token;
+    leaseState.ownedAt = Date.now();
+    leaseState.pending = null;
     leaseState.checkedAt = Date.now();
     return;
   }
@@ -1917,7 +1931,7 @@ async function probeRunnerUsable(targets) {
       A' proc:false cloud:true). 수정 전(원래 결함)은 락을 못 얻으면 기본값 리더(true)로 남아 이중 실행이었다.
     - 대화 화면(argo)은 게이트웨이·스케줄러를 켜지 않으니 자연히 빠진다(따로 표시가 필요 없다).
     - 게이트웨이와 스케줄러 리스가 다른 프로세스로 갈리면(재시작 경쟁) 둘 다 참여해 둘 다 리더가 된다. 각자 자기 데몬만 실행하므로
-      이중 실행은 아니고, 리스 쓰기만 그동안 두 배(보유자당 30초에 1회)가 된다. 한쪽만 참여시키면 다른 쪽 데몬이 영영 멈춘다.
+      이중 실행은 아니고, 리스 쓰기만 그동안 두 배(보유자당 60초에 1회)가 된다. 한쪽만 참여시키면 다른 쪽 데몬이 영영 멈춘다.
     텔레그램 토큰 클레임도 같은 기준이다 — 폴러는 게이트웨이 리스 주인에서만 돈다(gateway.mjs의 procLeader 게이트).
     파일 동기화와 따로 도는 이유는 위 클라우드 리스 머리말(D 3차 검수). 동기화 락과는 무관하다 — 같은 데이터 루트를 다른 프로세스가 동기화 중이어도 판정한다. */
 async function leaseTick() {
