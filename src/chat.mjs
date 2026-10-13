@@ -133,7 +133,8 @@ export const SDK_ALLOWED_TOOLS = Object.freeze(['WebFetch', 'WebSearch', 'mcp__c
 /** 메신저 문맥 턴의 셸 위험 분류 게이트(D28) 목적지 — messengerOrigin 기록. 문맥이 불완전하거나 거절되면({}) 분류는 켜되 결재는 로컬 원장에만 남는다.
     개인 crew 1:1(서버 판정 ownCrewRoom)은 이 방이 목적지가 된다 — 예전에는 개인 거절을 삼켜 {}가 돼, 카드 없이 실행 중 문맥으로 표 직접 넣기를 시도하다 RLS에 막혔다(계획 6절 D28).
     메신저 밖 턴은 null(게이트 꺼짐). 내보내기는 D28 경로 테스트용. */
-export function shellGateMsgr(mirrorCtx) {
+export function shellGateMsgr(mirrorCtx, fallback = null) { // fallback = 문맥 없이 도는 메신저 턴의 게이트(보관한 옛 1:1에서 옮긴 이어 실행 — msgr.mjs runMessengerContinuation). 문맥이 있으면 쓰지 않는다
+  if (mirrorCtx == null) return fallback;
   if (mirrorCtx?.kind === 'msgr-rules') return mirrorCtx.shellGate ?? null; // 오피스 패널 조율자가 동기로 맡긴 동료 턴 — 조율자와 같은 결재 목적지(검수 H1). 그 밖의 위임 턴은 지금 그대로
   if (mirrorCtx?.kind !== 'msgr') return null;
   try { return messengerOrigin(mirrorCtx) ?? {}; } catch { return {}; }
@@ -1446,7 +1447,7 @@ export async function chat(wsId, agentSlug, userMsg, sessionId = null, opts = {}
   }, { source, tag: opts.abortTag ?? null });
 }
 
-async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', delegationRelaxed = false, delegationTree = null, sessionChain = null, notOwnerDirect = null, runnerNote = '', ownerSeat = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
+async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnControl, from = null, source = null, attachments = [], hop = 0, chain = [], toolHop = 0, mirrorCtx = null, msgrShellGate = null, runnerOverride = null, modelOverride = null, journal = null, workFolder = '', delegationRelaxed = false, delegationTree = null, sessionChain = null, notOwnerDirect = null, runnerNote = '', ownerSeat = null, __freshRetry = false, __seedNotes = null, __excludeRunners = null, __crashRetry = false, __lockupRetry = false, __downgradedFrom = null } = {}) {
   // runnerNote = 러너 프롬프트에만 붙는 덧붙임(루틴의 보고 규칙 — routines.mjs). 지시 원문(userMsg)과 따로 둔다: 일지(saveHandover)·턴 이벤트 msg(활동
   // '다시 실행'이 보내는 글)·gist·대화 기록에는 싣지 않는다. 재시도 재귀·도구 후속 턴은 이 값을 그대로 이어 받는다.
   // journal = 팀 메신저 채널 턴의 일지 정책 {off, tag} — off면 saveHandover 생략(402 creditTurn과 같은 갈래), tag면 별도 파일.
@@ -1471,7 +1472,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
     : { relaxed: lim.relaxed, tree: tree?.id ?? (mirrorCtx ? null : newTree({ kind: 'session' }).id) };
   const turnCounters = { delegate: 0, mail: 0 }; // 이 턴의 위임·쪽지 횟수 — SDK/CLI 도구와 CLI 지시 블록(끼워 넣기 구간·마지막 처리)이 **같은 카운터**를 쓴다
   // 메신저 문맥 턴의 셸 위험 분류 게이트(D28) — 카드 목적지(shellGateMsgr).
-  const gateMsgr = shellGateMsgr(mirrorCtx);
+  const gateMsgr = shellGateMsgr(mirrorCtx, msgrShellGate);
   // 메신저 턴의 기록 범위 — DM은 뿌리 단위, 채널은 채널 단위(세션도 채널마다 따로: thread.mjs scopedSessions). 범위가 있는 기록은 다른 대화에 붙여 넣지 않는다.
   const contextScope = turnScope(mirrorCtx); // 텔레그램 그룹 턴도 그 그룹 범위(주인의 전역 대화를 잇지도 붙이지도 않는다)
   // 주인 혼자 1:1(유건 결정 2026-10-08 ① — 에이전트는 한 사람): 게이트웨이가 방을 확인한 주인 직접 턴은 데스크톱 대화와 같은 대화다 —

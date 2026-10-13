@@ -52,7 +52,7 @@ import { replyLinkPreview } from './link-preview-node.mjs';
 import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
-import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, isOfficeSource, msgrJournal, ownerSoloTurn } from './msgr-handoff.mjs';
+import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, isOfficeSource, msgrJournal, ownerSoloTurn, fullAutoAllowed } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
 import { roomTurnFailureFor, roomTurnInterrupted, roomTurnStopped, roomAttachReason } from './msgr-room-errors.mjs';
 import { withLock } from '../mutex.mjs';
@@ -1695,7 +1695,12 @@ export async function runMessengerContinuation(wsId, slug, origin, message, _glo
     catch (e) { // 목적지가 보관한 옛 조직 1:1이면(유건 결정 2026-10-08 1-②) 그 방 문맥 없이 돌리고 결과는 개인 1:1로(msgrPush가 같은 판정으로 보낸다). 아니면 종전 오류
       const moved = await movedAgentRoom(session, wsId, slug, origin);
       if (!moved) throw e;
-      const turn = await runChat(wsId, slug, message, null, { source: 'messenger', ...(notOwnerDirect ? { notOwnerDirect } : {}) });
+      // 문맥 없이 도는 턴이라 출처 표지를 여기서 지킨다(검수 1 결함 1). 손님 사슬은 손님 제한(chat.mjs의 isGuestCtx)이 문맥에 달려 있어 옮겨 돌리지 않는다 — 종전 오류(fail-closed).
+      // 오피스·넘김 사슬은 주인 직접 턴이 아니다(풀 오토 꺼짐 — 원래 경로 fullAutoAllowed와 같은 판정). 메신저 고위험 셸 결재(D28)는 문맥이 불완전할 때의 등급({}: 분류는 켜고 결재는 로컬 결재함)으로.
+      const from = { kind: 'msgr', ...origin };
+      if (isGuestCtx(from)) throw e;
+      const nod = notOwnerDirect ?? (fullAutoAllowed(from) ? null : 'msgr-origin');
+      const turn = await runChat(wsId, slug, message, null, { source: 'messenger', msgrShellGate: {}, ...(nod ? { notOwnerDirect: nod } : {}) });
       const text = parseMessengerDisposition(turn.reply ?? '').text;
       return { ...turn, replyForChecks: turn.reply, reply: loopTurn ? stripLoopVerdict(text) : text, msgr: origin };
     }
