@@ -24,6 +24,7 @@ import { cmpVersion } from '../version-compare.mjs';
 import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
+import { appGateBlockedHere } from '../app-gate.mjs';
 import { interruptTurn } from '../turn-abort.mjs';
 import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
 import { paths, loadCompany, updateCompany, getDeviceId } from '../workspace.mjs';
@@ -670,7 +671,11 @@ export function msgrClientOptions(accessToken) {
 }
 export async function sessionClient() {
   const sess = await getFreshDeviceSession();
-  if (!sess) return null;
+  if (!sess) {
+    // 최소 앱 버전 미만(src/app-gate.mjs)이면 세션이 없다 — 이미 연 실시간 연결도 닫는다(다른 "세션 없음"은 종전 그대로 둔다: 회전 대기 같은 일시적 null)
+    if (cached && appGateBlockedHere()) { const c = cached; cached = null; try { await c.client.removeAllChannels?.(); await c.client.realtime?.disconnect?.(); } catch { /* 무해 */ } }
+    return null;
+  }
   const key = sess.access_token.slice(-24);
   if (cached?.key !== key) {
     const client = createClient(sess.url, sess.anonKey, msgrClientOptions(sess.access_token));
