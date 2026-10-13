@@ -18,7 +18,7 @@ import { readJson, writeJsonAtomic } from '../jsonstore.mjs';
 import { paths } from '../workspace.mjs';
 import { STATE_DIR } from './state.mjs';
 import { dateIn, minuteIn, inQuiet } from './rules.mjs';
-import { outsideOf } from '../gateway/office-audience.mjs';
+import { outsideOf } from './office-read.mjs';
 import { clientMsgId, personalRoom, MSG_MAX } from './deliver.mjs';
 import { recordSelfPost } from '../self-posts.mjs';
 import { classifyMail, needsThread, securityDayKey, scrubLine, domainOf, FIELD_CAP, ADDR_CAP } from './mail-classify.mjs';

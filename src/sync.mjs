@@ -122,6 +122,10 @@ export function _walkCacheForTest() { return walkCache; }
 // 죽은 프로세스 락은 이 시간 내 회수하되, 살아있는 리더는 오탈취 안 되게 넉넉히.
 const LOCK_STALE_MS = Math.max(CYCLE_MS * 3, 120_000);
 export const LEASE_TTL_MS = 120_000; // 이 시간 동안 갱신 없으면 다른 기기가 리더를 가져간다 (export: 회귀 테스트용)
+/** 확인된 보유자의 다시 쓰기 간격 — TTL의 1/2(60초). 다른 기기는 글의 ts + TTL까지 살아 있는 리스로 보므로, 다시 쓰기가 한 번 실패해도
+    다음 판정에서 다시 쓸 여유가 남는다. 30초(TTL/4)이던 것을 로그 수집 과금(2026-10-13: 리스 쓰기 한 번 = edge POST + storage POST·Put·AdminDelete)
+    때문에 늘렸다(DB 위생 규칙 2: 신선도 기한의 1/2~1/4). (export: 회귀 테스트용) */
+export const LEASE_RENEW_MS = LEASE_TTL_MS / 2;
 
 // 동기화 스위치 — 서비스 자격(env/페어링 파일) 또는 기기 세션(로그인=연동). 서비스 자격이 우선하되,
 // 호스티드 클라이언트에선 serviceCredsAllowed()가 서비스 모드를 금지해 세션이 쓰인다(ensureClient 참조).
@@ -437,7 +441,7 @@ export const shouldYieldAcquire = (runnerUsable, yieldSince, now = Date.now()) =
       지나 스스로 물러난다 — 넘겨받는 쪽이 대기(HANDOVER_WAIT_MS)를 마칠 때 앞 담당은 이미 아니다.
     · 단일 기기(다른 기기를 본 적 없음): 배포본처럼 표시(leader)를 따른다. 리스를 못 읽어도 표시를 바꾸지 않는다. 다만
       - 보유자는 내 리스 글이 만료되기 전(마지막 쓰기 + TTL − 여유)까지만이다 — 갱신하지 못하면(세션 끊김·네트워크) 만료 뒤 다른 기기가 가져간다. 맥 우선·서버 예비에서
-        맥은 서버가 한 번 맡기 전까지 서버의 글을 본 적이 없어 단일 기기로 판정된다. 리스 판정은 동기화와 따로 30초마다 갱신하므로 긴 동기화로 꺼지지 않는다.
+        맥은 서버가 한 번 맡기 전까지 서버의 글을 본 적이 없어 단일 기기로 판정된다. 리스 판정은 동기화와 따로 돌고 보유자는 60초(LEASE_RENEW_MS)마다 다시 쓰므로 긴 동기화로 꺼지지 않는다.
       - 기동 첫 리스 판정이 끝나기 전(최대 SOLO_BOOT_WAIT_MS)과, 잠들었다 깬 뒤 리스를 다시 확인하기 전은 아니다 — 그 사이 다른 기기가 처음으로 맡았을 수 있다
         (맥 앱이 켜지는 순간·깬 직후 첫 스케줄러 틱이 낡은 표시로 루틴을 다시 돌리지 않게).
     · 동기화 꺼짐(기기 세션 없음·ARGO_SYNC=0) = 단일 기기라 담당 — 예비 기기만 아니다(맥이 담당인지 알 수 없다). */
@@ -578,7 +582,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 넘겨받기 확인 — 남의 새 리스를 가져오며 쓴 내 글이 HANDOVER_WAIT_MS 동안 그대로면, 앞 담당은 그 사이 이 글을 읽고 물러났거나 확인 기한이 지나 스스로 담당을 놓았다.
   // 이제 담당을 시작한다. 그 시간이 지나기 전에는 읽기만 하고 쓰지도 담당하지도 않는다(nudge로 주기가 빨라져도 대기가 줄지 않게 — HANDOVER_WAIT_MS 주석).
   // 내 글(토큰)이 그대로일 때만이다 — 같은 기기 id라도 다른 토큰이면(재시작 경쟁의 다른 프로세스) 넘겨받은 것으로 치지 않고 아래 획득을 다시 거친다.
-  // 다시 쓰지 않는다(쓰기 합계 1 — DB 위생). 보유 시각은 그 글을 쓴 시각이다: 30초 갱신 규칙의 기준.
+  // 다시 쓰지 않는다(쓰기 합계 1 — DB 위생). 보유 시각은 그 글을 쓴 시각이다: 60초 갱신 규칙(LEASE_RENEW_MS)의 기준.
   if (live && cur.deviceId === me && leaseState.pending && cur.token === leaseState.pending.token) {
     if (Date.now() - leaseState.pending.ts < HANDOVER_WAIT_MS) { leaseState.checkedAt = Date.now(); return; }
     leaseState.token = leaseState.pending.token;
@@ -597,9 +601,9 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 기기의 잔존 리스가 fresh해도 "갱신"이 아니라 양보 판정을 1회 거친다 — 앱 재시작·재부팅으로 러너 없는
   // 리더가 원상복구되던 우회 차단. 진짜 보유 프로세스(ownedAt>0)의 갱신은 막지 않는다(교대 요동 방지).
   const acquiring = !(live && cur?.deviceId === me && leaseState.ownedAt > 0);
-  // 확인된 보유자가 TTL/4(30초) 안에 썼으면 다시 쓰지 않는다 — 읽기는 매 주기 해서 다른 기기의 탈취·경합은 그대로 바로 안다(검수 #689 M2).
+  // 확인된 보유자가 LEASE_RENEW_MS(60초) 안에 썼으면 다시 쓰지 않는다 — 읽기는 매 판정 해서 다른 기기의 탈취·경합은 그대로 안다(검수 #689 M2).
   // 동기화 주기(8초)마다 업서트하던 것이 storage.objects에 죽은 행을 쌓았다(2026-09-23 DB 점검: 기기 25대 × 분당 7.5회).
-  if (!acquiring && leaseState.leader && Date.now() - leaseState.ownedAt < LEASE_TTL_MS / 4) { leaseState.checkedAt = Date.now(); return; }
+  if (!acquiring && leaseState.leader && Date.now() - leaseState.ownedAt < LEASE_RENEW_MS) { leaseState.checkedAt = Date.now(); return; }
   if (acquiring && shouldYieldAcquire(runnerUsable, leaseState.yieldSince)) {
     if (!leaseState.yieldSince) {
       leaseState.yieldSince = Date.now();
@@ -628,6 +632,16 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     const heldByMe = holdsLeaseOnWriteFailure(leaseState);
     console.warn(`[argo] 리스 갱신 실패 — ${heldByMe ? '보유 리스 TTL 내: 리더 유지' : '리더 강등'}: ${String(upErr.message || upErr).slice(0, 80)}`);
     if (!heldByMe) { dropLease(); leaseState.pending = null; }
+    leaseState.checkedAt = Date.now();
+    return;
+  }
+  // 갱신 — 확인된 보유자가 방금 읽은 글이 내가 마지막으로 쓴 글(토큰) 그대로였다. 다시 읽어 승자를 확인하지 않는다(텔레그램 클레임 갱신과 같은 규칙):
+  // 살아 있는 남의 리스는 더 높은 역할만 가져가고, 그 쓰기는 다음 판정의 읽기가 안다(위 양보 분기). 확인 읽기는 신규 획득·넘겨받기·자가 복구에만 남긴다.
+  // 엄격 판정의 담당 기한(validUntil)은 읽기가 늘린다 — 여기서 늘리지 않는다. 토큰은 새 글의 것으로 바꿔 다음 읽기가 확인으로 이어지게 한다.
+  if (!acquiring && !preempt && !escaping && leaseState.leader && leaseState.token && cur?.token === leaseState.token) {
+    leaseState.token = token;
+    leaseState.ownedAt = Date.now();
+    leaseState.pending = null;
     leaseState.checkedAt = Date.now();
     return;
   }
@@ -673,7 +687,15 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
    자기 기기에 저장된 토큰만 클레임해 폴링한다. 같은 토큰을 두 기기에 연결하면 나중 기기가 'other'로 물러나
    카드에 "다른 기기에서 수신 중"이 보인다. 토큰 원문은 어디에도 올리지 않는다(sha256 지문만). */
 export const TG_CLAIM_TTL_MS = LEASE_TTL_MS;
-const CLAIM_RENEW_MS = 30_000; // 갱신 주기 — 토큰마다 요청이 나가므로 리스(8s)보다 성기게(TTL 120s의 1/4)
+const CLAIM_RENEW_MS = 30_000; // 판정 주기 — 토큰마다 읽기가 나가므로 리스(8s)보다 성기게(TTL 120s의 1/4)
+/** 판정 주기의 여유 — 판정은 리스 판정(8초, 단일 기기 보유자는 15초) 안에서 돌므로, 30초 레이트리밋을 그대로 재면 15초 박자에서 29.9초가 걸러져
+    실제 간격이 30·45초로 번갈아 갔다(검수 1). 2초 일찍 허용해 15초 박자에서 30초, 8초 박자에서 32초로 고르게 돈다. */
+const CLAIM_RENEW_SLACK_MS = 2_000;
+/** 확인된 보유자의 다시 쓰기 간격 — 원격 글이 내 것이고 이만큼 새것이면 읽기만 한다. 판정 간격(30~32초)을 고려해 40초:
+    판정 나이가 30초면 건너뛰고 다음 판정(약 60초)에 쓴다 — 평소 글 나이 최대 약 60~75초, 판정 하나가 30초 걸리면 약 90~105초로,
+    tokenOwnership의 시각 상한(TTL − 4초 = 116초) 안이다. 예전에는 30초 판정마다 토큰별로 다시 썼다(토큰 20개 계정 하나가 시간당 약 3,800건 —
+    2026-10-13 로그 수집 과금). (export: 회귀 테스트용) */
+export const CLAIM_REWRITE_MS = 40_000;
 const CLAIM_NEVER = -Infinity; // renewedAt 센티널 '한 번도 안 돌았음/즉시 실행' — 0이면 작은 now를 주는 하네스에서 레이트리밋이 조용히 옛 동작(재검수 L-C)
 const claimState = (globalThis.__argoTgClaims ??= { tokens: new Set(), byHash: new Map(), renewedAt: CLAIM_NEVER, bootAt: Date.now(), removed: new Set() });
 const CLAIM_DIR = '.tg-claims';
@@ -718,22 +740,36 @@ export function tokenOwnership(token) {
     const orphan = claimState.renewedAt === CLAIM_NEVER && Date.now() - claimState.bootAt > CLAIM_ARBITRATION_GRACE_MS;
     return { mine: orphan, holder: null, pending: !orphan };
   }
+  // 시각 상한 — 내 클레임 글이 만료(ts + TTL)되기 LEASE_CONFIRM_MARGIN_MS 전까지만 내 것이다(리스 isCloudLeader의 단일 기기 규칙과 같음).
+  // 판정이 늦어지면(읽기 30초 시간 초과·토큰이 많아 판정이 길어짐) 만료를 본 다른 기기가 가져가는데, 그동안 이 기기가 계속 폴링하면 같은 토큰을
+  // 두 기기가 받는다(텔레그램 409 — 2026-10-13 검수 1). 상한을 넘기면 다음 판정까지 '판정 중'으로 물러난다: 겹침 대신 잠깐 공백.
+  // ownedAt = 내 글을 쓴 시각(그 글의 ts와 같다 — 획득·갱신·갱신 생략 모두).
+  if (st.mine && !(Number(st.ownedAt) > 0 && Date.now() < Number(st.ownedAt) + TG_CLAIM_TTL_MS - LEASE_CONFIRM_MARGIN_MS)) return { mine: false, holder: null, pending: true };
   return { mine: st.mine, holder: st.holder, pending: false };
 }
 export function _setTokenClaimForTest(token, state) { claimState.byHash.set(tokenClaimHash(token), state); }
 export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Set(); claimState.renewedAt = CLAIM_NEVER; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
 export const _claimStateForTest = () => Object.fromEntries(claimState.byHash);
 export const CLAIM_ARBITRATION_GRACE = CLAIM_ARBITRATION_GRACE_MS;
-/** 원격 클레임 1건 읽기(캐시버스터) — 없음·손상은 null. 갱신 루프와 해제 청소가 같은 읽기를 쓴다. */
+/** 원격 클레임 1건 읽기(캐시버스터) — { doc, error }. 없음('Object not found')·손상(JSON 아님)은 doc null·error null이고,
+    읽지 못함(5xx·fetch failed·시간 초과·만료 토큰의 'Bucket not found'·응답 중단)은 error다. 예전에는 둘을 가르지 않아 읽기 한 번 실패가 '없음'이 됐고,
+    남의 살아 있는 클레임을 덮어써 같은 토큰을 두 기기가 폴링했다(텔레그램 409 — 2026-10-13, 리스는 #873 계열에서 같은 모양을 닫았다).
+    supabase-js download는 오류를 던지지 않고 { data: null, error }로 돌려준다. 갱신 루프와 해제 청소가 같은 읽기를 쓴다. */
 async function readRemoteClaim(key) {
   try {
-    const { data } = await client().storage.from(BUCKET).download(`${key}?t=${Date.now()}`);
-    return data ? JSON.parse(Buffer.from(await data.arrayBuffer()).toString()) : null;
-  } catch { return null; } // 최초·미존재
+    const { data, error } = await client().storage.from(BUCKET).download(`${key}?t=${Date.now()}`);
+    if (error) return isNotFound(error) ? { doc: null, error: null } : { doc: null, error };
+    if (!data) return { doc: null, error: null };
+    const text = Buffer.from(await data.arrayBuffer()).toString();
+    try { return { doc: JSON.parse(text), error: null }; } catch { return { doc: null, error: null }; } // 깨진 글 — 없음으로(종전)
+  } catch (e) { return { doc: null, error: e }; } // 응답을 받다 끊김 등 — 던져진 것도 읽지 못함이다
 }
+/** 토큰별 읽기 실패 시작 시각·마지막 자가 복구 시각 — TTL 넘게 한 번도 못 읽으면 '없음'으로 보고 한 번 써 본다(리스의 자가 복구와 같은 규칙:
+    읽을 수 없는 클레임 객체가 그 토큰을 영영 막지 않게, TTL에 한 번만). 메모리만. */
+const claimReadFail = (globalThis.__argoTgClaimReadFail ??= new Map());
 /** 토큰별 클레임 갱신 — write-후-재확인(리스와 같은 CAS 근사). 판정 불가(쓰기 실패)면 보유 중이던 것만 TTL 내 유지. (export: 배선·행동 테스트용) */
 export async function renewTokenClaims(owner, { now = Date.now(), force = false } = {}) {
-  if (!force && now - claimState.renewedAt < CLAIM_RENEW_MS) return;
+  if (!force && now - claimState.renewedAt < CLAIM_RENEW_MS - CLAIM_RENEW_SLACK_MS) return;
   if (claimState.tokens.size === 0 && claimState.removed.size === 0) return; // 등록 전(게이트웨이 sync 이전)에 레이트리밋을 소모하지 않는다(M-2)
   claimState.renewedAt = now;
   const me = await getDeviceId();
@@ -742,7 +778,7 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     // 제3 기기가 획득 → 같은 토큰 이중 폴링(재검수 MEDIUM-A). 소유 확인·삭제 실패는 재시도하지 않는다: 상대는 TTL(120s)을
     // 기다리면 되고, 이 경로는 토큰 해제라는 드문 사건이다(L-B).
     const key = skey(owner, CLAIM_DIR, `${h}.json`);
-    const cur = await readRemoteClaim(key);
+    const { doc: cur } = await readRemoteClaim(key); // 읽지 못하면 지우지 않는다(내 것인지 모른다)
     if (cur?.deviceId === me) await client().storage.from(BUCKET).remove([key]).catch(() => {});
     claimState.removed.delete(h);
   }
@@ -750,10 +786,30 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     const hash = tokenClaimHash(token);
     const key = skey(owner, CLAIM_DIR, `${hash}.json`);
     const prev = claimState.byHash.get(hash);
-    const cur = await readRemoteClaim(key);
+    const { doc: cur, error: readErr } = await readRemoteClaim(key);
+    if (readErr) {
+      // 읽지 못함 — 이번 판정은 보류하고 쓰지 않는다. 확인된 보유자이고 내 글이 TTL 안이면 유지(리스의 holdsLeaseOnWriteFailure와 같은 절충), 아니면 미보유.
+      // 예외: TTL 넘게 한 번도 읽지 못했으면 '없음'으로 보고 TTL에 한 번 써 본다(아래로 흘려보낸다 — 쓰기 뒤 확인 읽기가 승자를 가린다).
+      const rf = claimReadFail.get(hash) ?? { since: now, escapeAt: -Infinity };
+      claimReadFail.set(hash, rf);
+      if (!(now - rf.since >= TG_CLAIM_TTL_MS && now - rf.escapeAt >= TG_CLAIM_TTL_MS)) {
+        const keep = !!(prev?.mine && prev.ownedAt > 0 && now - prev.ownedAt < TG_CLAIM_TTL_MS);
+        claimState.byHash.set(hash, keep ? { ...prev, ts: now } : { mine: false, holder: prev?.mine ? null : (prev?.holder ?? null), ts: now, ownedAt: 0 });
+        noteOnce(`tg-claim-read:${hash}`, `[argo] 텔레그램 토큰 클레임 읽기 실패(${hash.slice(0, 6)}): ${String(readErr.message || readErr).slice(0, 80)} — ${keep ? '보유 유지(쓰기 없음)' : '이번 판정 보류(쓰기 없음)'}`);
+        continue;
+      }
+      rf.escapeAt = now;
+      console.warn(`[argo] 텔레그램 토큰 클레임을 ${Math.round(TG_CLAIM_TTL_MS / 1000)}초 넘게 읽지 못함 — 없음으로 보고 한 번 써 본다(${hash.slice(0, 6)})`);
+    } else if (claimReadFail.has(hash)) { claimReadFail.delete(hash); noteOnce(`tg-claim-read:${hash}`, ''); }
     if (claimDecision(cur, me, now) === 'other') {
       if (prev?.mine) console.log(`[argo] 텔레그램 토큰 클레임 양보 → ${deviceLabel(cur.deviceId)} (${hash.slice(0, 6)})`);
       claimState.byHash.set(hash, { mine: false, holder: cur.deviceId, ts: now });
+      continue;
+    }
+    // 갱신 생략 — 이미 확인된 보유자이고 원격 글도 내 것이며 CLAIM_REWRITE_MS 안에 썼다. 읽기만 했으니 보유 시각은 그 글을 쓴 시각 그대로 둔다
+    // (쓰기 실패 때 TTL 안 유지 판정의 기준 — 아래 upErr 분기).
+    if (prev?.mine && cur?.deviceId === me && now - Number(cur.ts) < CLAIM_REWRITE_MS && now - Number(cur.ts) >= 0) {
+      claimState.byHash.set(hash, { mine: true, holder: me, ts: now, ownedAt: Number(cur.ts) });
       continue;
     }
     const nonce = randomUUID();
@@ -1917,7 +1973,7 @@ async function probeRunnerUsable(targets) {
       A' proc:false cloud:true). 수정 전(원래 결함)은 락을 못 얻으면 기본값 리더(true)로 남아 이중 실행이었다.
     - 대화 화면(argo)은 게이트웨이·스케줄러를 켜지 않으니 자연히 빠진다(따로 표시가 필요 없다).
     - 게이트웨이와 스케줄러 리스가 다른 프로세스로 갈리면(재시작 경쟁) 둘 다 참여해 둘 다 리더가 된다. 각자 자기 데몬만 실행하므로
-      이중 실행은 아니고, 리스 쓰기만 그동안 두 배(보유자당 30초에 1회)가 된다. 한쪽만 참여시키면 다른 쪽 데몬이 영영 멈춘다.
+      이중 실행은 아니고, 리스 쓰기만 그동안 두 배(보유자당 60초에 1회)가 된다. 한쪽만 참여시키면 다른 쪽 데몬이 영영 멈춘다.
     텔레그램 토큰 클레임도 같은 기준이다 — 폴러는 게이트웨이 리스 주인에서만 돈다(gateway.mjs의 procLeader 게이트).
     파일 동기화와 따로 도는 이유는 위 클라우드 리스 머리말(D 3차 검수). 동기화 락과는 무관하다 — 같은 데이터 루트를 다른 프로세스가 동기화 중이어도 판정한다. */
 async function leaseTick() {
@@ -1936,10 +1992,37 @@ async function leaseTick() {
   await renewLease(owner, { runnerUsable: await probeRunnerUsable(targets) });
   if (holdsDaemonLease('gateway')) await renewTokenClaims(owner).catch((e) => console.warn('[argo] 텔레그램 토큰 클레임 갱신 실패:', String(e.message).slice(0, 80))); // 토큰 단위 소유 — 리더와 별개
 }
-/** 리스 타이머 — 동기화 루프와 따로 CYCLE_MS마다 leaseTick을 돈다(한 번에 하나: 앞 판정이 걸리면 끝난 뒤 바로 다음). 요청은 종전 동기화 주기마다 한 번과 같다.
+/** 리스 타이머 — 동기화 루프와 따로 leaseReadInterval()마다(보통 CYCLE_MS, 단일 기기 보유자는 LEASE_SOLO_READ_MS) leaseTick을 돈다(한 번에 하나: 앞 판정이 걸리면 끝난 뒤 바로 다음).
     기동 뒤 첫 리스 읽기가 오류였으면 BOOT_RETRY_MS 뒤에 한 번만 다시 읽는다 — 읽기 오류면 단일 기기도 담당이 아니므로(leaseUnreadable) 일시 오류 하나로 첫 담당이
     한 주기(8초) 늦어지지 않게(D 4차 검수: 약 9.5초). 요청은 기동 때 한 번만 1건 늘어난다. */
 const BOOT_RETRY_MS = 1_000;
+/** 단일 기기 보유자의 리스 읽기 간격(2026-10-13 로그 수집 과금 — 리스 읽기 한 번 = edge GET + storage GET 로그 2줄, 계정 64곳 중 61곳이 기기 한 대).
+    다른 기기를 본 적 없는 계정(엄격 판정 아님)의 확인된 보유자만 CYCLE_MS(8초) 대신 이 간격으로 읽는다. 엄격 판정(다른 기기를 본 계정·예비 기기)은
+    확인 기한(LEASE_CONFIRM_VALID_MS) 때문에 그대로 CYCLE_MS다. 상한은 넘겨받기 대기(HANDOVER_WAIT_MS)보다 LEASE_SOLO_SLACK_MS 짧게:
+    더 높은 역할의 기기(argo run 우선)가 이 보유자의 리스를 가져갈 때, 그 기기는 옛 버전이어도 HANDOVER_WAIT_MS를 기다린 뒤 담당을 시작하므로
+    이 보유자는 그 안에 남의 글을 읽고 물러난다(겹침 0). 운영 값 15초(22초 − 7초). 짧은 주기 시험(ARGO_SYNC_CYCLE_MS)에서도 같은 관계가 유지된다.
+    (export: 회귀 테스트용) */
+const LEASE_SOLO_SLACK_MS = 7_000;
+export const LEASE_SOLO_READ_MS = Math.max(CYCLE_MS, HANDOVER_WAIT_MS - LEASE_SOLO_SLACK_MS);
+/** 다음 리스 판정까지의 간격 — 단일 기기의 확인된 보유자(넘겨받는 중·읽기 실패 중이 아님)만 LEASE_SOLO_READ_MS, 나머지는 CYCLE_MS. (export: 회귀 테스트용) */
+export function leaseReadInterval() {
+  if (strictLease()) return CYCLE_MS;
+  if (!(leaseState.leader && leaseState.ownedAt > 0) || leaseState.pending || (leaseState.readFailSince || 0) > 0) return CYCLE_MS;
+  return LEASE_SOLO_READ_MS;
+}
+/** 리스 판정 사이를 기다린다 — 깨어 있음 관찰 간격(2초)으로 나눠 기다리다가 잠들었다 깬 것을 알면 바로 끝낸다. 단일 기기는 깬 뒤 리스를 다시 확인하기 전까지
+    담당이 아니므로(isCloudLeader) 간격이 길어진 만큼 깬 뒤 공백이 늘지 않게 한다. (export: 회귀 테스트용) */
+export async function waitLeaseTick(ms, sleep = (d) => new Promise((r) => setTimeout(r, d))) {
+  const until = Date.now() + ms;
+  for (let left = ms; left > 0; left = until - Date.now()) {
+    await sleep(Math.min(AWAKE_TICK_MS, left));
+    observeAwake();
+    // 깸 하나에 한 번만 일찍 끝낸다 — 판정이 checkedAt을 남기지 않는 경로가 있어도 2초마다 읽는 고리가 되지 않게.
+    const woke = awake.wokeAt || 0;
+    if (woke > (leaseState.checkedAt || 0) && woke > (leaseState.wakeHandled || 0)) { leaseState.wakeHandled = woke; return 'woke'; }
+  }
+  return 'timeout';
+}
 function startLeaseLoop() {
   if (globalThis.__argoLeaseLoop) return;
   globalThis.__argoLeaseLoop = true;
@@ -1949,12 +2032,12 @@ function startLeaseLoop() {
       const t0 = Date.now();
       const readsBefore = leaseState.reads || 0;
       try { await leaseTick(); } catch (e) { console.warn('[argo] 실행 담당 판정 실패:', String(e?.message || e).slice(0, 120)); }
-      let wait = Math.max(0, CYCLE_MS - (Date.now() - t0));
+      let wait = Math.max(0, leaseReadInterval() - (Date.now() - t0));
       if (firstRead && (leaseState.reads || 0) > readsBefore) { // 이 판정에서 처음 리스를 읽었다
         firstRead = false;
         if ((leaseState.readFailSince || 0) > 0) wait = Math.min(wait, BOOT_RETRY_MS);
       }
-      await new Promise((r) => setTimeout(r, wait));
+      await waitLeaseTick(wait);
     }
   })();
 }

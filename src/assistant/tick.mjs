@@ -41,7 +41,7 @@ export const assistantDeps = {
   company: loadCompany,
   agentExists: (cid, slug) => readAgentCard(cid, slug).then(() => true, (e) => e?.code !== 'NOT_FOUND'), // 읽기 실패(손상 등)는 있음으로 — 해고만 '없음'
   lease: leaseCheck,
-  // 메신저 기기 세션(일정 도구와 같은 세션) — msgr.mjs는 chat.mjs를 끌어오므로 부를 때 동적으로 불러 순환을 피한다(office-calendar calendarDeps와 같은 방식)
+  // 메신저 기기 세션(일정 도구와 같은 세션) — msgr.mjs는 chat.mjs를 끌어오므로 부를 때 동적으로 불러 순환을 피한다
   session: async () => (await import('../gateway/msgr.mjs')).sessionClient(),
   readState,
   writeState: (cid, st) => writeJsonAtomic(stateFile(cid), JSON.stringify(st)),
@@ -201,7 +201,7 @@ export async function runAssistantTick(cid, { now = Date.now(), deps = assistant
   const session = async () => {
     if (c) return c;
     const s = await deps.session().catch(() => null);
-    if (!s?.client || !s.uid || s.uid !== owner) return null; // 로그아웃·다른 계정 — 일정 도구와 같은 확인(세션 계정 = 회사 주인)
+    if (!s?.client || !s.uid || s.uid !== owner) return null; // 로그아웃·다른 계정 — 세션 계정 = 회사 주인인지 확인
     return (c = s);
   };
   const lang = company.lang === 'en' ? 'en' : 'ko';

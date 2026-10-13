@@ -164,7 +164,6 @@ export async function runDirectives(wsId, fromSlug, directives, { lang = 'ko', b
         // SDK 경로는 hop>=2면 쪽지 도구 자체가 등록되지 않는다(chat.mjs colleagues). 러너 패리티 —
         // 같은 지점에서 같은 상한을 건다. 조용히 무시하지 않고 사유 줄로 남긴다(이 파일의 계약).
         if (mirrorCtx?.kind !== 'msgr' && hop >= lim.hop) throw new Error(en ? `note relay limit reached (${lim.hop} hops)` : `쪽지 연쇄 상한(${lim.hop}단계)에 도달했다`);
-        if (mirrorCtx?.kind === 'msgr' && mirrorCtx.officePanelSolo === true) throw new Error(en ? 'In the Office agent panel, hand work to colleagues with delegate only — notes are not delivered here' : '오피스 에이전트 창에서는 동료에게 delegate로만 맡긴다 — 쪽지는 여기서 전달되지 않는다'); // 패널 답은 넘김 판정이 done으로 고정돼 쪽지가 버려진다(재검수 LOW)
         if (stageMessengerHandoff(mirrorCtx, { to: d.to, cc: Array.isArray(d.cc) ? d.cc : [], message: d.message })) continue; // authorized remote peers may not exist in this local workspace
         // 자기수신 사유는 **find 실패 후**에만 — 앞에 두면 동명이인(표시 이름이 같은 다른 크루)에게
         // 보내는 정상 쪽지가 "자기 자신"으로 오차단된다(재검수 MEDIUM: 이름 유일성은 강제되지 않는다).

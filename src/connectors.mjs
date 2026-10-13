@@ -125,7 +125,7 @@ const DONE_PAGE = '<!doctype html><meta charset="utf-8"><title>Argo</title>'
   + '<body style="font-family:sans-serif;padding:2rem">연결되었습니다 — 이 창을 닫아 주세요. / Connected — you may close this tab.</body>';
 
 /**
- * OAuth 연결 시작. serverDef = { id, url, scopes?, oauth?: { client_id, client_secret? } }.
+ * OAuth 연결 시작. serverDef = { id, url, scopes?, redirect_port?, oauth?: { client_id, client_secret? } }.
  * 반환 { authUrl, done }: authUrl = 브라우저로 열 인가 URL(여는 건 호출부 몫 — 데스크톱 opener/웹 표기),
  * done = 완료 프라미스(항상 resolve: { ok, serverId, error? }) — 웹 UI는 done 또는 listConnections 폴링으로
  * 완료를 안다(저장소 status: connecting → connected | error). 무보호 서버(인가 불요)는 authUrl=null 즉시 완료.
@@ -179,7 +179,9 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(DONE_PAGE);
     settle({ code });
   });
-  await new Promise((resolve, reject) => { cb.on('error', reject); cb.listen(0, LOOPBACK, resolve); });
+  // 포트: 카탈로그가 고정 포트(redirect_port)를 주면 그 포트, 아니면 OS가 고른다. 미리 등록한 클라이언트만 받는 인가 서버(Supabase OAuth 2.1 — DCR 끔)는
+  // redirect_uri를 포트까지 정확히 맞추므로 고정 포트가 필요하다(2026-10-13 오피스 원격 MCP). 그 포트가 쓰이는 중이면 연결 시작이 실패한다(조용히 다른 포트로 가지 않는다)
+  await new Promise((resolve, reject) => { cb.on('error', reject); cb.listen(Number.isInteger(serverDef.redirect_port) ? serverDef.redirect_port : 0, LOOPBACK, resolve); });
   // 바인드 실측 검증(fail-closed) — 이 콜백은 설계서 §2-4의 유일한 네트워크 표면이고, 바인드 주소
   // 한 글자가 바뀌면 조용히 LAN에 열린다. 리터럴로 비교하는 게 핵심이다: 위 LOOPBACK 상수와
   // 대조하면 상수를 바꾼 변이가 스스로를 통과시킨다(자기 참조 앵커).

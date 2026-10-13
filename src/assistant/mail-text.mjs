@@ -52,7 +52,7 @@ export const MAIL_TEXT = Object.freeze({
   'sum.held': ['· 즉시 알림 한도로 모아 둔 메일 — {sender} · "{subject}"', '· Held by the daily alert limit — {sender} · "{subject}"'],
   'sum.more': ['  …외 {n}건', '  …and {n} more'],
   'mark': ['[하트비트 알림 · {what} · 메일에서 나온 글이라 문맥에서 뺐어요{ids}]', '[Heartbeat notice · {what} · left out of context because it came from mail{ids}]'],
-  'mark.ids': [' · 메일 id {v} — 주인이 원하면 office_mail mail_read로 읽는다', ' · mail id {v} — read with office_mail mail_read if the owner asks'],
+  'mark.ids': [' · 메일 id {v} — 주인이 원하면 아르고 오피스 커넥터(use_connector argo-office)의 office_mail mail_read로 읽는다', ' · mail id {v} — read with office_mail mail_read on the Argo Office connector (use_connector argo-office) if the owner asks'],
   'what.reply': ['답장이 필요한 메일', 'mail waiting for a reply'],
   'what.batch': ['확인할 메일 {n}건', '{n} mails to check'],
   'what.sum': ['메일 정리', 'mail summary'],

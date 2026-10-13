@@ -64,8 +64,9 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json' } });
   }
   const parsed = parseRequest(req.url, Object.fromEntries(req.headers), body);
-  // planGate: 에이전트 주인이 Pro가 아니면 getUpdates를 403으로(20261010200100 msgr_bot_gate). 요청당 RPC 1회.
-  const { status, body: out } = await handle(parsed, rpc, { sign, signUpload, purgeUploads, rejects, planGate: (token: string) => rpc('msgr_bot_gate', { token }) });
+  // 판정: 에이전트 주인이 Pro가 아니면 getUpdates를 403으로. gateInUpdates — 롱폴 첫 조회(20261013180000, gate => true)가 판정까지 한다(요청당 RPC 1회 절약).
+  // planGate(msgr_bot_gate)는 옛 DB(네 인자 함수 없음)·옛 연결 경로(msgr_bot_updates)일 때만 부른다.
+  const { status, body: out } = await handle(parsed, rpc, { sign, signUpload, purgeUploads, rejects, gateInUpdates: true, planGate: (token: string) => rpc('msgr_bot_gate', { token }) });
   const retry = (out as { parameters?: { retry_after?: number } })?.parameters?.retry_after;
   return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json', ...(retry ? { 'Retry-After': String(retry) } : {}) } });
 });

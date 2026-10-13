@@ -5,7 +5,7 @@
 //              ② 남의 글이 주인 맥락에 들어가지 않음(손님 낀 방·나간 손님 글·친구 방·그룹·채널·넘김·오피스·기억 안 남김)
 //              ③ 주인 데스크톱 대화가 남 낀 방 답에 새지 않음 ④ 두 사본 병합 ⑤ 호칭 규칙이 공간별 이름 지시보다 우선(ko·en)
 //              ⑥ 데스크톱 세션이 본 1:1 줄(세션과 짝 — 위치로 판정하지 않는다, 검수 HIGH) ⑦ 조직 1:1 일지·요약 회수(검수 MEDIUM) ⑧ 방 대화 겹침·순서(검수 LOW)
-import { test, after } from 'node:test';
+import { test, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
@@ -853,4 +853,23 @@ test('비서 메일 알림(바깥 글 표지)은 방 문맥·답장 대상 줄�
   const q = lastPrompt();
   assert.doesNotMatch(q, /MAIL_SECRET_TEXT|DRAFT_TEXT/, '답장 대상 줄도 표지 줄');
   assert.ok((q.match(/\[하트비트 알림 · 답장이 필요한 메일/g) ?? []).length >= 2, '방 문맥 줄과 답장 대상 줄 둘 다 표지');
+});
+
+// 심박 폴백 중단(방송을 놓친 기기) — 오피스 분리(#989)에서 지운 패널 하위 중단(stopPanelChildren)을 부르던 줄이 남아
+// 30초 심박마다 ReferenceError가 '실행 심박 실패'로 찍히던 회귀(검수 1, 2026-10-13). 중단 요청을 받은 심박이 오류 없이 지나가야 한다.
+test('심박 폴백 중단 — stop_requested 심박이 30초를 넘겨도 심박 오류 로그 0건', async () => {
+  runner = 'claude'; const ws = await company();
+  const r = room({ pair: `crew:${CREW}` });
+  let beats = 0;
+  r.db.heartbeatExecution = async () => { beats += 1; return { stop_requested: true }; };
+  const logs = []; const origErr = console.error;
+  console.error = (...a) => { logs.push(a.map(String).join(' ')); };
+  const sdkBefore = globalThis.__opSdk;
+  mock.timers.enable({ apis: ['setInterval'] });
+  // 턴이 도는 동안(러너 안에서) 30초를 넘긴다 — 실행 심박이 켜져 있는 구간
+  globalThis.__opSdk = async () => { mock.timers.tick(30_000); for (let i = 0; i < 20; i += 1) await Promise.resolve(); await new Promise((res) => setImmediate(res)); return '끝'; };
+  try { await say(ws, r, '오래 걸리는 일'); }
+  finally { mock.timers.reset(); console.error = origErr; globalThis.__opSdk = sdkBefore; }
+  assert.ok(beats >= 1, '30초 심박이 실제로 돌았다');
+  assert.deepEqual(logs.filter((l) => /심박|is not defined/.test(l)), [], '심박 중단 경로 오류 0');
 });

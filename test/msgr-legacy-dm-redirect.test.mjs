@@ -116,3 +116,47 @@ for (const [name, o] of [
     } finally { f.stop(); }
   });
 }
+
+// 검수 1 결함 1(MEDIUM): 옮긴 경로가 문맥 없이 돌아 출처 표지(손님·오피스·넘김)를 잃으면 주인 직접 턴이 되어 풀 오토가 열리고,
+// 메신저 고위험 셸 결재(D28)도 빠졌다. 원래 경로(restoreMessengerContext → mirrorCtx)와 같은 등급이어야 한다.
+const { ownerDirectTurn } = await import('../src/gateway/msgr-handoff.mjs');
+const { shellGateMsgr } = await import('../src/chat.mjs');
+const turnOf = (opts) => ({ ownerDirect: ownerDirectTurn({ from: opts.from ?? null, notOwnerDirect: opts.notOwnerDirect ?? null, mirrorCtx: opts.mirrorCtx ?? null }), gate: shellGateMsgr(opts.mirrorCtx ?? null, opts.msgrShellGate ?? null) });
+
+test('옮긴 경로도 출처 표지를 지킨다 — 오피스·넘김 사슬은 주인 직접 턴이 아니고(풀 오토 꺼짐), 메신저 셸 결재 게이트는 켜진다', async () => {
+  for (const flags of [{ office: true }, { handoffFrom: 'o-beta' }]) {
+    const f = await setup();
+    try {
+      const r = await addRoutine(f.ws, { agentSlug: 'alpha', title: '표지 시험', prompt: '정리해 줘', schedule: { type: 'daily', time: '09:00' }, msgr: { ...f.origin, ...flags } });
+      const out = await runRoutine(f.ws, r.id, { session: f.session, chatFn: f.chatFn });
+      assert.equal(out.ok, true, `${JSON.stringify(flags)}: 옮겨서 실행`);
+      assert.equal(f.chats.length, 1);
+      const t = turnOf(f.chats[0].opts);
+      assert.equal(t.ownerDirect, false, `${JSON.stringify(flags)}: 주인 직접 턴이 아니다(풀 오토 꺼짐)`);
+      assert.ok(t.gate, `${JSON.stringify(flags)}: 메신저 셸 결재 게이트가 켜진다`);
+    } finally { f.stop(); }
+  }
+});
+
+test('옮긴 경로는 손님 사슬을 돌리지 않는다 — 문맥 없이 돌리면 손님 제한이 빠지므로 종전 오류(fail-closed)', async () => {
+  for (const flags of [{ guest: true }, { origin: 'friend' }, { rootAuthor: 'friend' }]) {
+    const f = await setup();
+    try {
+      const r = await addRoutine(f.ws, { agentSlug: 'alpha', title: '손님 시험', prompt: '정리해 줘', schedule: { type: 'daily', time: '09:00' }, msgr: { ...f.origin, ...flags } });
+      const out = await runRoutine(f.ws, r.id, { session: f.session, chatFn: f.chatFn }).catch((e) => ({ ok: false, error: e })); // 종전 오류(원래 문맥 복원 실패)를 그대로 낸다
+      assert.equal(out.ok, false, `${JSON.stringify(flags)}: 실행하지 않는다`);
+      assert.equal(f.chats.length, 0, `${JSON.stringify(flags)}: 러너를 부르지 않는다`);
+    } finally { f.stop(); }
+  }
+});
+
+test('주인이 직접 건 사슬은 옮긴 경로에서도 종전처럼 주인 직접 턴이고, 셸 결재 게이트는 켜진다', async () => {
+  const f = await setup();
+  try {
+    const r = await addRoutine(f.ws, { agentSlug: 'alpha', title: '주인 시험', prompt: '정리해 줘', schedule: { type: 'daily', time: '09:00' }, msgr: f.origin });
+    await runRoutine(f.ws, r.id, { session: f.session, chatFn: f.chatFn });
+    const t = turnOf(f.chats[0].opts);
+    assert.equal(t.ownerDirect, true);
+    assert.ok(t.gate);
+  } finally { f.stop(); }
+});
