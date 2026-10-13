@@ -127,7 +127,7 @@ const { setClaimTokens, renewTokenClaims, tokenOwnership, tokenClaimHash, _reset
 const CLAIM_KEY = (owner, tok) => `${owner}/.tg-claims/${tokenClaimHash(tok)}.json`;
 const claimReadFailReset = () => globalThis.__argoTgClaimReadFail?.clear();
 
-test('쉬는 클레임 보유자(토큰 5개) — 10분 동안 토큰마다 읽기는 30초, 쓰기는 60초에 한 번, 소유는 끊기지 않는다', async () => {
+test('쉬는 클레임 보유자(토큰 5개) — 10분 동안 토큰마다 읽기는 30초, 쓰기는 약 60초에 한 번(다시 쓰기 40초 + 30초 판정), 글 나이는 판정 직전에도 75초 안, 소유는 끊기지 않는다', async () => {
   _resetTokenClaimsForTest();
   const f = fakeStore(); _setSyncClientForTest(f.client);
   const owner = 'owner-claims'; const toks = ['c1', 'c2', 'c3', 'c4', 'c5'];
@@ -136,9 +136,10 @@ test('쉬는 클레임 보유자(토큰 5개) — 10분 동안 토큰마다 읽�
   await renewTokenClaims(owner, { now }); // 획득(쓰기 + 확인 읽기)
   for (const t of toks) assert.equal(tokenOwnership(t).mine, true);
   const base = Object.fromEntries(toks.map((t) => [t, { put: f.calls.byKey.get(`PUT ${CLAIM_KEY(owner, t)}`) || 0, get: f.calls.byKey.get(`GET ${CLAIM_KEY(owner, t)}`) || 0 }]));
-  let ticks = 0; const lost = [];
+  let ticks = 0; const lost = []; let oldest = 0;
   for (let el = 0; el < 10 * 60_000; el += 30_000) {
     now += 30_000; ticks += 1;
+    for (const t of toks) oldest = Math.max(oldest, now - f.get(CLAIM_KEY(owner, t)).ts);
     await renewTokenClaims(owner, { now });
     for (const t of toks) if (!tokenOwnership(t).mine) lost.push(`${t}@${el}`);
   }
@@ -150,7 +151,67 @@ test('쉬는 클레임 보유자(토큰 5개) — 10분 동안 토큰마다 읽�
     assert.ok(now - f.get(CLAIM_KEY(owner, t)).ts < TG_CLAIM_TTL_MS - 30_000, `${t}: 다른 기기가 보기에 늘 살아 있는 클레임`);
   }
   assert.deepEqual(lost, [], '소유가 끊긴 판정 없음');
-  assert.equal(CLAIM_REWRITE_MS, 60_000);
+  assert.equal(CLAIM_REWRITE_MS, 40_000);
+  assert.ok(oldest <= 60_000, `판정 직전 가장 오래된 글 ${oldest / 1000}초`);
+});
+
+/* ── 검수 1(2026-10-13) — 클레임 소유의 시각 상한, 같은 토큰 두 기기 + 판정 하나가 30초 걸림 ── */
+
+test('클레임 소유 시각 상한 — 내 글 ts + TTL − 4초(116초)까지만 mine, 넘으면 판정 중(pending)으로 물러난다', async () => {
+  _resetTokenClaimsForTest(); claimReadFailReset();
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const t0 = Date.now();
+  mock.timers.enable({ apis: ['Date'], now: t0 });
+  setClaimTokens(['cap1']);
+  await renewTokenClaims('owner-cap', { now: t0 });
+  assert.equal(tokenOwnership('cap1').mine, true);
+  mock.timers.tick(TG_CLAIM_TTL_MS - 4_000 - 1);
+  assert.equal(tokenOwnership('cap1').mine, true, '115.999초 — 아직 내 것');
+  mock.timers.tick(1);
+  assert.deepEqual(tokenOwnership('cap1'), { mine: false, holder: null, pending: true }, '116초 — 다음 판정까지 물러난다');
+});
+
+/** 같은 토큰을 가진 두 기기 — A가 보유자, B는 A의 글이 만료(TTL)되는 순간 가져간다(claimDecision). A의 판정 간격 gaps(ms)대로 시계를 넘기며
+    1초마다 "A가 폴링(mine) && B가 가져갈 수 있음(A 글 만료)"인 순간을 센다. 판정 하나가 30초 걸리면 그 간격이 30초 늘어난다. */
+async function twoDevices(gaps) {
+  _resetTokenClaimsForTest(); claimReadFailReset();
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'owner-two'; const tok = 'same-token';
+  const t0 = Date.now(); mock.timers.enable({ apis: ['Date'], now: t0 });
+  setClaimTokens([tok]);
+  await renewTokenClaims(owner, { now: t0 });
+  let overlap = 0; let gap = 0; let maxAge = 0;
+  for (const g of gaps) {
+    for (let s = 0; s < g; s += 1_000) {
+      mock.timers.tick(1_000);
+      const doc = f.get(CLAIM_KEY(owner, tok)); const age = Date.now() - doc.ts; maxAge = Math.max(maxAge, age);
+      const aPolls = tokenOwnership(tok).mine;
+      const bTakes = age >= TG_CLAIM_TTL_MS; // B는 만료를 보면 가져간다(claimDecision 'acquire')
+      if (aPolls && bTakes) overlap += 1;
+      if (!aPolls) gap += 1;
+    }
+    await renewTokenClaims(owner, { now: Date.now() });
+  }
+  return { overlap, gap, maxAge };
+}
+
+test('같은 토큰 두 기기 — 판정이 30초마다면 글 나이 75초 안·공백 0·겹침 0', async () => {
+  const r = await twoDevices(Array(20).fill(30_000));
+  assert.equal(r.overlap, 0); assert.equal(r.gap, 0);
+  assert.ok(r.maxAge <= 75_000, `글 나이 최대 ${r.maxAge / 1000}초`);
+});
+
+test('같은 토큰 두 기기 + 판정 하나가 30초 걸림(sync 클라이언트 시간 초과) — 글 나이 약 105초 안, 겹침 0', async () => {
+  const r = await twoDevices([30_000, 30_000, 30_000, 60_000, 30_000, 30_000, 30_000, 30_000]); // 넷째 판정이 30초 늦다
+  assert.equal(r.overlap, 0, '같은 토큰을 두 기기가 동시에 폴링하지 않는다');
+  assert.ok(r.maxAge <= 105_000, `글 나이 최대 ${r.maxAge / 1000}초 — 시각 상한 116초 안`);
+  assert.equal(r.gap, 0, '상한 안이라 공백도 없다');
+});
+
+test('같은 토큰 두 기기 + 판정이 두 번 연달아 늦음(나이가 상한을 넘김) — 겹침 대신 잠깐 공백', async () => {
+  const r = await twoDevices([30_000, 30_000, 125_000, 30_000, 30_000]); // 둘째 쓰기 뒤 판정이 125초 뒤에야 끝난다(시간 초과가 연달아)
+  assert.equal(r.overlap, 0, '겹침 0');
+  assert.ok(r.gap > 0, `공백 ${r.gap}초 — 상한(116초)부터 다음 판정까지 물러난다`);
 });
 
 /* ── 클레임 읽기 오류 — '없음'으로 읽지 않는다(덮어쓰기 → 같은 토큰 이중 폴링·텔레그램 409) ── */
@@ -253,4 +314,17 @@ test('잠들었다 깨면 기다리던 판정을 바로 끝낸다 — 깸 하나
   slept = 0;
   assert.equal(await waitLeaseTick(6_000, async (d) => { slept += d; mock.timers.tick(d); }), 'timeout', '같은 깸으로 다시 끝내지 않는다');
   assert.equal(slept, 6_000, '끝까지 기다린다');
+});
+
+test('클레임 판정 박자 — 리스 판정이 15초(조금 이른 14.99초)마다 와도 클레임 판정은 30초마다 돈다(30·45초 번갈아 아님)', async () => {
+  _resetTokenClaimsForTest(); claimReadFailReset();
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'owner-beat'; const tok = 'beat-token';
+  setClaimTokens([tok]);
+  let now = Date.now();
+  await renewTokenClaims(owner, { now });
+  const gets0 = f.calls.byKey.get(`GET ${CLAIM_KEY(owner, tok)}`);
+  for (let i = 0; i < 40; i++) { now += 14_990; await renewTokenClaims(owner, { now }); } // 약 10분
+  const judged = f.calls.byKey.get(`GET ${CLAIM_KEY(owner, tok)}`) - gets0;
+  assert.equal(judged, 20, `10분 판정 ${judged}번 — 30초마다(여유 없이 30초를 재면 45초마다 13번)`);
 });

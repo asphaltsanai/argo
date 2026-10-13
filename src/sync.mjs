@@ -688,9 +688,14 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
    카드에 "다른 기기에서 수신 중"이 보인다. 토큰 원문은 어디에도 올리지 않는다(sha256 지문만). */
 export const TG_CLAIM_TTL_MS = LEASE_TTL_MS;
 const CLAIM_RENEW_MS = 30_000; // 판정 주기 — 토큰마다 읽기가 나가므로 리스(8s)보다 성기게(TTL 120s의 1/4)
-/** 확인된 보유자의 다시 쓰기 간격 — 원격 글이 내 것이고 이만큼 새것이면 읽기만 한다(TTL의 1/2, 리스 LEASE_RENEW_MS와 같은 규칙).
-    예전에는 30초 판정마다 토큰별로 다시 썼다(토큰 20개 계정 하나가 시간당 약 3,800건 — 2026-10-13 로그 수집 과금). (export: 회귀 테스트용) */
-export const CLAIM_REWRITE_MS = TG_CLAIM_TTL_MS / 2;
+/** 판정 주기의 여유 — 판정은 리스 판정(8초, 단일 기기 보유자는 15초) 안에서 돌므로, 30초 레이트리밋을 그대로 재면 15초 박자에서 29.9초가 걸러져
+    실제 간격이 30·45초로 번갈아 갔다(검수 1). 2초 일찍 허용해 15초 박자에서 30초, 8초 박자에서 32초로 고르게 돈다. */
+const CLAIM_RENEW_SLACK_MS = 2_000;
+/** 확인된 보유자의 다시 쓰기 간격 — 원격 글이 내 것이고 이만큼 새것이면 읽기만 한다. 판정 간격(30~32초)을 고려해 40초:
+    판정 나이가 30초면 건너뛰고 다음 판정(약 60초)에 쓴다 — 평소 글 나이 최대 약 60~75초, 판정 하나가 30초 걸리면 약 90~105초로,
+    tokenOwnership의 시각 상한(TTL − 4초 = 116초) 안이다. 예전에는 30초 판정마다 토큰별로 다시 썼다(토큰 20개 계정 하나가 시간당 약 3,800건 —
+    2026-10-13 로그 수집 과금). (export: 회귀 테스트용) */
+export const CLAIM_REWRITE_MS = 40_000;
 const CLAIM_NEVER = -Infinity; // renewedAt 센티널 '한 번도 안 돌았음/즉시 실행' — 0이면 작은 now를 주는 하네스에서 레이트리밋이 조용히 옛 동작(재검수 L-C)
 const claimState = (globalThis.__argoTgClaims ??= { tokens: new Set(), byHash: new Map(), renewedAt: CLAIM_NEVER, bootAt: Date.now(), removed: new Set() });
 const CLAIM_DIR = '.tg-claims';
@@ -735,6 +740,11 @@ export function tokenOwnership(token) {
     const orphan = claimState.renewedAt === CLAIM_NEVER && Date.now() - claimState.bootAt > CLAIM_ARBITRATION_GRACE_MS;
     return { mine: orphan, holder: null, pending: !orphan };
   }
+  // 시각 상한 — 내 클레임 글이 만료(ts + TTL)되기 LEASE_CONFIRM_MARGIN_MS 전까지만 내 것이다(리스 isCloudLeader의 단일 기기 규칙과 같음).
+  // 판정이 늦어지면(읽기 30초 시간 초과·토큰이 많아 판정이 길어짐) 만료를 본 다른 기기가 가져가는데, 그동안 이 기기가 계속 폴링하면 같은 토큰을
+  // 두 기기가 받는다(텔레그램 409 — 2026-10-13 검수 1). 상한을 넘기면 다음 판정까지 '판정 중'으로 물러난다: 겹침 대신 잠깐 공백.
+  // ownedAt = 내 글을 쓴 시각(그 글의 ts와 같다 — 획득·갱신·갱신 생략 모두).
+  if (st.mine && !(Number(st.ownedAt) > 0 && Date.now() < Number(st.ownedAt) + TG_CLAIM_TTL_MS - LEASE_CONFIRM_MARGIN_MS)) return { mine: false, holder: null, pending: true };
   return { mine: st.mine, holder: st.holder, pending: false };
 }
 export function _setTokenClaimForTest(token, state) { claimState.byHash.set(tokenClaimHash(token), state); }
@@ -759,7 +769,7 @@ async function readRemoteClaim(key) {
 const claimReadFail = (globalThis.__argoTgClaimReadFail ??= new Map());
 /** 토큰별 클레임 갱신 — write-후-재확인(리스와 같은 CAS 근사). 판정 불가(쓰기 실패)면 보유 중이던 것만 TTL 내 유지. (export: 배선·행동 테스트용) */
 export async function renewTokenClaims(owner, { now = Date.now(), force = false } = {}) {
-  if (!force && now - claimState.renewedAt < CLAIM_RENEW_MS) return;
+  if (!force && now - claimState.renewedAt < CLAIM_RENEW_MS - CLAIM_RENEW_SLACK_MS) return;
   if (claimState.tokens.size === 0 && claimState.removed.size === 0) return; // 등록 전(게이트웨이 sync 이전)에 레이트리밋을 소모하지 않는다(M-2)
   claimState.renewedAt = now;
   const me = await getDeviceId();
