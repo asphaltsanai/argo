@@ -177,6 +177,25 @@ export function earlierLines(list, orgs) {
   const order = new Map((orgs ?? []).map((o, i) => [o.id, i]));
   return (list ?? []).filter((x) => order.has(x.orgId)).sort((a, b) => order.get(a.orgId) - order.get(b.orgId) || b.n - a.n).map((x) => ({ ...x, org: orgs[order.get(x.orgId)].name ?? '' }));
 }
+/** 보관한 방 행을 읽을 때 쓰는 열 — 이전 대화 보기(openEarlier)와 검색(archivedSearchRooms)이 같은 모양으로 earlierRoom.channel을 만든다 */
+export const ARCHIVED_ROOM_COLS = 'id, kind, name, topic, crew_memory, personal_crews, created_by, admin_user_ids, excluded_user_ids, excluded_crew_ids, org_id, archived_at';
+/** 검색에 넣을 보관 1:1(총괄 결정 2026-10-13 ④) — 검색할 때 한 번 읽은 msgr_channels 행(보관한 조직 DM + 구성원 내장 msgr_channel_members)에서 고른다.
+    반환 Map(채널 id → { channel: 구성원을 뺀 채널 행, orgId, crewId, mine }). mine = 내 보관 1:1 — 사람 구성원이 나 하나, 에이전트가 내 크루 행 하나
+    (보관 마이그레이션의 대상 모양과 같다). 개인 공간 검색은 mine만 글 조회에 더하고, 결과를 누르면 어느 공간이든 이 행으로 읽기 전용으로 연다.
+    crewId = mine일 때만 그 방의 에이전트(조직 행) — '개인 1:1로 이동' 띠가 그 행으로 개인 1:1을 연다(openEarlier의 crewId와 같은 뜻). 순수 함수. */
+export function archivedSearchRooms(rows, { uid, ownCrewIds }) {
+  const out = new Map();
+  for (const r of rows ?? []) {
+    if (!r?.id || !r.archived_at || r.kind !== 'dm' || r.org_id == null) continue;
+    const ms = Array.isArray(r.msgr_channel_members) ? r.msgr_channel_members : [];
+    const users = ms.filter((m) => m.member_kind === 'user'); const crews = ms.filter((m) => m.member_kind === 'crew');
+    const mine = ms.length === 2 && users.length === 1 && users[0].member_id === uid && crews.length === 1 && !!ownCrewIds?.has(crews[0].member_id);
+    const { msgr_channel_members: _members, ...channel } = r;
+    out.set(r.id, { channel, orgId: r.org_id, crewId: mine ? crews[0].member_id : null, mine });
+  }
+  return out;
+}
+
 /** 보관한 옛 조직 1:1을 읽기로 연 방(유건 결정 2026-10-08 1-②) — App openEarlier가 남긴 것(earlier = { orgId, channel: 채널 행, crewId })이
     지금 공간·지금 방이고 아직 보관돼 있으면 그 채널 행, 아니면 undefined. 조직 목록(loadOrg)은 보관한 방을 읽지 않아 이 행으로 그린다(읽기 전용) */
 export function archivedRoomFor(earlier, { orgId, chId }) {

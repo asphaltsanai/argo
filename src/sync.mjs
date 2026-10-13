@@ -207,6 +207,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
     base.startsWith('.gw-queue') ||
     base === '.sync-state.json' || base === '.device-id' || base === '.sync-credentials.json' || base === '.server-presence.json' ||
     base === '.device-session.json' || base === '.DS_Store' ||
+    base === '.app-gate.json' || // 최소 앱 버전 판정(src/app-gate.mjs) — 기기마다 그 앱 버전으로 내린 판정이라 다른 기기로 넘기면 안 된다(데이터 루트 직속이라 회사 동기화 대상도 아니다 — 방어 일관)
     base === '.workroots.json' || // 외부 작업 폴더 — 기기 고유 경로라 타 기기로 넘기면 무의미하거나 의도 안 한 접근 허용이 된다
     base === '.connector-secrets.json' || // 커넥터 OAuth 토큰 — 기기·회사 스코프(다른 기기는 재연결, workroots와 같은 원칙 — mcp-oauth-design §2-1)
     base === '.runner-health.json' || // 러너 검진 결과 — **그 기기의 자격에 대한 사실**이다(호스티드는 자격 미동기 — hostedCredsOff). 동기화하면 A의 실패가 B 카드에 그려지고, 리더가 바뀔 때마다 서로의 항목을 지워 재검진(과금)을 부른다(검수 MEDIUM-3)

@@ -2,6 +2,7 @@ import './globals.css';
 import { LanguageProvider } from './i18n';
 import { ThemeProvider } from './theme';
 import BuildWatch from './build-watch';
+import AppGate from './app-gate';
 
 // 첫 페인트 전에 저장된 테마를 적용 — FOUC 방지 (ThemeProvider의 effect보다 먼저 실행)
 const themeBoot = `try{var t=localStorage.getItem('argo-theme')||'graphite';if(t!=='argo')document.documentElement.dataset.theme=t}catch(e){}`;
@@ -46,7 +47,7 @@ export default function RootLayout({ children }) {
           href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
         />
       </head>
-      <body><ThemeProvider><LanguageProvider><BuildWatch />{children}</LanguageProvider></ThemeProvider></body>
+      <body><ThemeProvider><LanguageProvider><BuildWatch />{children}<AppGate /></LanguageProvider></ThemeProvider></body>
     </html>
   );
 }

@@ -12,6 +12,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WS_ROOT } from './workspace.mjs';
 import { withLock, withDirLock } from './mutex.mjs';
 import { createHash } from 'node:crypto';
+import { appGateState, refreshAppGate, appGateClient as gateClient } from './app-gate.mjs';
 
 const FILE = '.device-session.json';
 const LOG = '.device-session.log';
@@ -209,7 +210,20 @@ export function deviceSessionDead({ root = WS_ROOT } = {}) {
 
 /** 유효한 access token 보장 — 만료 60초 전이면 회전 후 저장(락으로 직렬화). null = 세션 없음/회전 실패.
  * _mkClient: 테스트 주입용 — 기본값은 실제 Supabase 클라이언트 팩토리(createClient). 프로덕션 호출부는 지정하지 않는다. */
-export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = createClient } = {}) {
+export async function getFreshDeviceSession({ root = WS_ROOT, _mkClient = createClient, _gateClient = gateClient, _version } = {}) {
+  // 최소 앱 버전 관문(src/app-gate.mjs) — 이 앱이 서버가 정한 최소 버전보다 낮으면 세션 없음. 호출부 전부(동기화·메신저·알림·메일·결제)가
+  // "세션 없음" 경로로 호출을 멈춘다. 판정은 파일 기준(네트워크 없음)이고, 서버 확인은 30분에 한 번 뒤에서 돈다(이 함수를 기다리게 하지 않는다).
+  const sess = await getFreshDeviceSessionUngated({ root, _mkClient });
+  if (!sess) return null;
+  // 기본 확인 클라이언트는 node --test 안에서는 묻지 않는다 — 기존 시험의 가짜 세션(x.supabase.co 등)이 실제 네트워크로 나가고 시험 폴더에 판정 파일을 남기지 않게.
+  // 관문 시험은 _gateClient를 넘겨 이 경로를 돈다(test/app-gate.test.mjs).
+  // _gateClient: null = 서버 확인 없이 파일 판정만(짧게 끝나는 CLI — 확인 요청이 종료를 붙잡지 않게. 확인은 늘 떠 있는 앱 프로세스가 맡는다).
+  if (_gateClient && (_gateClient !== gateClient || !process.env.NODE_TEST_CONTEXT)) refreshAppGate(root, sess, _gateClient).catch(() => {});
+  return appGateState(root, ...(_version !== undefined ? [_version] : [])).blocked ? null : sess;
+}
+
+/** 관문 없이 기기 세션 — 최소 버전 판정 화면(/api/app-gate)처럼 막힌 동안에도 서버에 물어야 하는 곳만 쓴다. */
+export async function getFreshDeviceSessionUngated({ root = WS_ROOT, _mkClient = createClient } = {}) {
   return withLock(`devsess:${root}`, async () => {
     // 회전 경로는 캐시를 쓰지 않는다 — 디스크가 정본이다. 도장(mtime+size)은 회전이 같은 크기로 덮어쓰는
     // 실운영 조건에서 mtime 해상도에만 기대는데, 파일시스템에 따라 두 쓰기가 같은 mtime을 받을 수 있다
