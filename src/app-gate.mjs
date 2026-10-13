@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import { APP_VERSION } from './app-version.mjs';
 import { cmpVersion } from './version-compare.mjs';
+import { WS_ROOT } from './workspace.mjs';
 
 export const APP_GATE_FILE = '.app-gate.json';
 export const APP_GATE_RECHECK_MS = 30 * 60_000;     // 확인 주기 — 기기 1대당 시간당 2회
@@ -75,6 +76,9 @@ export async function refreshAppGate(root, sess, mk, { now = Date.now } = {}) {
 
 /** 서버 확인용 클라이언트 — 5초 안에 끝나지 않으면 끊는다(확인 실패는 판정을 바꾸지 않는다) */
 export const appGateClient = (url, key, opts) => createClient(url, key, { ...opts, global: { ...opts?.global, fetch: (u, init = {}) => fetch(u, { ...init, signal: AbortSignal.timeout(5_000) }) } });
+
+/** 이 프로세스의 데이터 루트(WS_ROOT) 기준 — 호출부가 루트를 들고 있지 않은 곳(메신저 세션 클라이언트)용 */
+export const appGateBlockedHere = () => appGateState(WS_ROOT).blocked;
 
 /** 시험용 — 메모를 비운다 */
 export function _resetAppGateForTest() { memo = null; inflight.clear(); }

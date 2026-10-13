@@ -109,3 +109,16 @@ test('메신저 세션 클라이언트도 막힌 동안 null — 브리지·알�
   G._resetAppGateForTest();
   assert.equal(await sessionClient(), null, '최소 버전 미만 — 세션 없음');
 });
+
+test('판정 파일은 동기화하지 않는다 — 기기마다 그 앱 버전으로 내린 판정(다른 기기로 넘기면 안 된다)', async () => {
+  const { EXCLUDE } = await import('../src/sync.mjs');
+  // 전체 암호화 스위치가 꺼진 기기에서도 제외돼야 한다 — 스위치가 켜지고 키가 없으면 다른 규칙(암호화 대상인데 키 없음)이 대신 거르지만,
+  // 키가 있거나 스위치가 꺼지면 그 규칙이 빠진다. 이 파일 자체의 제외 줄을 잠그려고 스위치를 끄고 본다(ARGO_ENC_VAULT는 매번 다시 읽는다).
+  const prev = process.env.ARGO_ENC_VAULT;
+  process.env.ARGO_ENC_VAULT = '0';
+  try {
+    assert.equal(EXCLUDE('notes.md'), false, '전제: 평범한 파일은 동기화 대상');
+    assert.equal(EXCLUDE(G.APP_GATE_FILE), true);
+    assert.equal(EXCLUDE(`some-co/${G.APP_GATE_FILE}`), true, '회사 폴더 안에 생겨도');
+  } finally { if (prev === undefined) delete process.env.ARGO_ENC_VAULT; else process.env.ARGO_ENC_VAULT = prev; }
+});
