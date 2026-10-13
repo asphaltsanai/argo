@@ -55,11 +55,15 @@ test('게이트웨이 클라이언트 옵션의 하트비트로 응답 없이 �
     await new Promise((r) => setTimeout(r, RT_HEARTBEAT_MS + 500)); // 하트비트 한 번은 정상으로 오간다
     assert.equal(ch.state, 'joined');
     const frozenAt = Date.now(); st.frozen = true;
-    const err = await new Promise((r) => { const iv = setInterval(() => { const e = events.find(([s, t]) => s === 'CHANNEL_ERROR' && t >= frozenAt); if (e) { clearInterval(iv); r(e); } }, 50); setTimeout(() => { clearInterval(iv); r(null); }, 40_000); });
+    const err = await new Promise((r) => { let to; const iv = setInterval(() => { const e = events.find(([s, t]) => s === 'CHANNEL_ERROR' && t >= frozenAt); if (e) { clearInterval(iv); clearTimeout(to); r(e); } }, 50); to = setTimeout(() => { clearInterval(iv); r(null); }, 40_000); }); // 찾으면 40초 대기도 지운다(남기면 프로세스가 26초 더 산다)
     assert.ok(err, '40초 안에 끊김을 알지 못했다');
     const took = err[1] - frozenAt; console.log(`# 응답 없는 소켓 감지 ${took}ms(하트비트 ${RT_HEARTBEAT_MS}ms)`);
     assert.ok(took <= RT_HEARTBEAT_MS * 2 + 1_000 && took <= 16_000, `응답 없는 소켓을 아는 데 ${took}ms`);
   } finally {
+    // 재연결 예약을 먼저 막는다. 하트비트 시간 초과 경로가 소켓이 다 닫힌 뒤 재연결을 따로 예약하고(phoenix teardown 콜백), disconnect()는 그때 '끊는 중'이라
+    // 그냥 돌아간다 — 닫힌 포트로의 재연결이 닫힘을 낼 때마다(Node 26) 다시 예약돼 프로세스가 끝나지 않았다(로컬 20분~2시간 멈춤, Node 22는 우연히 한 번에 멈춤).
+    const rtTimer = client.realtime.reconnectTimer;
+    if (rtTimer) { rtTimer.scheduleTimeout = () => {}; rtTimer.reset(); }
     for (const s of st.sockets) s.destroy(); // 서버를 먼저 닫아 다시 연결 시도가 바로 거절되게(열린 채 두면 연결 대기로 프로세스가 남는다)
     srv.close();
     try { await client.removeAllChannels(); } catch { /* 무해 */ }
