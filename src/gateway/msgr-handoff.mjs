@@ -1,3 +1,4 @@
+import { workContext } from './space.mjs'; // 공간 판정 기준 함수 — 작업 문맥(권한 조직)
 // 메신저의 send_to_crew도 최종 채널 답글로 넘긴다. 일반 우편 큐와 동시에 실행하지 않는다.
 // 수집함은 브리지의 한 턴에만 속하며, 답글 저장 후 기존 권한·순서·홉 상한을 거친다.
 const say = (ctx, ko, en) => (ctx?.lang === 'en' ? en : ko); // 개인 공간 거절 문구 언어 — 개인 문맥만 lang을 싣는다(msgr.mjs run·runMessengerContinuation). 조직 문구는 그대로 한국어
@@ -20,7 +21,7 @@ export function messengerOrigin(ctx, targetSlug = null) {
   if (ctx?.kind !== 'msgr') return null;
   if (!ctx.channelId || !ctx.crewId || !ctx.uid || !ctx.wsId) throw new Error('메신저 실행 문맥이 없습니다');
   const target = targetSlug ? ctx.peers?.find((p) => p.slug === targetSlug && p.owner_user_id === ctx.uid && p.ws_id === ctx.wsId) : null;
-  const personal = !ctx.orgId;
+  const personal = workContext(ctx).personal; // 판정 기준 함수(space.mjs) — 작업 문맥(크루 조직)이 개인
   if (personal) { const why = personalRefusal(ctx, target, targetSlug); if (why) throw new Error(why); }
   if (targetSlug && !target) throw new Error('같은 메신저 조직에 파견된 동료만 실행할 수 있습니다');
   // 개인 기록은 orgId null + ownCrewRoom 표지 — 이 표지는 운반용이다. 이어 실행 때 서버가 방을 다시 판정한다(restoreMessengerContext — 저장된 표지를 믿지 않는다)
@@ -123,7 +124,7 @@ export function stageMessengerHandoff(ctx, { to, cc = [], message }) {
     return matches.length === 1 ? matches[0] : null;
   }; // peers is the freshly authorized organization/thread envelope, never a local slug fallback
   const target = resolve(to);
-  if (!target && !ctx.orgId) throw new Error(say(ctx, '개인 공간의 이 방에는 그 에이전트가 없어 넘길 수 없습니다 — 개인 공간에서는 같은 방에 있는 에이전트에게만 넘길 수 있고, 주인과 이 에이전트만 있는 1:1에는 넘길 다른 에이전트가 없습니다',
+  if (!target && workContext(ctx).personal) throw new Error(say(ctx, '개인 공간의 이 방에는 그 에이전트가 없어 넘길 수 없습니다 — 개인 공간에서는 같은 방에 있는 에이전트에게만 넘길 수 있고, 주인과 이 에이전트만 있는 1:1에는 넘길 다른 에이전트가 없습니다',
     'That agent is not in this personal-space room, so it cannot be handed off — in the personal space you can only hand off to agents in the same room, and a 1:1 with just you and this agent has no one else'));
   if (!target) throw new Error('같은 메신저 조직에 파견된 동료만 넘겨받을 수 있습니다');
   const body = String(message ?? '').trim();
