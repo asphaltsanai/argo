@@ -39,6 +39,7 @@ function harness({ row = ROW, fail = false, moveAway = false } = {}) {
     q: async (p) => { const { data, error } = await p; if (error) throw new Error(error.message); return data; },
     supabase, activeOrg, t: (k) => k, setErr: (e) => seen.errs.push(e),
     setEarlierRoom: (v) => seen.earlier.push(v), setChId: (id) => seen.opened.push(id), setPage: (p) => seen.pages.push(p), setRail: () => {}, setSheet: () => {},
+    ARCHIVED_ROOM_COLS: G.ARCHIVED_ROOM_COLS, // 보관 방 행의 열 — 검색(archivedSearchRooms)과 같은 상수로 옮겼다(결정 ④)
   };
   const open = new Function(...Object.keys(deps), `return (${src});`)(...Object.values(deps));
   return { open, seen };
