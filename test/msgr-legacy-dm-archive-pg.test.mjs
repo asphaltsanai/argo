@@ -1,4 +1,4 @@
-// 예전 조직 1:1 보관(20261008103000_msgr_legacy_dm_archive.sql, 유건 결정 2026-10-08 1-②) — 고른 방·백업·멱등·되돌리기를 실제 Postgres에서 잰다.
+// 예전 조직 1:1 보관(*_msgr_legacy_dm_archive.sql — 2026-10-13 20261013140000으로 다시 매김, 유건 결정 2026-10-08 1-②) — 고른 방·백업·멱등·되돌리기를 실제 Postgres에서 잰다.
 //  보관: 사람 = 주인 한 명 + 에이전트 = 그 주인의 본체 에이전트 한 명인 조직 DM, 같은 에이전트(주인·회사·slug)의 활성 개인 행이 있을 때만.
 //  그대로: 남이 낀 방·그룹·친구 1:1·개인 공간 방·외부 봇 방(결정 1-④)·개인 행이 없는(또는 회사가 다른·멈춘) 에이전트·이미 보관한 방.
 // 글은 지우지 않고(보관 뒤에도 주인이 읽는다), 새 글은 서버가 막는다(msgr_can_write_channel). 두 번 돌려도 바뀌는 것이 없다(행 xmin 불변).
@@ -48,7 +48,7 @@ const room = (name, members, { org = ORG, pair = null, archived = false, msgs = 
 };
 const archivedOf = (name) => sql(`select archived_at is not null from public.msgr_channels where id = '${R[name]}'`);
 const SHOULD = ['a-pepper', 'a-pepper-2', 'b-shuri'];
-const KEEP = ['a-max-noprow', 'a-bot', 'a-pepper-plus-b', 'a-group', 'b-with-a-crew', 'a-pepper-personal', 'ab-friend', 'a-otherws', 'a-detached-prow', 'c-old-desktop', 'a-pepper-archived'];
+const KEEP = ['a-max-noprow', 'a-bot', 'a-pepper-plus-b', 'a-group', 'b-with-a-crew', 'a-pepper-personal', 'ab-friend', 'a-otherws', 'a-detached-prow', 'a-paused-prow', 'c-old-desktop', 'a-pepper-archived'];
 
 before(() => {
   if (!DB) return;
@@ -91,6 +91,7 @@ before(() => {
   const bot = crew(ORG, U.a, 'bot', 'bot-pepperv', 'bot'); crew(null, U.a, 'bot', 'bot-pepperv', 'bot'); // 외부 봇 + 개인 쌍둥이(결정 1-④: 별개 에이전트, 보관하지 않는다)
   const yoda = crew(ORG, U.a, 'ws-a', 'yoda'); crew(null, U.a, 'ws-other', 'yoda'); // 개인 행이 다른 회사 — 같은 에이전트가 아니다
   const walt = crew(ORG, U.a, 'ws-a', 'walt'); crew(null, U.a, 'ws-a', 'walt', 'local', 'detached'); // 개인 행이 멈춤
+  const pausy = crew(ORG, U.a, 'ws-a', 'pausy'); crew(null, U.a, 'ws-a', 'pausy', 'local', 'paused'); // 개인 행이 무료 일시 정지(20261010200000 paused, #941) — 돌려 보낼 1:1이 쉬고 있으니 옛 방을 남긴다
   const shuri = crew(ORG, U.b, 'ws-b', 'shuri'); crew(null, U.b, 'ws-b', 'shuri');
   crew(null, U.b, 'ws-a', 'pepper'); // b에게 a의 페퍼와 같은 회사·slug 개인 행이 있어도(가져오기 등) a의 에이전트는 b의 것이 아니다 — 주인 확인만이 'b-with-a-crew'를 가른다
   const kar = crew(ORG, U.c, 'ws-c', 'carmack'); // 옛 본체 — 조직 행만
@@ -110,6 +111,7 @@ before(() => {
   room('ab-friend', [['user', U.a], ['user', U.b]], { org: null, pair: [U.a, U.b].sort().join(':') }); // 친구 1:1
   room('a-otherws', [['user', U.a], ['crew', yoda]]);
   room('a-detached-prow', [['user', U.a], ['crew', walt]]);
+  room('a-paused-prow', [['user', U.a], ['crew', pausy]]);
   room('c-old-desktop', [['user', U.c], ['crew', kar]]);
   room('a-pepper-archived', [['user', U.a], ['crew', pepper]], { archived: true });
 });

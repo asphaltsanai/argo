@@ -47,7 +47,7 @@ import { resolveWithFollowUp } from '../approval-actions.mjs';
 import { attachFailureNote, isImagePath } from '../tg-format.mjs';
 import { ROUTINE_FILES_MAX, planReplyFiles, readReplyFile } from './msgr-reply-files.mjs';
 import { mimeOf } from '../media-kind.mjs';
-import { chatLocation, contextScopeKind, judgeSpace, personalOrigin } from './space.mjs'; // 공간 판정 기준 함수 — 대화 위치와 작업 문맥(권한 조직)을 나눠 판정
+import { chatLocation, contextScopeKind, judgeSpace, personalOrigin, LOCATION } from './space.mjs'; // 공간 판정 기준 함수 — 대화 위치와 작업 문맥(권한 조직)을 나눠 판정
 import { replyLinkPreview } from './link-preview-node.mjs';
 import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
@@ -2264,7 +2264,8 @@ async function movedAgentRoom(session, wsId, slug, origin) {
     const c = await session();
     if (!c || !slug || !origin?.orgId || !origin.channelId || !origin.crewId || (origin.uid && origin.uid !== c.uid) || (origin.wsId && origin.wsId !== wsId) || !c.db.channelMembers) return null;
     const ch = await c.db.channel(origin.channelId);
-    if (!ch?.archived_at || ch.kind !== 'dm' || ch.org_id !== origin.orgId) return null;
+    const at = chatLocation(ch); // 판정 기준 함수(space.mjs) — 보관한 조직 1:1이고 그 방의 조직이 기록의 작업 조직과 같을 때만
+    if (!at.archived || at.kind !== LOCATION.ORG_DM || at.orgId !== origin.orgId) return null;
     const ms = (await c.db.channelMembers(ch.id)) ?? [];
     const users = ms.filter((m) => m.member_kind === 'user'); const crews = ms.filter((m) => m.member_kind === 'crew');
     if (users.length !== 1 || users[0].member_id !== c.uid || crews.length !== 1 || crews[0].member_id !== origin.crewId) return null; // 구성원 종류는 사람·에이전트뿐(표 제약)
