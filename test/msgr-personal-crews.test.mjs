@@ -237,3 +237,16 @@ test('심박: 조직 행이 있으면 방 없는 개인 행은 쓰지 않고, �
     assert.deepEqual(work ?? [], wantWork, '업무 심박은 조직 행만(분리 검수 M3)');
   }
 });
+
+// 1:1 하나로 합치기(총괄 결정 2026-10-13 ②) — 개인 1:1에서 다른 에이전트에게 맡기기는 열지 않고, 조직 채널에서는 된다고 안내한다(ko·en)
+test('개인 1:1의 다른 에이전트 맡기기·넘기기 거절은 조직 채널에서는 된다고 안내한다 — 한국어·영어', async () => {
+  const { stageMessengerHandoff } = await import('../src/gateway/msgr-handoff.mjs');
+  const peers = [{ id: 'c-pin', slug: 'seoyun', owner_user_id: UID, ws_id: WS, display_name: '서윤' }, { id: 'c-jun', slug: 'jun', owner_user_id: UID, ws_id: WS, display_name: '준' }];
+  const base = { kind: 'msgr', orgId: null, channelId: PCH, channelKind: 'dm', crewId: 'c-pin', uid: UID, wsId: WS, origin: UID, peers, ownCrewRoom: true };
+  assert.throws(() => messengerOrigin(base, 'jun'), /다른 에이전트에게 맡기기는 그 에이전트가 함께 있는 조직 채널에서는 됩니다/);
+  assert.throws(() => messengerOrigin({ ...base, lang: 'en' }, 'jun'), /does work in an organization channel that agent is in/);
+  const solo = { ...base, peers: [peers[0]], handoffs: [] };
+  assert.throws(() => stageMessengerHandoff(solo, { to: 'jun', message: '부탁' }), /다른 에이전트에게 넘기기는 그 에이전트가 함께 있는 조직 채널에서는 됩니다/);
+  assert.throws(() => stageMessengerHandoff({ ...solo, lang: 'en' }, { to: 'jun', message: 'please' }), /does work in an organization channel that agent is in/);
+  assert.throws(() => messengerOrigin({ kind: 'msgr', orgId: ORG, channelId: 'ch', crewId: 'c-pin', uid: UID, wsId: WS, peers: [] }, 'jun'), /같은 메신저 조직에 파견된 동료만/, '조직 턴의 거절 문구는 그대로');
+});
