@@ -39,6 +39,19 @@ const sweep = (uid = null) => JSON.parse(sql(`select public.msgr_crews_plan_swee
 const topMsg = () => Number(sql('select coalesce(max(id), 0) from public.msgr_messages'));
 const post = (uid, ch, body, crew) => last(asUser(uid, `insert into public.msgr_messages (channel_id, author_kind, author_user_id, kind, body, mentions, client_msg_id) values ('${ch}', 'user', '${uid}', 'text', ${q(body)}, ${q(JSON.stringify(crew ? [{ kind: 'crew', id: crew, role: 'to' }] : []))}::jsonb, gen_random_uuid()::text) returning id`));
 const fails = (raw, re, label) => { assert.notEqual(raw.status, 0, `허용됨: ${label}`); assert.match(raw.stderr, re, `${label} — 실제 오류: ${raw.stderr.trim().slice(0, 200)}`); };
+// 봇 판정 두 자리가 같은 답인지(2026-10-13 로그 과금 축소 ①) — 옛 엣지의 msgr_bot_gate와 새 엣지의 롱폴 첫 조회(msgr_bot_updates_with_delivery, gate => true).
+// 막히면 msgr_bot_plan_required로 끝나고 dm_delivery_protocol을 쓰지 않는다(행 xmin 불변). 통과하면 판정 'ok'. 판정 값을 돌려준다.
+const botGate = (token) => {
+  const verdict = asAnon(`select public.msgr_bot_gate('${token}')`);
+  const crew = token === TOKEN_A ? BOT_A : token === TOKEN_D ? BOT_D : null; // 이 파일의 봇 둘(before에서 만든 짝)
+  assert.ok(crew, '알려진 봇 토큰');
+  const xmin0 = sql(`select xmin::text from public.msgr_crews where id = '${crew}'`);
+  const r = psqlRaw(['-A', '-t', '-c', `set role anon; select count(*) from public.msgr_bot_updates_with_delivery('${token}', 0, 1, true)`]);
+  const via = r.status === 0 ? 'ok' : /msgr_bot_plan_required/.test(r.stderr) ? 'plan_required' : `error:${r.stderr.trim().slice(0, 120)}`;
+  assert.equal(via, verdict, `첫 조회 판정 = msgr_bot_gate (${verdict})`);
+  if (via === 'plan_required') assert.equal(sql(`select xmin::text from public.msgr_crews where id = '${crew}'`), xmin0, '막힌 조회는 쓰기 0');
+  return verdict;
+};
 
 const C = {}; let O1, O2, CH, CH2, TOKEN_A, TOKEN_D, BOT_A, BOT_D, AUTO, SRC;
 before(() => {
@@ -180,12 +193,18 @@ test('② 쓰기 관문: 무료 계정의 새 행·detached→active·paused→a
 });
 
 test('⑥ 봇 관문: 무료 주인 plan_required, 스위치 off면 ok, 토큰 오류는 msgr_bot_unauthorized', { skip }, () => {
-  assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_A}')`), 'plan_required');
-  assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_D}')`), 'plan_required');
+  assert.equal(botGate(TOKEN_A), 'plan_required');
+  assert.equal(botGate(TOKEN_D), 'plan_required');
   sql(`insert into public.msgr_settings (key, value) values ('bot_plan_gate', 'off') on conflict (key) do update set value = 'off'`);
-  assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_A}')`), 'ok', '스위치 off');
+  assert.equal(botGate(TOKEN_A), 'ok', '스위치 off');
   sql(`delete from public.msgr_settings where key = 'bot_plan_gate'`);
   fails(psqlRaw(['-A', '-t', '-c', `set role anon; select public.msgr_bot_gate('argo_bot_${'z'.repeat(48)}')`]), /msgr_bot_unauthorized/, '없는 토큰');
+  // 첫 조회 판정(20261013180000) — 옛 엣지 호환·토큰 오류·함수 하나
+  fails(psqlRaw(['-A', '-t', '-c', `set role anon; select count(*) from public.msgr_bot_updates_with_delivery('argo_bot_${'z'.repeat(48)}', 0, 1, true)`]), /msgr_bot_unauthorized/, '없는 토큰(첫 조회 판정)');
+  assert.equal(psqlRaw(['-A', '-t', '-c', `set role anon; select count(*) from public.msgr_bot_updates_with_delivery('${TOKEN_A}', 0, 1)`]).status, 0, '옛 엣지(인자 셋 = gate 꺼짐)는 막지 않는다 — 판정은 옛 엣지가 msgr_bot_gate로 따로 한다');
+  assert.equal(psqlRaw(['-A', '-t', '-c', `set role anon; select count(*) from public.msgr_bot_updates_with_delivery('${TOKEN_A}')`]).status, 0, '인자 하나도 그대로');
+  assert.equal(sql(`select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'msgr_bot_updates_with_delivery'`), '1', '같은 이름 함수는 하나(PostgREST가 세 인자 호출을 고르지 못하는 PGRST203 방지)');
+  for (const role of ['anon', 'authenticated', 'service_role']) assert.equal(sql(`select has_function_privilege('${role}', 'public.msgr_bot_updates_with_delivery(text, bigint, int, boolean)', 'execute')`), 't', `${role} 실행 권한(라이브 세 인자판과 같게)`);
 });
 
 let QRUN;
@@ -212,7 +231,7 @@ test('③ 재개(결제): entitlements 삽입이 그 사용자를 바로 active�
   assert.ok(cursorOf(C.A1) >= top, `커서 ${cursorOf(C.A1)} ≥ 끝 ${top}`);
   assert.ok(cursorOf(BOT_A) >= top, '봇 커서도 끝으로 — 재개 때 밀린 업데이트를 한꺼번에 주지 않는다');
   assert.equal(sql(`select count(*) from public.msgr_messages where id in (${m1}, ${m2})`), '2', '멈춘 동안 온 글은 남는다');
-  assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_A}')`), 'ok');
+  assert.equal(botGate(TOKEN_A), 'ok');
   assert.equal(sql(`select count(*) from public.msgr_crew_pauses where owner_user_id = '${U.a}' and resumed_at is null`), '0');
   assert.equal(sql(`select resume_after from public.msgr_crew_pauses where crew_id = '${C.A1}'`), String(top));
   // 자동화: 켜짐 그대로, 지난 예정 시각은 미래로(재개하자마자 밀린 실행 없음)
@@ -225,9 +244,9 @@ test('③ 재개(결제): entitlements 삽입이 그 사용자를 바로 active�
 
 test('③ 결제 해지(entitlements 갱신)는 바로 다시 중지, 운영자 부여(granted)는 재개 — 결제 트리거는 오류를 밖으로 던지지 않는다', { skip }, () => {
   sql(`update public.entitlements set plan = 'free' where user_id = '${U.a}'`);
-  assert.equal(statusOf(C.A1), 'paused'); assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_A}')`), 'plan_required');
+  assert.equal(statusOf(C.A1), 'paused'); assert.equal(botGate(TOKEN_A), 'plan_required');
   sql(`update public.entitlements set granted = true where user_id = '${U.a}'`);
-  assert.equal(statusOf(C.A1), 'active'); assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_A}')`), 'ok');
+  assert.equal(statusOf(C.A1), 'active'); assert.equal(botGate(TOKEN_A), 'ok');
   // sweep이 실패해도 결제 반영은 남는다 — 함수를 잠깐 깨뜨려 본다
   sql(`alter function public.msgr_crews_plan_sweep(uuid) rename to msgr_crews_plan_sweep_saved`);
   try { sql(`update public.entitlements set ls_status = 'active' where user_id = '${U.a}'`); }
@@ -238,14 +257,14 @@ test('③ 결제 해지(entitlements 갱신)는 바로 다시 중지, 운영자 
 test('③ 재개(조직 좌석·체험): 트리거 없는 변화는 크론 함수 한 번으로 — 재개 전까지 봇은 Pro여도 막는다', { skip }, () => {
   sql(`update public.msgr_org_entitlements set paid_until = now() + interval '30 days' where org_id = '${O2}'`);
   assert.equal(statusOf(C.D1), 'paused', '크론 전');
-  assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_D}')`), 'plan_required', 'Pro가 됐어도 재개(커서 이동) 전에는 막는다 — 밀린 글을 한꺼번에 받지 않게');
+  assert.equal(botGate(TOKEN_D), 'plan_required', 'Pro가 됐어도 재개(커서 이동) 전에는 막는다 — 밀린 글을 한꺼번에 받지 않게');
   const r = sweep();
   assert.equal(r.failed, 0); assert.ok(r.resumed >= 2, JSON.stringify(r));
-  assert.equal(statusOf(C.D1), 'active'); assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_D}')`), 'ok');
+  assert.equal(statusOf(C.D1), 'active'); assert.equal(botGate(TOKEN_D), 'ok');
   // 좌석이 끝나면 다시 중지
   sql(`update public.msgr_org_entitlements set paid_until = now() - interval '1 minute' where org_id = '${O2}'`);
   sweep();
-  assert.equal(statusOf(C.D1), 'paused'); assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_D}')`), 'plan_required');
+  assert.equal(statusOf(C.D1), 'paused'); assert.equal(botGate(TOKEN_D), 'plan_required');
   // 체험 만료
   assert.equal(statusOf(C.C1), 'active');
   sql(`update auth.users set created_at = now() - interval '20 days' where id = '${U.c}'`);
@@ -296,6 +315,6 @@ test('되돌리기 msgr_crews_plan_unpause_all: 재개와 같은 경로 — 사�
   for (const id of [...pausedIds, BOT_D]) assert.ok(cursorOf(id) >= top, `${id} 커서 ${cursorOf(id)} ≥ 끝 ${top}`);
   assert.equal(sql(`select count(*) from public.msgr_crew_pauses where resumed_at is null`), '0', '열린 기록 0');
   assert.equal(statusOf(C.D1), 'active'); assert.equal(statusOf(C.AV), 'available', '파견 해제는 그대로'); assert.equal(statusOf(C.E1), 'detached');
-  assert.equal(asAnon(`select public.msgr_bot_gate('${TOKEN_D}')`), 'ok');
+  assert.equal(botGate(TOKEN_D), 'ok');
   assert.deepEqual(JSON.parse(sql('select public.msgr_crews_plan_unpause_all()')), { resumed: 0, failed: 0, cursor: top }, '두 번째는 할 일 없음');
 });

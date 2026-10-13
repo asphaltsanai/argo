@@ -84,6 +84,8 @@ test('대화 위치 — 공간 13종의 판정 묶음이 기대값과 같고, �
     assert.equal(contextScopeKind(ch), OLD.scope(ch), `${name} 기록 표지 = 옛 식`);
     assert.equal(loc.personal, OLD.personalRoom(ch), `${name} 개인 방 = 옛 식`);
   }
+  // 보관 표지 — 옛 식 !!ch.archived_at(보관한 옛 조직 1:1 판정, msgr.mjs movedAgentRoom)
+  for (const ch of [null, { kind: 'dm', org_id: ORG }, { kind: 'dm', org_id: ORG, archived_at: null }, { kind: 'dm', org_id: ORG, archived_at: '2026-10-13T00:00:00Z' }]) assert.equal(chatLocation(ch).archived, !!ch?.archived_at, JSON.stringify(ch));
   assert.ok(Object.values(LOCATION).every((k) => Object.values(LOCATION_EXPECTED).some((row) => row[0] === k)), '모든 위치 종류가 행렬에 한 칸 이상 있다');
 });
 
