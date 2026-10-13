@@ -4,7 +4,7 @@ export default {
   ko: {
     title: '에이전트가 대화 밖에서 보낸 글 — 하트비트 알림·루틴 결과',
     keywords: ['에이전트가 보낸 글', '자기 글', '인용', '답장', '하트비트 알림', '루틴 결과', '누가 보냈어', '내가 보낸 알림', '이거 뭐야'],
-    body: `하트비트(일정 알림·아침 정리·내일 일정 요약·메일 알림)와 루틴 결과는 대화가 아니라 앱이 정해진 때에 에이전트 이름으로 보내는 글입니다. 에이전트는 이 글을 자기가 보낸 글로 알고 답합니다.
+    body: `하트비트 알림(목표 하트비트 알림, 예전 일정·메일 알림)과 루틴 결과는 대화가 아니라 앱이 정해진 때에 에이전트 이름으로 보내는 글입니다. 에이전트는 이 글을 자기가 보낸 글로 알고 답합니다.
 
 메신저에서
 - 방의 최근 대화를 에이전트에게 넘길 때, 그 에이전트가 대화 밖에서 보낸 하트비트 알림·루틴 결과에는 "(나 · 하트비트 알림)", "(나 · 루틴 결과)" 표시가 붙습니다. 조직 채널에 올라간 루틴 결과도 같습니다. 결재 요청·넘김·쪽지 답 알림에는 붙지 않습니다.
@@ -21,7 +21,7 @@ export default {
   en: {
     title: 'Messages an agent sent outside a conversation — heartbeat notices and routine results',
     keywords: ['messages the agent sent', 'own message', 'quote', 'reply', 'heartbeat notice', 'routine result', 'who sent this', 'what is this'],
-    body: `Heartbeat notices (event reminders, morning summary, tomorrow's summary, mail notices) and routine results are not conversations — the app sends them under the agent's name at set times. The agent treats them as its own messages.
+    body: `Heartbeat notices (goal heartbeat notices, and older event and mail notices) and routine results are not conversations — the app sends them under the agent's name at set times. The agent treats them as its own messages.
 
 In Messenger
 - When the recent room conversation is passed to an agent, the heartbeat notices and routine results it sent outside a conversation are marked "(me · heartbeat notice)" or "(me · routine result)". Routine results posted in organization channels are marked the same way. Approval requests, handoffs and mail-reply notices are not marked.

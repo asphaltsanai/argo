@@ -7,8 +7,9 @@ import { join } from 'node:path';
 import { paths } from './workspace.mjs';
 import { readJson, writeJsonAtomic } from './jsonstore.mjs';
 import { withLock } from './mutex.mjs';
-import { outsideContextLine } from './assistant/mail-text.mjs';
-import { STATE_DIR } from './assistant/state.mjs'; // '.assistant' — 셸 차단(permission-gate BASH_DOT_DIR_RE)·동기화 제외(sync isAssistantStateRel)가 이 이름을 본다
+import { outsideContextLine } from './inbound-marks.mjs';
+/** 기기 로컬 폴더 이름 — 셸 차단(permission-gate BASH_DOT_DIR_RE)·동기화 제외(sync isAssistantStateRel)가 이 이름을 본다(옛 능동 비서 상태 폴더와 같은 자리). */
+const STATE_DIR = '.assistant';
 
 export const SELF_POSTS = Object.freeze({ keep: 20, days: 7, show: 5, chars: 240, blockMax: 1500 });
 const DAY = 86_400_000;

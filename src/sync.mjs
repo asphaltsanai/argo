@@ -140,7 +140,8 @@ export const syncOn = () => (!!loadSyncCreds() || !!loadDeviceSession()) && proc
     .archive/(해고본)는 살아 있는 slug가 아니라 대상 아님. */
 export const isRoomCardRel = (rel) => /^agents\/[^/]+\.md$/.test(rel) && collidesWithRoom(rel.slice('agents/'.length, -'.md'.length));
 const isLocalImportRel = (rel) => rel.split('/')[0] === '.local-assets';
-/** 능동 비서 상태(.assistant/ — src/assistant/state.mjs): 보낸 키·보류 목록·대기열·확인 범위. 확인할 때마다 바뀌는 기기 로컬 값이라 올리지 않고(EXCLUDE —
+/** 기기 로컬 상태 폴더(.assistant/ — 자기 글 기록 self-posts.json, 그리고 2026-10-13 오피스 완전 분리 때 지운 능동 비서의 옛 상태 state.json·mail.json(메일 메타)이
+    업데이트한 기기에 남아 있다 — 지우지 않고, 계속 올리지 않는다). 확인할 때마다 바뀌는 기기 로컬 값이라 올리지 않고(EXCLUDE —
     storage.objects 업서트가 쌓이는 2026-09-23 리스·심박 711MB와 같은 모양), 원격에 있어도 **diff 불가시**(받기·삭제 전파·브레이크 집계 전부 건너뜀)로 다룬다.
     버전 섞임(#863 분리 검수 LOW): 옛 버전으로 내린 기기는 EXCLUDE에 이 줄이 없어 상태 파일을 올린다. EXCLUDE는 로컬 walk에만 걸려, 새 기기가 그 사본을 받아
     자기 상태를 덮고 다음 사이클에 '로컬 삭제'로 원격을 지우게 된다(.local-assets와 같은 계약). 기기 사이 이어받기는 알림 글 meta로 한다(설계 7절, 3단계). */
@@ -196,7 +197,7 @@ export const EXCLUDE = (rel) => { // (export: 회귀 테스트용)
   // 팀 메신저 채널 기억의 PC 사본(.msgr-journal/ — memory.mjs relocateOrgJournals). 채널·조직 기억은 서버에만(유건 결정 2026-09-24) —
   // 개인 클라우드·다른 기기로 퍼지면 퇴장 회수가 원격에서 되살아난다(검수 #691 M2).
   if (rel.split('/')[0] === '.msgr-journal') return true;
-  // 능동 비서 상태(.assistant/ — isAssistantStateRel 주석). 설정(assistant.json)은 동기화 대상이다.
+  // 기기 로컬 상태(.assistant/ — isAssistantStateRel 주석). 옛 설정 파일(assistant.json)은 다른 파일처럼 동기화된다(읽는 곳은 없다).
   if (isAssistantStateRel(rel)) return true;
   // 작업 과정 기록(.turn-traces/ — isTurnTraceRel 주석) — 기기 로컬, 턴마다 쌓인다.
   if (isTurnTraceRel(rel)) return true;
@@ -464,15 +465,7 @@ export function standbyIdle(now = Date.now()) {
   return !isCloudLeader(now);
 }
 
-/** 리스 글의 비서 엔진 번호 — 능동 비서 감시기(src/assistant)가 든 본체가 리스를 쓸 때 싣는다. 옛 본체는 이 칸을 쓰지 않고 모르는 칸은 무시한다(쓰기 수 그대로).
-    리더가 아닌 새 본체는 매 주기 읽는 리스 글에서 이 칸이 없거나 낮으면 "실행 기기가 옛 버전이라 비서가 꺼져 있음"을 안다.
-    앱 버전 대신 번호를 쓰는 이유: 발행 전 개발 빌드(상주 :3001 등)는 package.json 버전이 직전 발행 그대로라 버전 비교가 감시기 있는 기기를 옛 버전으로 오판한다.
-    번호: 1 = 1단계 엔진(#863 — 봉인을 보지 않는다), 2 = company.json 봉인이 맞는 설정만 켜는 엔진(src/assistant/config.mjs loadEffectiveAssistantConfig).
-    번호 1 빌드가 실행 기기면 0.1.98 이하 기기의 에이전트가 쓴 봉인 없는 assistant.json으로도 비서가 켜질 수 있어서, 새 기기는 그 기기를 옛 버전으로 본다. */
-export const LEASE_ASSISTANT_ENGINE = 2;
-
-/** 리스 판정 값 읽기(능동 비서의 "리더 확인이 새것인가") — 비서는 여기서 확인된 보유(ownedAt > 0)와 확인 시각(checkedAt)까지 본다.
-    holder = 마지막으로 읽은 원격 리스 글의 주인({ deviceId, assistant, ts }, 없으면 null). */
+/** 리스 판정 값 읽기 — 확인된 보유(ownedAt > 0)·확인 시각(checkedAt)·마지막으로 읽은 원격 리스 글의 주인(holder = { deviceId, ts }, 없으면 null). */
 export function leaseCheck() {
   return { syncOn: syncOn(), leader: !!leaseState.leader, ownedAt: leaseState.ownedAt || 0, checkedAt: leaseState.checkedAt || 0, holder: leaseState.holder ?? null };
 }
@@ -546,8 +539,8 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     noteOnce('lease-read', '');
   }
   if (cur?.deviceId && cur.deviceId !== me) notePeer(cur);
-  // 읽은 리스 글의 주인 — 리더가 아닌 기기가 "실행 기기가 옛 버전인가"를 판정하는 재료(leaseCheck, LEASE_ASSISTANT_ENGINE). 메모리만, 쓰기 없음.
-  leaseState.holder = cur?.deviceId ? { deviceId: String(cur.deviceId), assistant: Number(cur.assistant) || 0, ts: Number(cur.ts) || 0 } : null;
+  // 읽은 리스 글의 주인 — 리더가 아닌 기기가 "어느 기기가 실행 담당인가"를 보여 주는 재료(leaseCheck). 메모리만, 쓰기 없음.
+  leaseState.holder = cur?.deviceId ? { deviceId: String(cur.deviceId), ts: Number(cur.ts) || 0 } : null;
   const live = cur && Date.now() - cur.ts < LEASE_TTL_MS; // 살아 있는 리스(TTL 안) — 위 fresh()(캐시 우회)와 다른 이름
   if (!readErr && !(live && cur.deviceId !== me)) leaseState.checkedAt = Date.now(); // 다른 기기가 맡고 있지 않음을 읽었다 — 단일 기기의 기동·깸 대기는 여기서 끝(쓰기·재확인 800ms를 기다리지 않는다)
   // 확인 — 내가 쓴 글(토큰)이 그대로 살아 있다. 이 읽기를 보낸 시각부터 확인 기한을 다시 센다(엄격 판정의 담당 근거).
@@ -620,7 +613,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   const token = randomUUID();
   const writeTs = Date.now();
   const { error: upErr } = await client().storage.from(BUCKET).upload(
-    key, new Blob([JSON.stringify({ deviceId: me, token, ts: writeTs, ...roleMark(role), assistant: LEASE_ASSISTANT_ENGINE })]),
+    key, new Blob([JSON.stringify({ deviceId: me, token, ts: writeTs, ...roleMark(role) })]),
     { upsert: true, contentType: 'application/json' },
   );
   const upDoneAt = Date.now(); // 쓰기 응답을 받은 시각 — 넘겨받기 대기의 기준(LEASE_CONFIRM_MARGIN_MS 주석)
@@ -656,7 +649,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
   } catch { checkFailed = true; /* 재확인 실패 — 보수적으로 팔로워 */ }
   if (escaping && checkFailed) leaseState.escapeBlocked = true; // 자가 복구로 쓴 글도 읽지 못했다 — 읽기가 돌아올 때까지 다시 쓰지 않는다
   const iWon = winner && winner.token === token; // 내가 마지막 승자여야만 리더
-  if (winner?.deviceId) leaseState.holder = { deviceId: String(winner.deviceId), assistant: Number(winner.assistant) || 0, ts: Number(winner.ts) || 0 };
+  if (winner?.deviceId) leaseState.holder = { deviceId: String(winner.deviceId), ts: Number(winner.ts) || 0 };
   if (winner?.deviceId && winner.deviceId !== me) notePeer(winner);
   if (iWon && preempt) {
     // 남의 새 리스를 가져왔다 — 앞 담당은 다음 리스 판정(CYCLE_MS 안)에 이 글을 읽고 물러나거나, 확인 기한이 지나 스스로 물러난다. 그때까지 담당을 시작하지 않는다

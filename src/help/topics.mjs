@@ -1,6 +1,5 @@
 // 도움말 주제 목록 — src/help/index.mjs가 검색한다. 주제 하나 = 파일 하나(src/help/topics/<id>.mjs).
 import deck from './topics/deck.mjs';
-import assistant from './topics/assistant.mjs';
 import agentSettings from './topics/agent-settings.mjs';
 import agents from './topics/agents.mjs';
 import chat from './topics/chat.mjs';
@@ -24,7 +23,6 @@ import home from './topics/home.mjs';
 import feedback from './topics/feedback.mjs';
 import chatCards from './topics/chat-cards.mjs';
 import sidebar from './topics/sidebar.mjs';
-import heartbeatMail from './topics/heartbeat-mail.mjs';
 import heartbeatGoal from './topics/heartbeat-goal.mjs';
 
-export const TOPICS = Object.freeze([deck, agents, chat, room, compete, mail, activity, memory, routines, assistant, heartbeatGoal, approvals, market, runners, settings, sync, messenger, plan, agentSettings, agentPosts, trace, split, home, feedback, chatCards, sidebar, heartbeatMail]);
+export const TOPICS = Object.freeze([deck, agents, chat, room, compete, mail, activity, memory, routines, heartbeatGoal, approvals, market, runners, settings, sync, messenger, plan, agentSettings, agentPosts, trace, split, home, feedback, chatCards, sidebar]);

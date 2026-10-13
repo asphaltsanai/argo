@@ -4,7 +4,7 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { paths } from './workspace.mjs';
 
-/** SDK result 메시지의 usage를 한 줄로 기록. kind: 'chat' | 'hire' | 'delegate'(from=위임한 크루) | 'assistant'(능동 비서 — work: 'prep' 등 그 일의 이름, fail: 실패 종류). */
+/** SDK result 메시지의 usage를 한 줄로 기록. kind: 'chat' | 'hire' | 'delegate'(from=위임한 크루) | 'assistant'(옛 능동 비서 기록 — work: 그 일의 이름, fail: 실패 종류. 2026-10-13 기능을 지운 뒤에는 새로 쓰지 않는다). */
 export async function appendUsage(wsId, { kind, slug, from, runner, model, usage, costUsd, ms, tools, billed, work, fail }) {
   if (!usage) return;
   const row = {
@@ -25,7 +25,6 @@ export async function appendUsage(wsId, { kind, slug, from, runner, model, usage
     ...(billed === false ? { billed: false } : billed === true ? { billed: true } : {}),
     ms: ms ?? null,
     ...(tools && Object.keys(tools).length ? { tools } : {}),
-    // 비서 하루 한도(src/assistant/mail-prep.mjs assistantUsageToday)가 일의 종류로 세고, 토큰을 알려 주지 않는 러너(CLI)는 일마다 어림값으로 센다
     ...(typeof work === 'string' && work ? { work } : {}),
     ...(typeof fail === 'string' && fail ? { fail } : {}),
   };

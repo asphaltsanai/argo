@@ -143,7 +143,7 @@ const WS_CONTROL_FILES = new Set([
   'routines.json',     // 예약 실행 — 미래의 턴을 임의 지시로 채울 수 있다
   'corrections.json',  // 교정 후보 대장 — 크루가 심으면 "사장이 반복 지적했다"는 거짓 출처의 규칙 제안이 뜬다(검수 M5)
   'approvals.json',    // 결재 정본 — 위조되면 승인 모델 자체가 무너진다
-  'assistant.json',    // 능동 비서 설정·알리지 않기 목록 — 크루가 고치면 결재 없이 메일 읽기를 켜거나 알림을 끈다(설정 API·사람만 바꾼다)
+  'assistant.json',    // 옛 능동 비서 설정(2026-10-13 오피스 완전 분리 때 기능은 지웠다) — 사용자 파일이 남아 있을 수 있어 크루가 고치지 못하게 그대로 둔다
   'gw-cursor-slack.json', // 게이트웨이 커서 — 조작하면 메시지 재처리·건너뛰기(gateway.mjs)
 ]);
 /* 원장 — **쓰기만** 막고 읽기는 연다. 위조되면 청구·활동의 근거가 무너지지만 자격이 아니라 유출
@@ -291,8 +291,8 @@ const WS_DOT_FILES = new Set([
 ]);
 const BASH_GUARDED = [...WS_CONTROL_FILES, ...WS_LEDGER_FILES, ...WS_DOT_FILES];
 /* 이름이 흔한 일반어라 부분 문자열로 넣을 수 없는 직속 도트 디렉터리 — 앞뒤 경계가 있는 형태로만 막는다.
-   · .assistant  능동 비서 상태(<ws>/.assistant/state.json — 보낸 키·대기열·확인 범위). 셸로 고치면 알림을 영구 침묵시키거나 대기열 글을 바꿔
-                 비서 이름으로 올린다(.failure-digest.json과 같은 계열). 무경계로 WS_DOT_FILES에 넣었더니 남의 코드베이스의 평범한 명령 —
+   · .assistant  기기 로컬 상태(<ws>/.assistant/ — 자기 글 기록, 지운 능동 비서의 옛 상태·메일 메타가 남아 있을 수 있다). 셸로 읽거나 고치면 그 기록이 새거나
+                 위조된다(.failure-digest.json과 같은 계열). 무경계로 WS_DOT_FILES에 넣었더니 남의 코드베이스의 평범한 명령 —
                  OpenAI SDK `client.beta.assistants`, `message.assistant`, `Chat.Assistant.tsx` — 이 전부 거절됐다(#863 분리 검수 MEDIUM 실측, `.gateway` 전례).
    경계 = 앞뒤가 이름에 쓰이는 글자(영문·숫자·`_`·`.`·`-`)가 아닐 것. 앞뒤를 공백·따옴표·경로 구분자로만 잡으면 셸 확장으로 이름을
    쪼갠 `{.assistant,}`·`.assistant{,}`·`.assistant?`·`:.assistant`가 통과했다(10/8 총괄 실측 — 무경계 부분 문자열 때는 막히던 모양).

@@ -7,7 +7,6 @@
 #   bash scripts/review-stack.sh reset             로컬 DB와 검수 데이터 폴더를 비우고 예시 데이터를 다시 넣는다
 #   bash scripts/review-stack.sh status            주소·상태·나간 연결 요약
 #   bash scripts/review-stack.sh login             본체 로그인 링크(한 번 쓰임)를 기본 브라우저로 연다
-#   bash scripts/review-stack.sh event <분> [제목]  <분>(기본 25) 뒤 시작하는 개인 일정 — 하트비트 '곧 시작' 확인용(일정 확인이 15분 간격)
 #
 # 값(키·비밀번호)은 출력하지 않는다. Supabase 주소·키는 실행 때 `supabase status -o env`에서 읽는다.
 # 바꿀 수 있는 곳: ARGO_REVIEW_HOME(기본 ~/.argo-review) · ARGO_REVIEW_WT(코드 작업 공간) · ARGO_REVIEW_SECRETS(시험 계정 비밀번호 파일)
@@ -273,7 +272,6 @@ case "$cmd" in
     ;;
   status) status ;;
   login) sb_env; seed_node login ;;
-  event) sb_env; seed_node event "${1:-25}" "${@:2}" ;;
   seed) sb_env; seed_node seed && date > "$RUN/seeded" ;;
-  *) sed -n '2,13p' "$0"; exit 2 ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
 esac

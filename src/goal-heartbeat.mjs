@@ -6,7 +6,7 @@
 //    lastRun 선점(claimRoutine)·동기화·권한 게이트(routines.json은 에이전트 파일 쓰기 금지)를 그대로 탄다. 판정·선점은 goal-time.mjs(순수).
 //  - 회차: 그 에이전트의 턴 1번. 목표·끝나는 조건·지난 회차 메모(최근 3개)를 받고, 끝에 결과를 구조로 보고한다 — goal_checkin 도구(도구가 있는 러너) 또는
 //    마지막 줄 표지(GOAL: …, 도구가 없는 CLI 러너). 알릴 것이 없으면 HEARTBEAT_OK 한 줄 — 글 0.
-//  - 알림: 하트비트 알림 경로(assistant/deliver.mjs personalRoom·insertNotice — client_msg_id 중복 막기) 그대로. 머리글 [하트비트]. 보내지 못하면 대기열(outbox)에 두고
+//  - 알림: 하트비트 알림 경로(personal-notice.mjs personalRoom·insertNotice — client_msg_id 중복 막기) 그대로. 머리글 [하트비트]. 보내지 못하면 대기열(outbox)에 두고
 //    5·15·60분 간격으로 다시 보내다 24시간이 지나면 그만둔다(대화 기록·목록에는 남아 있다).
 //  - 끝: 완료(done)·달성 불가(blocked)·기한 지남(expired)·연속 실패 3회(failed)·주인이 끔(stopped). 지우지 않고 기록으로 남긴다(끝난 목표 20개까지).
 //  - 되돌릴 수 없는 단계(결제·구매·예매 확정·외부 발송·계정 설정)는 회차 지시가 금지하고 결재 카드로 묻게 한다. 회차 턴은 늘 주인 직접 턴이 아닌 것으로 돈다
@@ -27,7 +27,7 @@ const block = (s, max) => { const t = String(s ?? '').replace(/[\u0000-\u0008\u0
 const hostTz = () => { try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || null; } catch { return null; } };
 const companyLang = async (wsId) => { const { loadCompany } = await import('./workspace.mjs'); return (await loadCompany(wsId).catch(() => ({}))).lang === 'en' ? 'en' : 'ko'; };
 
-/* ─── 글(ko/en) — 메신저 1:1 방·에이전트 지시에 그대로 나간다. 노드 엔진이 읽어야 해서 app/i18n.jsx가 아니라 여기(assistant/text.mjs와 같은 자리) ─── */
+/* ─── 글(ko/en) — 메신저 1:1 방·에이전트 지시에 그대로 나간다. 노드 엔진이 읽어야 해서 app/i18n.jsx가 아니라 여기(src/msgr-notify.mjs와 같은 이유) ─── */
 export const GOAL_TEXT = Object.freeze({
   'head.progress': ['[하트비트] {title}', '[Heartbeat] {title}'],
   'head.done': ['[하트비트] 목표 달성 — {title}', '[Heartbeat] Goal reached — {title}'],
@@ -264,9 +264,9 @@ export function composeGoalNotice(r, ob, lang = 'ko') {
 export const goalDeps = {
   session: async () => (await import('./gateway/msgr.mjs')).sessionClient(),
   company: async (wsId) => (await import('./workspace.mjs')).loadCompany(wsId),
-  personalRoom: async (...a) => (await import('./assistant/deliver.mjs')).personalRoom(...a),
-  insertNotice: async (...a) => (await import('./assistant/deliver.mjs')).insertNotice(...a),
-  muted: async (company) => (await import('./assistant/rules.mjs')).assistantMuted(company),
+  personalRoom: async (...a) => (await import('./personal-notice.mjs')).personalRoom(...a),
+  insertNotice: async (...a) => (await import('./personal-notice.mjs')).insertNotice(...a),
+  muted: async (company) => (await import('./personal-notice.mjs')).heartbeatMuted(company),
   continuation: async (...a) => (await import('./gateway/msgr.mjs')).runMessengerContinuation(...a), // 메신저 출처 목표의 회차(개인 1:1 방 문맥)
 };
 

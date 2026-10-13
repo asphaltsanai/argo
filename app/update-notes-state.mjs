@@ -5,17 +5,17 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.89': Object.freeze(['updates.note.models', 'updates.note.effort', 'updates.note.background', 'updates.note.workflow']),
   '0.1.90': Object.freeze(['updates.note.steer', 'updates.note.firstSend']),
   '0.1.91': Object.freeze(['updates.note.sonnet55', 'updates.note.msgrMarker']),
-  '0.1.92': Object.freeze(['updates.note.personalCrews', 'updates.note.crewCalendar', 'updates.note.msgrAutoConnect']),
+  '0.1.92': Object.freeze(['updates.note.personalCrews', 'updates.note.msgrAutoConnect']),
   '0.1.93': Object.freeze(['updates.note.cliBundled', 'updates.note.delegationSwitch', 'updates.note.splash']),
   '0.1.94': Object.freeze(['updates.note.sessionMsg', 'updates.note.inboundCard', 'updates.note.fullAutoScope', 'updates.note.autoAttach', 'updates.note.shipSplash']),
-  '0.1.95': Object.freeze(['updates.note.updateWhere', 'updates.note.oneRoomAlerts', 'updates.note.channelRecall', 'updates.note.officeTools', 'updates.note.syncCopies']),
+  '0.1.95': Object.freeze(['updates.note.updateWhere', 'updates.note.oneRoomAlerts', 'updates.note.channelRecall', 'updates.note.syncCopies']),
   // 근거 커밋 — agentRename: 322616be(T1)·fdc51cde(T5 이름 호칭) / companyRestore: f3610ff1(F14)·f1f41f80(UM3)·396b1bbd
   // longChat: f0e792b1(B2 네이티브 요약 압축)·c6e8dc6d(B3' CLI·이어받기 예산+누적 요약, 안내 줄) / phoneScreen: 26382ba3(UM1)·eea43dfb(M1)·4ea447ca(UL9)·396b1bbd·e004baa7
   // errorText: 4b642752(F11)·191046c8(UL6)·f9561ac8(UL5)·ad43f7db(M3)·8796a8dd(F3) / msgrCard: d6ce9ab3(CX-12·CX-13)
   '0.1.96': Object.freeze(['updates.note.agentRename', 'updates.note.companyRestore', 'updates.note.longChat',
     'updates.note.phoneScreen', 'updates.note.errorText', 'updates.note.msgrCard']),
-  // 근거 PR — cliStandalone: #843(맥·윈도우 단독 설치·argo uninstall)·#845(--version) / msgrCommands: #837 / officeBriefing: #838
-  '0.1.97': Object.freeze(['updates.note.cliStandalone', 'updates.note.msgrCommands', 'updates.note.officeBriefing']),
+  // 근거 PR — cliStandalone: #843(맥·윈도우 단독 설치·argo uninstall)·#845(--version) / msgrCommands: #837
+  '0.1.97': Object.freeze(['updates.note.cliStandalone', 'updates.note.msgrCommands']),
   // 근거 PR — routineVisible: #854 / gpt61Sol: #855 / msgrRunnerYield: #856
   '0.1.98': Object.freeze(['updates.note.routineVisible', 'updates.note.gpt61Sol', 'updates.note.msgrRunnerYield']),
   '0.1.99': Object.freeze(['updates.note.oneConversation', 'updates.note.personalApprovals', 'updates.note.assistantTab']),
@@ -28,12 +28,12 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.102': Object.freeze(['updates.note.freeAgents', 'updates.note.msgrPro', 'updates.note.attachLimit', 'updates.note.msgrQuiet', 'updates.note.syncFaster']),
   // 0.1.103 — agentConnect: 설치본에서 에이전트 원클릭 연결이 안 되던 것 수정(#951) · versionStamp: 설치본이 버전을 0.0.0으로 알리던 것 수정(#949)
   '0.1.103': Object.freeze(['updates.note.agentConnect', 'updates.note.versionStamp']),
-  // 0.1.104 — keepAgents: 무료 계정 유지할 에이전트 고르기(#958·#966·#969) · proFiles: Pro 첨부 500MB·20GB(#956), 연결 도구 플랜별 상한(#968), 유료 조직 손님 첨부(#959) · officePanel: 오피스 에이전트 패널 확인 카드·단계 보기·동료에게 맡기기(#962·#964·#965)
-  '0.1.104': Object.freeze(['updates.note.keepAgents', 'updates.note.proFiles', 'updates.note.officePanel']),
+  // 0.1.104 — keepAgents: 무료 계정 유지할 에이전트 고르기(#958·#966·#969) · proFiles: Pro 첨부 500MB·20GB(#956), 연결 도구 플랜별 상한(#968), 유료 조직 손님 첨부(#959)
+  '0.1.104': Object.freeze(['updates.note.keepAgents', 'updates.note.proFiles']),
   // 0.1.105 — msgrDiagnose: 메신저 연결 진단 카드(#979) · runnerAuthExpired: 실행기 로그인 만료 안내·재로그인 시 해제(#980·#984) · codexKorean: codex 답 한글 깨짐(#982) · codexChatgpt: ChatGPT 계정 codex 작업 실패(#975)
   '0.1.105': Object.freeze(['updates.note.msgrDiagnose', 'updates.note.runnerAuthExpired', 'updates.note.codexKorean', 'updates.note.codexChatgpt']),
-  // 0.1.106 — firstSyncHome: 새 기기 첫 동기화 중 홈 '내려받는 중'·목록 다시 부르기(#988) · officeConnector: 오피스를 내장 도구 대신 외부 서비스 연결(원격 MCP)로(#989)
-  '0.1.106': Object.freeze(['updates.note.firstSyncHome', 'updates.note.officeConnector']),
+  // 0.1.106 — firstSyncHome: 새 기기 첫 동기화 중 홈 '내려받는 중'·목록 다시 부르기(#988)
+  '0.1.106': Object.freeze(['updates.note.firstSyncHome']),
 });
 
 export function stableVersion(value) {

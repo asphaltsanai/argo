@@ -835,8 +835,8 @@ test('실행권을 다른 프로세스가 쥔 잡(3초마다 DEFER로 다시 집
   assert.ok(r.reply(msgId));
 });
 
-// 비서 메일 알림(src/assistant/mail.mjs) — 메일 쪽이 쓴 글·그것을 보고 AI가 쓴 초안은 도구를 쓰는 턴의 문맥에 들어가지 않는다(설계 4.9 규칙 3, 10/9 보안 검토).
-// 방 문맥에도, 그 알림에 답장(reply_to)했을 때의 답장 대상 줄에도 표지 줄(코드가 만든 범주·메일 id)만 실린다. 사람 글의 meta는 표지로 보지 않는다.
+// 옛 비서 메일 알림(능동 비서는 2026-10-13 오피스 완전 분리 때 지웠지만 방에 남은 글) — 메일 쪽이 쓴 글·그것을 보고 AI가 쓴 초안은 도구를 쓰는 턴의 문맥에 들어가지 않는다(설계 4.9 규칙 3).
+// 방 문맥에도, 그 알림에 답장(reply_to)했을 때의 답장 대상 줄에도 표지 줄(코드가 만든 범주 — inbound-marks outsideContextLine)만 실린다. 사람 글의 meta는 표지로 보지 않는다.
 test('비서 메일 알림(바깥 글 표지)은 방 문맥·답장 대상 줄에서 표지 줄로만 — 메일 글·초안이 턴에 0, 사람 글은 표지를 흉내 내도 그대로', async () => {
   runner = 'codex'; const ws = await company();
   const ACC = '11111111-2222-3333-4444-555555555555';
@@ -847,7 +847,8 @@ test('비서 메일 알림(바깥 글 표지)은 방 문맥·답장 대상 줄�
   await say(ws, r, '2번으로 보내');
   const p = lastPrompt();
   assert.doesNotMatch(p, /MAIL_SECRET_TEXT|DRAFT_TEXT|x@evil\.example/);
-  assert.match(p, new RegExp(`\\[하트비트 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}\\.m2`));
+  assert.match(p, /\[하트비트 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요\]/);
+  assert.doesNotMatch(p, /오피스|use_connector argo-office|office_mail/, '지운 오피스 커넥터를 안내하지 않는다');
   assert.match(p, /HUMAN_TEXT_STAYS/, '사람 글은 표지를 흉내 내도 본문 그대로');
   await say(ws, room({ pair: `crew:${CREW}`, context: [notice] }), '이거 초안 고쳐 줘', { replyTo: 140 });
   const q = lastPrompt();

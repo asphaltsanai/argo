@@ -48,7 +48,7 @@ after(() => srv.close());
 const { createCompany, paths } = await import('../src/workspace.mjs');
 const { saveRunnerCred } = await import('../src/runners/creds.mjs');
 const { chat } = await import('../src/chat.mjs');
-const { assistantSettingsView } = await import('../src/assistant/settings.mjs');
+const { addRoutine, loadRoutines } = await import('../src/routines.mjs');
 const { loadApprovals } = await import('../src/approvals.mjs');
 
 async function company(ws) {
@@ -57,15 +57,18 @@ async function company(ws) {
   await saveRunnerCred(ws, 'claude', 'apikey', `sk-ant-api03-${'x'.repeat(80)}`); // 형식만 맞춘 가짜 — 요청은 로컬 가짜 엔드포인트로만 간다
   return ws;
 }
-const morning = async (ws) => (await assistantSettingsView(ws)).config.quiet.to;
+// 예시 설정 = routine.time(루틴 실행 시각) — 회사마다 08:00 매일 루틴을 하나 만들고 그 id를 넘긴다(하트비트 알림 설정은 2026-10-13 능동 비서와 함께 지웠다)
+const newRoutine = async (ws) => (await addRoutine(ws, { agentSlug: 'pepper', title: '아침 정리', prompt: '정리', schedule: { type: 'daily', time: '08:00', tz: 'Asia/Seoul' } })).id;
+const timeOf = async (ws, id) => { const sc = (await loadRoutines(ws)).find((r) => r.id === id).schedule; return (Array.isArray(sc.times) && sc.times.length ? sc.times : [sc.time])[0]; };
 const settingCards = async (ws) => (await loadApprovals(ws)).filter((a) => a.kind === 'setting');
-const SET = { name: 'mcp__crew__argo_settings', input: { action: 'set', key: 'assistant.morning', value: '07:00' } };
+const SET = (id) => ({ name: 'mcp__crew__argo_settings', input: { action: 'set', key: 'routine.time', id, value: '07:00' } });
 
-test('SDK 턴 — 데스크톱 대화 표지가 있는 턴의 "아침 정리 7시로"는 바로 바뀌고 답에 이전 값 → 새 값이 실린다', async () => {
+test('SDK 턴 — 데스크톱 대화 표지가 있는 턴의 "아침 정리 루틴 7시로"는 바로 바뀌고 답에 이전 값 → 새 값이 실린다', async () => {
   const ws = await company('self-sdk-desk');
-  reset(SET);
-  const r = await chat(ws, 'pepper', '아침 정리 7시로 바꿔줘', null, { ownerSeat: 'desktop' });
-  assert.equal(await morning(ws), '07:00');
+  const rid = await newRoutine(ws);
+  reset(SET(rid));
+  const r = await chat(ws, 'pepper', '아침 정리 루틴 7시로 바꿔줘', null, { ownerSeat: 'desktop' });
+  assert.equal(await timeOf(ws, rid), '07:00');
   assert.match(r.reply, /08:00 → 07:00/);
   assert.equal((await settingCards(ws)).length, 0);
 });
@@ -73,9 +76,10 @@ test('SDK 턴 — 데스크톱 대화 표지가 있는 턴의 "아침 정리 7�
 test('SDK 턴 — 같은 말을 표지 없이(결재 후속·argo CLI 모양)·에이전트가 건 루틴 출처로 하면 결재 카드가 되고 값은 그대로', async () => {
   for (const [ws, opts, label] of [['self-sdk-noseat', {}, '표지 없음'], ['self-sdk-routine', { ownerSeat: 'desktop', source: 'routine', notOwnerDirect: 'mina' }, '루틴(에이전트가 건 예약)'], ['self-sdk-telegram', { source: 'messenger' }, '텔레그램 1:1 모양']]) {
     await company(ws);
-    reset(SET);
-    const r = await chat(ws, 'pepper', '아침 정리 7시로 바꿔줘', null, opts);
-    assert.equal(await morning(ws), '08:00', label);
+    const rid = await newRoutine(ws);
+    reset(SET(rid));
+    const r = await chat(ws, 'pepper', '아침 정리 루틴 7시로 바꿔줘', null, opts);
+    assert.equal(await timeOf(ws, rid), '08:00', label);
     assert.match(r.reply, /주인 결재로 올렸다/, label);
     assert.equal((await settingCards(ws)).length, 1, label);
   }

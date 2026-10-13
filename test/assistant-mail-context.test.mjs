@@ -1,4 +1,4 @@
-// 비서 메일 알림(바깥 글 표지 meta.assistant.outside)이 에이전트 프롬프트로 들어가는 형제 경로 — 10/9 보안 검토 ②.
+// 옛 비서 메일 알림(바깥 글 표지 meta.assistant.outside — 능동 비서는 2026-10-13 지웠지만 방에 남은 글)이 에이전트 프롬프트로 들어가는 형제 경로 — 10/9 보안 검토 ②.
 // 메신저 턴의 방 문맥·답장 대상 줄은 test/agent-one-person.test.mjs가 잠근다. 여기서는 이어 실행(결재 후속·예약·장시간 — runMessengerContinuation)의
 // 방 문맥이 같은 규칙인지, 봉투(msgr_crew_context — meta 전체)와 옛 경로(contextOf — assistant:meta->assistant 별칭) 둘 다 본다.
 // 그리고 비서 알림이 다른 에이전트의 잡(넘김·위임)이 되지 않는지(멘션·origin 없음 — targetsCrew).
@@ -53,7 +53,8 @@ for (const envelope of [false, true]) {
     let prompt = '';
     await M.runMessengerContinuation(f.ws, 'alpha', f.origin, '이어서', null, { session: f.session, runChat: async (_ws, _slug, msg) => { prompt = msg; return { reply: '네', sessionId: null }; } });
     assert.doesNotMatch(prompt, /MAIL_SECRET_TEXT|DRAFT_TEXT|x@evil\.example/);
-    assert.match(prompt, new RegExp(`\\[하트비트 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}\\.m2`));
+    assert.match(prompt, /\[하트비트 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요\]/);
+    assert.doesNotMatch(prompt, /use_connector argo-office|office_mail/, '지운 오피스 커넥터를 안내하지 않는다');
     assert.match(prompt, /HUMAN_TEXT_STAYS/);
   });
 }

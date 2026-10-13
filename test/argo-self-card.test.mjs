@@ -1,5 +1,5 @@
 // 에이전트가 자기 설정을 자세히 알고 바꾼다 — argo_status section=me(카드 화면과 같은 값)·argo_settings의 넓힌 키(src/argo-self.mjs)·도움말 범위(src/help).
-// ① me 구획 = 에이전트 카드 화면 값(개요·능력·방식·하트비트·연결 탭) ② 넓힌 키마다 권한 표: 주인 1:1 바로 / 그 밖 결재 → 승인 적용 / 금지 키 거절
+// ① me 구획 = 에이전트 카드 화면 값(개요·능력·방식·연결 탭) ② 넓힌 키마다 권한 표: 주인 1:1 바로 / 그 밖 결재 → 승인 적용 / 금지 키 거절
 // ③ 지시문 규칙(agent.rules.*)은 주인 1:1에서도 결재 — 카드에 바뀌기 전·후, 그 사이 바뀌었으면 적용 안 함 ④ 러너·모델·강도 = 카드 화면 선택지 규칙
 // ⑤ 자기 카드만(인자로 남의 카드를 가리킬 수 없다) ⑥ 도움말 주제가 화면 기능 목록을 덮는다. 실 러너·네트워크 0.
 import { test } from 'node:test';
@@ -18,7 +18,6 @@ const { createCompany, paths, updateCompany } = await import('../src/workspace.m
 const { makeCrewServer } = await import('../src/chat.mjs');
 const self = await import('../src/argo-self.mjs');
 const { readAgentCard } = await import('../src/persona.mjs');
-const { saveAssistantSettings } = await import('../src/assistant/settings.mjs');
 const { addRoutine, loadRoutines } = await import('../src/routines.mjs');
 const { loadApprovals, resolveApproval } = await import('../src/approvals.mjs');
 const { _followUpForTest } = await import('../src/approval-actions.mjs');
@@ -60,9 +59,8 @@ async function approve(ws, ap) {
 }
 
 /* ── ① me = 카드 화면 값 ── */
-test('me 구획 — 에이전트 카드 화면(개요·능력·방식·하트비트·연결)과 같은 값', async () => {
+test('me 구획 — 에이전트 카드 화면(개요·능력·방식·연결)과 같은 값', async () => {
   const ws = await company({ pepper: { extra: 'skills: none\nmcp: notion,figma\n' } });
-  await saveAssistantSettings(ws, { enabled: true, agent: 'pepper', tz: 'Asia/Seoul' });
   const conn = { telegram: { enabled: false, token: '', agents: { pepper: { token: '123:fake', ownerId: 42, botUsername: '@pepper_bot' } } } };
   await writeFile(paths(ws).connections, JSON.stringify(conn));
   await updateCompany(ws, (c) => ({ msgr: { ...(c.msgr ?? {}), enabled: true } }));
@@ -76,7 +74,6 @@ test('me 구획 — 에이전트 카드 화면(개요·능력·방식·하트비
   assert.match(out, /사용 플러그인\(MCP\) 지정 목록: notion, figma/);
   const rules = await rulesOf(ws);
   assert.match(out, new RegExp(`일하는 방식 규칙 ${rules.length}개: ${rules.map((r, i) => `${i + 1}\\) ${r}`).join(' / ')}`), '규칙 = 화면 파싱 그대로');
-  assert.match(out, /하트비트\(카드 탭은 보기, 관리는 루틴 → 내 하트비트\): 나는 이 회사의 하트비트 에이전트다\(켜짐\) — 확인 주기 15분 · 일정 알림 30분 전 · 아침 정리 08:00/);
   assert.match(out, new RegExp(`텔레그램 직통 봇: ${ko('chat.tg.waiting')} · ${ko('chat.tg.paired')} \\(@pepper_bot\\)`));
   assert.doesNotMatch(out, /123:fake/, '봇 토큰은 싣지 않는다');
   assert.match(out, /아르고 메신저: 회사 에이전트가 메신저에 연결됨/);
@@ -262,10 +259,11 @@ test('자기 카드만 — id 인자로 다른 에이전트를 가리켜도 내 
   assert.equal((await meta(ws, 'mina')).role, '리서처');
 });
 
-test('금지 키 — 스킬·MCP 범위·메일 확인 켜기는 주인 1:1이어도 거절, 결재도 만들지 않는다', async () => {
+test('금지 키 — 스킬·MCP 범위는 주인 1:1이어도 거절(지운 메일 확인 키는 목록 밖으로 거절), 결재도 만들지 않는다', async () => {
   const ws = await company();
   const h = handlers(ws, { direct: true });
-  for (const key of ['agent.skills', 'agent.mcp', 'assistant.mail']) assert.match(await h.call('argo_settings', { action: 'set', key, value: 'none' }), /에이전트가 바꿀 수 없다/, key);
+  for (const key of ['agent.skills', 'agent.mcp']) assert.match(await h.call('argo_settings', { action: 'set', key, value: 'none' }), /에이전트가 바꿀 수 없다/, key);
+  assert.match(await h.call('argo_settings', { action: 'set', key: 'assistant.mail', value: 'none' }), /목록에 없다/, '지운 능동 비서의 메일 키 — 허용 목록에 없다'); // 2026-10-13 능동 비서와 함께 지움
   assert.equal((await loadApprovals(ws)).length, 0);
   assert.match(await h.call('argo_settings', { action: 'set', key: 'agent.name', value: '새이름' }), /목록에 없다/);
 });
@@ -287,7 +285,7 @@ const FEATURES = [
   ['쪽지함', '쪽지함 위임', 'mail'], ['스킬·도구', '스킬 도구 설치', 'market'], ['에이전트 영입', '에이전트 영입 해고', 'agents'],
   ['피드백', '피드백 보내기', 'feedback'], ['설정 화면', '설정 화면 탭', 'settings'], ['러너 연결', '러너 연결 AI 연결', 'runners'],
   ['메신저 연결', '텔레그램 메신저 연결', 'messenger'], ['기기 간 동기화', '기기 간 동기화', 'sync'], ['요금제', '요금제 사용량', 'plan'],
-  ['결재', '결재 풀 오토', 'approvals'], ['하트비트', '조용한 시간 일정 알림', 'assistant'], ['하트비트 메일', '답장이 필요한 메일 알림', 'heartbeat-mail'],
+  ['결재', '결재 풀 오토', 'approvals'], ['목표 하트비트', '하트비트 돌고 있어?', 'heartbeat-goal'],
   ['작업 과정', '작업 과정 보기', 'trace'], ['옆에 열기', '옆에 열기', 'split'], ['회사 만들기', '회사 만들기 시작 에이전트', 'home'],
   ['바깥 글 카드·만든 문서', '만든 문서 미리보기', 'chat-cards'], ['사이드바 표시', '사이드바 답변 작성 중 표시', 'sidebar'],
   ['1:1 대화', '대기열 바로 보내기', 'chat'], ['에이전트 설정 맡기기', '에이전트가 설정 바꾸기', 'agent-settings'],

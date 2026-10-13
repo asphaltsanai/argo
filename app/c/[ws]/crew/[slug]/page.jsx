@@ -28,7 +28,6 @@ import { parseSessionTarget } from './session-msg-parse.mjs';
 import { mergePolledThread, makePollApplier, startThreadPolls } from './thread-poll.mjs'; // 두 폴의 같은 반영 경로(F2·F2+)·방을 바꾼 뒤 도착한 응답은 버린다(UL3)
 import { isNoRunnerFailure, failCodeKey } from './fail-display.mjs'; // '러너 없음' 실패 → 사전 문구 + 설정 링크(UX-A02)
 import { gistLabel } from '../../../../lib/gist-display.mjs'; // 메신저 머리말을 뗀 요약(UX-A08)
-import { AssistantSection } from './assistant-section.jsx'; // 능동 비서 켜기·기본값·상태(설계 13절) — 카드 "비서" 탭
 import { LiveTrace, TraceSummary } from '../../turn-trace'; // 작업 과정 — 진행 중 단계 목록·답 아래 접힌 기록(회의실과 같은 컴포넌트)
 import { mergeTraceDelta, traceQuery } from '../../../../lib/trace-view.mjs';
 
@@ -1892,7 +1891,7 @@ function ScopeGroup({ label, items, value, onToggle, t, onReset }) {
   );
 }
 
-const CARD_TABS = ['overview', 'ability', 'style', 'assistant', 'link']; // 각 구간은 정확히 한 탭(test/tabs-layout)
+const CARD_TABS = ['overview', 'ability', 'style', 'link']; // 각 구간은 정확히 한 탭(test/tabs-layout)
 function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onRunnerChange, onClose, onFired, onEdited }) {
   const [editOpen, setEditOpen] = useState(false); // 이름·역할·팀·러너·모델 — 데크 목록에서 옮겨온 편집
   const { t } = useLang();
@@ -2089,7 +2088,6 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
           { id: 'overview', label: t('chat.card.tab.overview') },
           { id: 'ability', label: t('chat.card.tab.ability'), count: profile.skills.length + profile.mcp.length || undefined },
           { id: 'style', label: t('chat.card.tab.style'), count: rules.length + (boss?.items?.length ?? 0) || undefined },
-          { id: 'assistant', label: t('chat.card.tab.assistant') },
           { id: 'link', label: t('chat.card.tab.link') },
         ]} />
         <div style={{ padding: '14px 20px 18px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 0, flex: 1, overflowY: 'auto' }}>
@@ -2214,11 +2212,6 @@ function CardPanel({ ws, slug, agent, agentName, runners, autoRunnerId, sel, onR
               </button>
             </div>
           </div>
-          </div>)}
-
-          {tab === 'assistant' && (<div data-tab-pane="assistant" style={{ display: 'grid', gap: 14 }}>
-          {/* 능동 비서 — 이 에이전트를 비서로 켜기·바꾸기, 알림 기본값, 상태. 탭을 열 때 1번 읽고 값마다 바로 저장(주기 호출 없음) */}
-          <AssistantSection ws={ws} slug={slug} />
           </div>)}
 
           {tab === 'link' && (<div data-tab-pane="link" style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1, minHeight: 0 }}>{/* 원문 편집창이 남는 높이를 채운다(모달 86vh 고정 뒤 아래 여백, 유건 2026-09-14) */}
