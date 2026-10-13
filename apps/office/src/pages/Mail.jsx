@@ -119,7 +119,6 @@ function LinkedText({ text }) {
   return <div className="reader-body mail-text ha">{parts.map((p, i) => (p.t === 'url' ? <a key={i} href={p.v} target="_blank" rel="noopener noreferrer">{p.v}</a> : p.v))}</div>;
 }
 
-const TR_ERR = { offline: 'tr.offline', no_subscription: 'tr.noSub', too_large: 'tr.tooLarge' };
 
 /** 읽기 실패 — 사유, 요청 제한이면 남은 초, 다시 시도 */
 function ReadFailed({ err, onRetry }) {
@@ -134,29 +133,11 @@ function ReadFailed({ err, onRetry }) {
 function Reader({ m, onBack }) {
   const [c, setC] = useState(null), [err, setErr] = useState(null), [nonce, setNonce] = useState(0);
   const [ask, setAsk] = useState(null); // 임시 보관 메일 보내기·삭제 확인
-  // 번역(버튼을 누를 때만) — { busy, done, total, subject, html, text }. 다른 메일로 가면 원문으로
-  const [tr, setTr] = useState(null); const [showTr, setShowTr] = useState(false);
-  const shown = useRef(m?.id); shown.current = m?.id;                                  // 번역 중에 다른 메일로 가면 늦게 온 결과를 버린다
-  const stopTr = useRef(null);                                                          // 번역 중에 다른 메일로 가면 기기에 취소를 보낸다(남은 묶음이 구독 한도를 쓰지 않게)
   useEffect(() => {
-    let live = true; setC(null); setErr(null); setTr(null); setShowTr(false);
+    let live = true; setC(null); setErr(null);
     if (m) readMail(m).then((x) => live && setC(x), (e) => live && setErr({ code: e?.code, status: e?.status }));
-    return () => { live = false; stopTr.current?.abort(); };
+    return () => { live = false; };
   }, [m?.id, nonce]); // eslint-disable-line react-hooks/exhaustive-deps
-  const translate = async () => {
-    if (tr && !tr.busy) { setShowTr((v) => !v); return; }
-    if (!c || tr?.busy) return;
-    const id = m.id;
-    setTr({ busy: true, done: 0, total: 0 }); setShowTr(true);
-    try {
-      const ac = new AbortController(); stopTr.current = ac;
-      const { translateMail } = await import('../core/translate.js'); // 번역 버튼을 눌렀을 때만(첫 화면 150KB 상한, 유건 9/26)
-      const out = await translateMail(m, c, { signal: ac.signal, onProgress: (p) => { if (shown.current === id) setTr((cur) => (cur?.busy ? { ...p, busy: true } : cur)); } });
-      if (shown.current !== id) return;
-      setTr(out);
-      if (out.partial) showToast(t('tr.partial'));
-    } catch (e) { if (shown.current !== id) return; setTr(null); setShowTr(false); if (e.code !== 'cancelled') showToast(t(TR_ERR[e.code] ?? 'tr.failed')); }
-  };
   if (!m) return <div className="empty-state"><Icon name="mail" size={20} /><p>{t('mail.select')}</p></div>;
   const draft = isDraft(m), canDraft = !m.account || !!m.draftId; // 검색으로만 받은 초안은 초안 id가 없다 — 임시 보관함에서 열어야 고치고 보낸다
   const write = (mode) => setUi({ compose: { mode, of: m.id } });
@@ -172,7 +153,7 @@ function Reader({ m, onBack }) {
     <article className={`reader${m.account ? ' real' : ''} mail-reader-in`}>
       <header className="reader-head">
         <button type="button" className="icon-btn only-narrow" aria-label={t('mail.back')} onClick={onBack}><Icon name="back" /></button>
-        <h2 className="ha">{showTr && tr?.subject ? tr.subject : subjectOf(m)}</h2>
+        <h2 className="ha">{subjectOf(m)}</h2>
         <div className="mail-meta">
           <Avatar name={draft ? m.to : m.from} addr={draft ? parseAddrs(m.to)[0] : m.addr} />
           <div className="mail-meta-main">
@@ -198,9 +179,6 @@ function Reader({ m, onBack }) {
             <button type="button" className="btn" onClick={() => write('reply')}><Icon name="reply" size={14} />{t('mail.reply')}</button>
             <button type="button" className="btn" onClick={() => write('replyAll')}><Icon name="reply" size={14} />{t('mailx.replyAll')}</button>
             <button type="button" className="btn" onClick={() => write('forward')}><Icon name="send" size={14} />{t('mail.forward')}</button>
-            {m.account && <button type="button" className={`btn${showTr && tr && !tr.busy ? ' on' : ''}`} disabled={!c || tr?.busy} aria-pressed={showTr && !!tr && !tr.busy} onClick={translate}>
-              <Icon name="globe" size={14} />{tr?.busy ? t('tr.busy', { n: tr.done, t: tr.total || '…' }) : showTr && tr ? t('tr.original') : t('tr.translate')}
-            </button>}
             <button type="button" className={`icon-btn mail-star-btn${m.starred ? ' on' : ''}`} aria-pressed={!!m.starred} aria-label={t(m.starred ? 'mailx.unstar' : 'mailx.star')} title={t(m.starred ? 'mailx.unstar' : 'mailx.star')} onClick={() => toggleStar(m)}><Icon name="star" /></button>
             {m.folder !== 'archive' && <button type="button" className="btn" onClick={() => { const undo = archiveMail(m.id); showToast(t('mail.archived'), { undo }); navigate(mailHome()); }}><Icon name="archive" size={14} />{t('mail.archiveIt')}</button>}
             <button type="button" className="icon-btn" aria-label={t('mailx.trash')} title={`${t('mailx.trash')} (#)`} onClick={() => trashOne(m)}><Icon name="trash" /></button>
@@ -221,9 +199,9 @@ function Reader({ m, onBack }) {
             {c.attachments.length > 0 && <div className="chips mail-atts">{c.attachments.map((a) => (
               <button key={a.id} type="button" className="chip" onClick={() => openAttachment(m, a).catch(() => showToast(t('mailc.readFailed')))}><Icon name="file" size={12} /><span className="ha">{a.name}</span><small className="mono">{fmtBytes(a.size)}</small></button>
             ))}</div>}
-            {(showTr ? tr?.html : null) ?? c.html
-              ? <div className="ha ha-box"><iframe className="mail-frame" title={subjectOf(m)} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={mailDoc((showTr ? tr?.html : null) ?? c.html, { paper: mailPaper() })} /></div>
-              : <LinkedText text={(showTr ? tr?.text : null) ?? c.text ?? m.snippet ?? ''} />}
+            {c.html
+              ? <div className="ha ha-box"><iframe className="mail-frame" title={subjectOf(m)} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={mailDoc(c.html, { paper: mailPaper() })} /></div>
+              : <LinkedText text={c.text ?? m.snippet ?? ''} />}
           </>}
       <Modal open={!!ask} onClose={() => setAsk(null)} title={t(ask === 'send' ? 'mailx.sendDraftTitle' : 'mailx.deleteTitle')}
         footer={<><button type="button" className="btn" onClick={() => setAsk(null)}>{t('cancel')}</button><button type="button" className={`btn ${ask === 'send' ? 'primary' : 'danger'}`} onClick={doDraft}>{t(ask === 'send' ? 'mail.send' : 'mailx.deleteDraft')}</button></>}>
