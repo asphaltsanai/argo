@@ -58,7 +58,6 @@ import { roomTurnFailureFor, roomTurnInterrupted, roomTurnStopped, roomAttachRea
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
-import { joinTranslate, leaveTranslate } from './office-translate.mjs';
 import { ownerSoloRoom } from './owner-solo.mjs'; // 주인 혼자 1:1 판정(유건 결정 2026-10-08 ①)
 import { outsideContextLine } from '../assistant/mail-text.mjs'; // 비서가 메일에서 가져온 글은 방 문맥에 표지 줄로만(설계 4.9 규칙 3)
 import { selfTag, selfReplyNote, recordSelfPost } from '../self-posts.mjs'; // 에이전트가 대화 밖에서 보낸 자기 글 — 방 문맥 표지·답글 대상 줄·개인 1:1 기록
@@ -518,11 +517,10 @@ export function makeDb(client) {
       return unwrap(await client.from('msgr_executions').select('stop_requested_by, stop_requested_at').eq('crew_id', crewId).eq('source_msg_id', sourceId).maybeSingle());
     },
     /** 턴 문맥: 직전 대화 + 순서 대기로 기다린 앞 크루의 원본 답글. 삭제·시스템 글 제외. */
-    async contextOf(channelId, beforeId, n = CONTEXT_N, after = [], { threadRoot = null } = {}) { // threadRoot — 오피스 패널 턴은 같은 대화(뿌리)의 글만(2단계 PR3)
+    async contextOf(channelId, beforeId, n = CONTEXT_N, after = []) {
       // assistant:meta->assistant — 비서 글의 바깥 글 표지(outside)·종류·메일 id만 쓴다(방 문맥 표지 줄 — outsideContextLine). 봉투 문맥(서버 함수)은 m.*라 meta가 이미 온다
-      let recent = client.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, body, assistant:meta->assistant, notification:meta->>notification')
+      const recent = client.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, body, assistant:meta->assistant, notification:meta->>notification')
         .eq('channel_id', channelId).lt('id', beforeId).eq('kind', 'text').is('deleted_at', null);
-      if (threadRoot != null) recent = recent.or(`id.eq.${Number(threadRoot)},thread_root.eq.${Number(threadRoot)}`);
       const rows = unwrap(await recent.order('id', { ascending: false }).limit(n)) ?? [];
       if (after.length) rows.push(...(unwrap(await client.from('msgr_messages').select('id, author_kind, author_user_id, crew_id, body, assistant:meta->assistant, notification:meta->>notification')
         .eq('channel_id', channelId).eq('reply_to', beforeId).in('crew_id', after).eq('author_kind', 'crew').eq('kind', 'text').is('deleted_at', null).order('id', { ascending: false }).limit(n)) ?? []));
@@ -1231,7 +1229,7 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     // 다음 15초 틱에 다시 drain해 목록·구독을 맞춘다(쉬는 주기로 넘어가면 그 조직 공개 채널 글이 예비 조회까지 늦는다 — #943 검수 MEDIUM-1)
     if (m && (m.inserted || m.updated || m.removed)) report.held = true;
   }
-  // 심박은 카드가 있는 행만(CX-14) — 해고를 이 프로세스가 못 본 경우(꺼져 있던 사이 동기화로 카드가 사라짐)에도 메신저·오피스에서 접속 중으로 남지 않게.
+  // 심박은 카드가 있는 행만(CX-14) — 해고를 이 프로세스가 못 본 경우(꺼져 있던 사이 동기화로 카드가 사라짐)에도 메신저에서 접속 중으로 남지 않게.
   // 상태는 바꾸지 않는다(그건 해고를 본 틱의 미러 몫). 카드 목록을 못 읽었거나 비었으면 종전대로 전부 — 폴더 읽기 실패가 크루 전원을 부재중으로 만들지 않게.
   const carded = cards?.length ? new Set(cards.map((a) => a.slug)) : null;
   const beatable = (c) => !carded || carded.has(c.slug);
@@ -1879,7 +1877,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     let ctxRows = envelope?.context ?? await db.contextOf(job.channelId, job.msgId, CONTEXT_N, job.after ?? []);
     // 주인 혼자 1:1(유건 결정 2026-10-08 ① — 에이전트는 한 사람) — 데스크톱 대화와 같은 대화로 본다(맥락 양방향 + 일지, 세션은 잇지 않는다 — chat.mjs ownerSoloTurn).
     // 주인이 직접 보낸 첫 단계 턴(손님·넘김·DM 전달·오피스 아님 — ownerSoloTurn)이고, 지난 대화도 주인과 이 에이전트의 글뿐이며(나간 사람·전달된 글이 섞인 방 제외),
-    // 방 구성원이 주인·이 에이전트 하나씩일 때만(office-audience ownerSoloRoom — 실행권을 잡은 뒤 아래 solo에서 1회). 기억 안 남김 방·서버 봉투가 없는 옛 서버(지난 대화의 전달 표지를 못 본다)는 제외.
+    // 방 구성원이 주인·이 에이전트 하나씩일 때만(owner-solo.mjs ownerSoloRoom — 실행권을 잡은 뒤 아래 solo에서 1회). 기억 안 남김 방·서버 봉투가 없는 옛 서버(지난 대화의 전달 표지를 못 본다)는 제외.
     // 에이전트 글은 주인이 시킨 일의 답(meta.origin = 주인)이거나 그 에이전트가 주인에게 보낸 알림·루틴 결과(origin 없음 + meta.notification)만 — 나간 손님이 시킨 일의 답(origin = 손님)이
     // 12건 안에 남은 방은 그 내용이 주인 맥락으로 넘어가지 않게 1:1로 보지 않는다(재검수 LOW 2026-10-08). origin이 없는 그 밖의 옛 답은 좁게 — 1:1로 보지 않는다.
     const soloRow = (r) => !r.meta?.relay && r.meta?.guest !== true && ((r.author_kind === 'user' && r.author_user_id === uid)
@@ -2628,9 +2626,6 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
         rtChannels.set(ukey, uch);
       } catch (e) { console.warn('[argo] msgr realtime 구독 실패(u:):', e.message); }
     }
-    // 오피스 메일 번역 — 본인만 보내고 받는 ot:<uid>(20260927174000). 주인 구독으로 번역해 같은 토픽으로 돌려준다(메일 내용은 DB를 거치지 않는다).
-    // 통로는 사용자당 하나이고 회사들은 그 목록에 합류한다 — 연결을 같이 쓰므로 회사별로 구독·해제하면 서로 끊는다(office-translate.mjs joinTranslate).
-    if (c.uid) try { joinTranslate(c.client, c.uid, wsId); } catch (e) { console.warn('[argo] msgr realtime 구독 실패(ot:):', e.message); }
     if (checkHealth().rejoined) tick('wake').catch(() => {}); // 이미 붙어 있던 채널을 이어받은 경우(같은 토픽을 쓰는 다른 회사 — 콜백이 오지 않는다)
   };
   const iv = setInterval(() => tick('fire').catch(() => {}), pollMs);
@@ -2642,7 +2637,6 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
     for (const orgId of subscribedOrgs) { const key = `${wsId}:${orgId}`; try { rtChannels.get(key)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(key); }
     subscribedOrgs = new Set();
     try { rtChannels.get(`${wsId}:u`)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(`${wsId}:u`);
-    leaveTranslate(wsId);
   };
   stop.nudge = () => tick('poll').catch(() => {}); // 수동 재연결·복구 신호는 관리 작업까지 한 번(검수 L1)
   return stop;
