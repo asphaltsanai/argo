@@ -11,6 +11,7 @@ import { leanForgePosture } from './prompts/lean-forge-posture.mjs';
 import { join, relative, resolve, sep } from 'node:path';
 import { query, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import { sdkNoDockOptions } from './sdk-no-dock.mjs';
+import { workContext } from './gateway/space.mjs'; // 공간 판정 기준 함수 — 작업 문맥(권한 조직)
 import { z } from 'zod';
 import { paths, getDeviceId } from './workspace.mjs';
 import { loadOrgRules, orgMemoryPrompt, docSlug, DOC_FOLDERS } from './gateway/msgr-rules.mjs';
@@ -740,7 +741,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async ({ scope, folder, title, body, reason, slug }) => {
       if (mirrorCtx?.kind !== 'msgr') return text('이 도구는 팀 메신저 조직 채널의 턴에서만 쓸 수 있다.');
       // 개인 공간(조직 없는 방)에는 조직 문서가 없다 — 결재를 만들지 않고 먼저 알린다(개인 결재 행은 org_doc 불가: msgr_crew_approvals_personal_no_org_doc, 계획 5-3 #7)
-      if (!mirrorCtx.orgId) return text(lang === 'en'
+      if (workContext(mirrorCtx).personal) return text(lang === 'en'
         ? 'The personal space has no organization docs, so nothing was proposed. Tell the user in one line, and suggest proposing it from an organization channel if it should be shared with an organization.'
         : '개인 공간에는 조직 문서가 없어 제안을 올리지 않았다. 사용자에게 한 줄로 알리고, 조직과 나눌 내용이면 조직 채널에서 제안하라고 안내하라.');
       const path = `${folder}/${docSlug(slug || title)}.md`;
@@ -1246,7 +1247,7 @@ export function makeCrewServer(wsId, fromSlug, fromName, colleagues, hop = 0, ch
     async (args) => {
       const gh = await import('./goal-heartbeat.mjs');
       let msgr = null;
-      try { msgr = mirrorCtx?.kind === 'msgr' && !mirrorCtx.orgId ? messengerOrigin(mirrorCtx) : null; } catch { msgr = null; } // 개인 1:1 방 출처만 — 회차 결재 카드가 그 방으로 간다
+      try { msgr = workContext(mirrorCtx).personal ? messengerOrigin(mirrorCtx) : null; } catch { msgr = null; } // 개인 1:1 방 출처만 — 회차 결재 카드가 그 방으로 간다
       const r = await gh.goalTool(wsId, args, { slug: fromSlug, lang, direct: settingsDirect, guest, autoTurn: autoTurn || !!goalTurn, from: delegatedBy, msgr, orgChannel: mirrorCtx?.kind === 'msgr' && !!mirrorCtx.orgId });
       if (r.kind !== 'approval') return text(r.text);
       const item = await addApproval(wsId, { slug: fromSlug, kind: 'goal', ...(delegatedBy ? { from: delegatedBy } : {}),

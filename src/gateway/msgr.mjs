@@ -47,6 +47,7 @@ import { resolveWithFollowUp } from '../approval-actions.mjs';
 import { attachFailureNote, isImagePath } from '../tg-format.mjs';
 import { ROUTINE_FILES_MAX, planReplyFiles, readReplyFile } from './msgr-reply-files.mjs';
 import { mimeOf } from '../media-kind.mjs';
+import { chatLocation, contextScopeKind, judgeSpace, personalOrigin } from './space.mjs'; // 공간 판정 기준 함수 — 대화 위치와 작업 문맥(권한 조직)을 나눠 판정
 import { replyLinkPreview } from './link-preview-node.mjs';
 import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
@@ -226,7 +227,7 @@ export function mentionsIn(text, peers, selfId) {
     UUID가 결재 카드에 그대로 보이지 않게(최종 재검수 LOW-1). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i; // 전달 표지의 크루 id 형식(위조 값으로 db를 조회하지 않는다)
 /** 전달 표지(msgr_dm_relay)를 인정하는 채널 — 트리거가 쓰는 조직 DM만. 개인 공간 친구 방(org_id null)의 meta는 표지로 보지 않는다(확인 검수 bed20860 LOW-1). */
-const relayChannel = (c) => c?.kind === 'dm' && c.org_id != null;
+const relayChannel = (c) => chatLocation(c).relayDm; // 판정 기준 함수(space.mjs) — 조직 DM만
 export function handoffLabel(orgPeers, crewId, viaName = null) {
   const p = (orgPeers ?? []).find((x) => x.id === crewId);
   return p?.slug || p?.display_name || (typeof viaName === 'string' && viaName.trim() ? viaName.trim().slice(0, 40) : crewId);
@@ -248,7 +249,7 @@ export const _autoLogForTest = autoLog;
 const unwrap = ({ data, error }) => { if (error) throw Object.assign(new Error(`msgr db: ${error.message}`), { code: error.code }); return data; }; // code — 큐 워커가 영구 오류(형식·권한)를 가려 재시도를 멈춘다(queue.mjs isPermanentQueueError)
 /** 크루가 멘션 없이도 모든 글을 받는 DM인가(채널 행 → bool). 개인 방(org 없음)은 크루 1:1만 — 친구가 있는 방에서 주인의 모든 글에 답하고
     친구 글마다 거절 안내가 붙던 것(2026-09-30). 서버 msgr_delivery_target과 같은 규칙. crewChannels·crewMemberships가 같이 쓴다. */
-const deliveryDm = (ch) => ch?.kind === 'dm' && (ch.org_id !== null || String(ch.personal_pair ?? '').startsWith('crew:'));
+const deliveryDm = (ch) => chatLocation(ch).deliveryDm; // 판정 기준 함수(space.mjs)
 const ROOM_IDS_PER_REQUEST = 100; // 방 참여 일괄 조회의 크루 id 묶음 — in.(…) URL 약 4KB(운영 personalCrewsInRooms가 비슷한 크기로 매 틱 돈다)
 const ROOM_PAGE = 1000;           // 한 요청에 묻는 행 수(Supabase 기본 최대 행과 같다). 서버 최대 행이 더 작으면 그만큼 잘려 오는데, 끝은 빈 페이지로 정하므로 잘려도 빠지지 않는다
 export function makeDb(client) {
@@ -1644,7 +1645,7 @@ function continuationPayload(c) {
 async function restoreMessengerContext(wsId, slug, origin, session, { ownerApproved = false, continuation = null } = {}) {
   const c = await session();
   if (!c) throw new Error('메신저 기기 세션 없음');
-  const personal = origin?.orgId == null && origin?.ownCrewRoom === true;
+  const personal = personalOrigin(origin); // 판정 기준 함수(space.mjs)
   if ((!origin?.orgId && !personal) || !origin.channelId || !origin.crewId || (origin.uid && origin.uid !== c.uid) || (origin.wsId && origin.wsId !== wsId)) throw new Error('메신저 실행 소유자·회사 불일치');
   const { db, uid } = c;
   const crew = await db.crewBySlug(uid, wsId, slug, personal ? null : origin.orgId); // null = 개인 행만(같은 slug의 조직 행과 섞이지 않게)
@@ -1707,7 +1708,7 @@ export async function runMessengerContinuation(wsId, slug, origin, message, _glo
     activeCtx.set(key, ctx);
     try {
       // 호출자가 넘기는 전역 세션(_globalSessionId — 주인의 데스크톱 대화)은 쓰지 않는다: 후속 실행도 그 채널 세션만 잇는다
-      const sessionId = ch.kind === 'dm' || ch.crew_memory === false ? null : scopedSession(await loadThread(wsId, slug), ctx.channelId).sessionId;
+      const sessionId = chatLocation(ch).sessionless ? null : scopedSession(await loadThread(wsId, slug), ctx.channelId).sessionId;
       const nod = notOwnerDirect ?? (ctx.handoffFrom ? handoffLabel(orgPeers ?? ctx.peers, ctx.handoffFrom, relayChannel(ch) ? source.meta?.relay?.via_name : null) : null);
       const turn = await runChat(wsId, slug, text, sessionId, { source: 'messenger', mirrorCtx: ctx, journal: msgrJournal(ctx.orgId, ctx.channelId, ch.crew_memory === false), ...(nod ? { notOwnerDirect: nod } : {}), ...(runnerNote ? { runnerNote } : {}) });
       return { ...turn, ...(await messengerReply(ctx, turn.reply, { db, lang, loopTurn })), msgr: messengerOrigin(ctx) };
@@ -2010,7 +2011,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       if (solo) ctx.ownerSolo = true;
       // 개인 공간(조직 없는 방) 턴 — 결재·예약·긴 작업의 여는 스위치(messengerOrigin)에 서버 판정(crew 1:1인가)을 싣는다(계획 5-3 #3). 같은 자리(실행권을 잡은 뒤 1회)라
       // DEFER로 다시 집혀도 되풀이하지 않는다. 조직 턴은 문맥 모양까지 그대로(묻지도 싣지도 않는다), 손님 턴은 어차피 거절이라 묻지 않는다, 봉투 없는 옛 서버도 묻지 않는다(모름 = 거절).
-      if (!job.orgId && !ch.org_id) {
+      if (judgeSpace({ channel: ch, ctx }).personalTurn) { // 판정 기준 함수(space.mjs) — 작업 문맥(크루 조직)과 대화 위치(채널 조직)가 모두 개인
         ctx.lang = lang; // 개인 거절 문구 언어
         if (envelope && !guest) ctx.ownCrewRoom = await ownCrewRoomOf(db, job.channelId, job.crewId);
       }
@@ -2045,7 +2046,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
       replyMentions = rendered.msgrReply.mentions;
       replyMeta = rendered.msgrReply.meta;
       await appendTurn(wsId, job.slug, { userMsg: text, reply, handover: handoverRel(wsId, turn.handover), sessionId: turn.sessionId, attachments, artifacts: turn.artifacts,
-        contextScope: ch.kind === 'dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot, ...(solo ? { ownerSolo: true, msgId: job.msgId } : {}) } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot }, // ownerSolo — 데스크톱 맥락에 싣는 1:1 기록 표지(thread.mjs isOwnerSoloScope), msgId — 봉투의 같은 턴을 가리는 원본 메시지 id(soloMsgIds)
+        contextScope: contextScopeKind(ch) === 'msgr-dm' ? { kind: 'msgr-dm', channelId: job.channelId, threadRoot: job.threadRoot, ...(solo ? { ownerSolo: true, msgId: job.msgId } : {}) } : { kind: 'msgr', channelId: job.channelId, threadRoot: job.threadRoot }, // ownerSolo — 데스크톱 맥락에 싣는 1:1 기록 표지(thread.mjs isOwnerSoloScope), msgId — 봉투의 같은 턴을 가리는 원본 메시지 id(soloMsgIds)
         via: 'msgr', actor: { uid: job.authorId, name: job.fromCrewId ? `${authorName} ← ${humanName}` : authorName, relay: !!(job.fromCrewId || job.relayVia) } }); // actor = 사람 발화자(who:'user' 고정으로는 구분 불가하던 갭). relay = 크루가 넘긴 줄(authorId는 사슬을 시작한 사람이라 이 줄의 글쓴이가 아니다 — 스레드 맥락이 사장 글로 올리지 않게, chat.mjs threadCtxLine)
       // 메신저에는 사고 과정·도구 단계를 싣지 않는다(유건 결정 2026-09-24 — "답변 준비 중"만). 궤적은 주인 쪽 활동 로그가 정본.
     } catch (e) {
