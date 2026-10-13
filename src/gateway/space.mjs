@@ -52,7 +52,7 @@ export const contextScopeKind = (ch) => (chatLocation(ch).dm ? 'msgr-dm' : 'msgr
  * 작업 문맥 — 턴 맥락(mirrorCtx·이어 실행 기록) → 어느 조직 권한으로 일하나. 메신저 턴(kind 'msgr')만 조직을 가진다.
  *  - orgId: 이 턴이 쓰는 조직(크루 행의 조직). 개인 공간 턴·메신저 밖 턴은 null.
  *  - personal: 메신저 턴인데 조직 권한이 없다(= 개인 공간 에이전트의 턴). 기존 messengerOrigin·stageMessengerHandoff·chat.mjs의 `!ctx.orgId`.
- *  - orgTools: 조직 자료(오피스 회사·문서함·할 일·거래)를 다룰 수 있는 턴. 기존 chat.mjs의 `kind === 'msgr' && orgId`.
+ *  - orgTools: 조직 자료를 다룰 수 있는 턴. 기존 chat.mjs의 `kind === 'msgr' && orgId`.
  */
 export function workContext(ctx) {
   const msgr = ctx?.kind === 'msgr';

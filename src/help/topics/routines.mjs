@@ -1,13 +1,13 @@
-// 도움말 — 루틴: 하트비트 칸(맨 위), 템플릿·직접 만들기·자동 설정, 주기(매일·매주·N분마다·1회), 가동/정지·실행, 완료 조건, 알림 받을 곳, 루프 한도, 놓친 회차, 에이전트가 거는 예약
+// 도움말 — 루틴: 목표 하트비트 칸(맨 위), 템플릿·직접 만들기·자동 설정, 주기(매일·매주·N분마다·1회), 가동/정지·실행, 완료 조건, 알림 받을 곳, 루프 한도, 놓친 회차, 에이전트가 거는 예약
 export default {
   id: 'routines',
   ko: {
     title: '루틴 — 예약 실행',
-    keywords: ['루틴', '예약', '반복 작업', '스케줄', '매일', '매주', 'N분마다', '루프', '자동 실행', '알림 받을 곳', '놓친 회차', '완료 조건', '하트비트 관리'],
+    keywords: ['루틴', '예약', '반복 작업', '스케줄', '매일', '매주', 'N분마다', '루프', '자동 실행', '알림 받을 곳', '놓친 회차', '완료 조건', '목표 하트비트'],
     body: `루틴은 에이전트에게 반복(또는 1회) 지시를 예약해 두는 기능입니다. 예약 시각이 되면 담당 에이전트가 새 턴으로 실행하고 결과는 회사 기억에 남습니다. 사이드바 "루틴"에서 엽니다.
 
 **내 하트비트(맨 위)**
-- 루틴 화면 맨 위에 개인 기능인 "내 하트비트"가 회사 루틴 목록과 따로 있습니다. 켜기·끄기, 무엇을·언제·얼마나 자주(10·15·30·60분)·누가 알려 줄지, 방해 금지 시간, 설정 지우기를 여기서 합니다. 하트비트는 계정마다 한 곳에서만 켜집니다. 자세한 동작은 하트비트 도움말에 있습니다.
+- 루틴 화면 맨 위에 개인 기능인 "목표 하트비트" 목록이 회사 루틴 목록과 따로 있습니다. 에이전트에게 목표를 말해 만든 목표 하트비트를 보고 일시 정지·다시 켜기·끄기를 합니다. 자세한 동작은 목표 하트비트 도움말에 있습니다.
 
 **만들기**
 - 템플릿: "매일 아침 브리핑", "주간 콘텐츠 초안", "기억 정리 노트"를 누르면 양식이 채워집니다(저장 전 수정 가능).
@@ -41,11 +41,11 @@ export default {
   },
   en: {
     title: 'Routines — scheduled runs',
-    keywords: ['routine', 'schedule', 'recurring task', 'daily', 'weekly', 'every N minutes', 'loop', 'automation', 'notify me in', 'missed run', 'completion check', 'manage heartbeat'],
+    keywords: ['routine', 'schedule', 'recurring task', 'daily', 'weekly', 'every N minutes', 'loop', 'automation', 'notify me in', 'missed run', 'completion check', 'goal heartbeat'],
     body: `Routines schedule recurring (or one-time) instructions for an agent. At the scheduled time the assigned agent runs it as a new turn, and the result is saved to company memory. Open it from "Routines" in the sidebar.
 
 **My heartbeat (top)**
-- The top of the Routines screen has "My heartbeat", a personal feature kept apart from the company routine list. Turn it on or off, choose what, when, how often (10, 15, 30, or 60 min) and who tells you, set Do not disturb, or delete its settings there. Heartbeat runs in one company per account. See the heartbeat help topic for how it works.
+- The top of the Routines screen has the "Goal heartbeats" list, a personal feature kept apart from the company routine list. See the goal heartbeats you created by telling an agent a goal, and pause, resume or turn them off. See the goal heartbeat help topic for how it works.
 
 **Creating**
 - Templates: "Daily Morning Briefing", "Weekly Content Draft" and "Memory Organizing Note" prefill the form (you can edit before saving).

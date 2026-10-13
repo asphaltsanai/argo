@@ -24,13 +24,13 @@ export async function runOneShot(wsId, prompt, opts = {}) {
   // (턴 안의 대화 요약이 정지를 무시하고 최대 90초를 더 돌던 자리 — 분리 검수 MEDIUM, chat.mjs threadContextFor).
   const abortedErr = (cause) => Object.assign(new Error('중단됨'), { aborted: true, ...(cause ? { cause } : {}) });
   if (signal?.aborted) throw abortedErr();
-  // sdk — Claude SDK 경로에만 적용하는 속도·격리 설정(오피스 번역: 도구 목록 비우기·짧은 지시문·생각 끄기·계정 원격 MCP 차단). 권한 훅·자격·작업 폴더는 덮지 못하게 허용 목록으로만
+  // sdk — Claude SDK 경로에만 적용하는 속도·격리 설정(예: 도구 목록 비우기·짧은 지시문·생각 끄기·계정 원격 MCP 차단). 권한 훅·자격·작업 폴더는 덮지 못하게 허용 목록으로만
   const sdkTune = Object.fromEntries(Object.entries(sdk ?? {}).filter(([k]) => ['tools', 'systemPrompt', 'thinking', 'effort', 'strictMcpConfig', 'mcpServers'].includes(k)));
   // __failures는 재귀에 **명시 전달**(아래 두 recursion) — opts를 직접 오염시키면 호출자가 재사용하는
   // opts 객체에 이전 호출의 실패가 섞인다(분리 검수 L2).
   // 해석 실패(.secrets.json 손상 등)는 미가용으로 — 조용한 호스트 스캐빈징 금지(검수 MEDIUM, chat.mjs와 동일)
   // want=null(무선호) — 이 경로는 러너 독립이 명세라 claude 선호를 가장하지 않는다(선택 순서는 동일)
-  // only { runner, types } — 러너와 자격 방식을 고정한다(오피스 번역: 주인의 Claude 구독만, API 키·다른 러너로 넘어가지 않는다). 아래 자가치유도 건너뛴다
+  // only { runner, types } — 러너와 자격 방식을 고정한다(예: 주인의 Claude 구독만, API 키·다른 러너로 넘어가지 않는다). 아래 자가치유도 건너뛴다
   // pin — 이 러너로만(크루 턴이 이미 고른 러너·자격 그대로, 다른 러너로 넘어가지 않는다 — 대화 요약은 그 크루의 같은 러너로: thread-context.mjs)
   const resolved = pin ? { runner: pin, available: true } : only
     ? { runner: only.runner, available: only.types.includes(await runnerCredType(wsId, only.runner).catch(() => null)) }
@@ -73,7 +73,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
       if (!text) throw new Error('empty-reply');
       return { runner, text, usage: {}, costUsd: null }; // 외부 CLI — 토큰 사용량 비노출(채팅 경로와 동일)
     }
-    // API 키 방식을 허용하지 않는 고정(오피스 번역: 구독만)이면 키 env를 비운다 — host 자격은 프로세스 env를 그대로 넘겨 키·토큰·Bedrock/Vertex 설정이 있으면 구독이 아닌 경로로 과금될 수 있다(재검수 LOW)
+    // API 키 방식을 허용하지 않는 고정(구독만)이면 키 env를 비운다 — host 자격은 프로세스 env를 그대로 넘겨 키·토큰·Bedrock/Vertex 설정이 있으면 구독이 아닌 경로로 과금될 수 있다(재검수 LOW)
     const baseEnv = await sdkEnvFor(wsId, runner);
     const sdkEnv = only && !only.types.includes('apikey') ? { ...(baseEnv ?? process.env), ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '', CLAUDE_CODE_USE_BEDROCK: '', CLAUDE_CODE_USE_VERTEX: '' } : baseEnv;
     let text = ''; let isErr = false; let apiErrSt = 0; let failed = null; let usage = null; let costUsd = null;
@@ -133,7 +133,7 @@ export async function runOneShot(wsId, prompt, opts = {}) {
         // 회사의 기억 정리 100% 실패). 카탈로그 밖 id는 기본 모델로 강등(chat.mjs 경로와 동일 원칙).
         ...(osModel ? { model: osModel } : {}),
         ...sdkTune,
-        ...(onText ? { includePartialMessages: true } : {}), // 흘려받기(오피스 번역) — 받은 글자 조각을 호출자에게 바로 넘긴다
+        ...(onText ? { includePartialMessages: true } : {}), // 흘려받기 — 받은 글자 조각을 호출자에게 바로 넘긴다
       },
     })) {
       if (onText && msg.type === 'stream_event' && msg.event?.type === 'content_block_delta' && msg.event.delta?.type === 'text_delta') { try { onText(msg.event.delta.text); } catch { /* 호출자 오류가 실행을 끊지 않게 */ } }

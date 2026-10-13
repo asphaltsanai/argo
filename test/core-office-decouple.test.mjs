@@ -14,7 +14,7 @@ const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
 const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
 const { makeCrewServer } = await import('../src/chat.mjs');
 const { createCompany } = await import('../src/workspace.mjs');
-const { CONNECTOR_CATALOG, CONNECTOR_CATALOG_EN, connectorMode } = await import('../src/market.mjs');
+const { CONNECTOR_CATALOG, CONNECTOR_CATALOG_EN } = await import('../src/market.mjs');
 
 const WS = 'decouple';
 await createCompany(WS, '분리사', 'captain');
@@ -59,18 +59,9 @@ test('옛 패널 표지가 있어도 일반 메신저 턴과 같다 — 쪽지 �
   }
 });
 
-test('오피스 원격 MCP 커넥터 — ko·en 같은 id·url·client_id, 운영에 미리 등록한 공개 클라이언트(DCR 안 씀), https', () => {
-  const ko = CONNECTOR_CATALOG.find((c) => c.id === 'argo-office');
-  const en = CONNECTOR_CATALOG_EN.find((c) => c.id === 'argo-office');
-  assert.ok(ko && en);
-  assert.equal(ko.url, en.url);
-  assert.match(ko.url, /^https:\/\/[^/]+\/api\/mcp$/);
-  assert.equal(ko.oauth?.client_id, '5f13cfbb-8ba1-4d55-993c-496f3134bc44', '운영 Supabase에 등록한 Argo 공개 클라이언트');
-  assert.deepEqual(en.oauth, ko.oauth, '영어 회사도 같은 클라이언트');
-  assert.equal(ko.oauth.client_secret_env, undefined, '공개 클라이언트(PKCE) — 비밀 없음');
-  assert.equal(connectorMode(ko), 'fixed', 'DCR을 시도하지 않는다');
-  assert.equal(ko.redirect_port, 47317);
-  assert.equal(en.redirect_port, 47317);
+test('오피스 커넥터 없음(2026-10-13 오피스 완전 분리 — 유건 지시) — ko·en 카탈로그에 argo-office가 없다', () => {
+  assert.equal(CONNECTOR_CATALOG.find((c) => c.id === 'argo-office' || /argo-office/.test(c.url)), undefined);
+  assert.equal(CONNECTOR_CATALOG_EN.find((c) => c.id === 'argo-office' || /argo-office/.test(c.url)), undefined);
 });
 
 test('지운 파일 — 오피스 크루 도구·패널 관문·로컬 오피스 MCP가 본체에 없다', () => {
@@ -79,17 +70,10 @@ test('지운 파일 — 오피스 크루 도구·패널 관문·로컬 오피스
     'office-confirm.mjs', 'office-tools-cli.mjs', 'office-mcp.mjs', 'panel-children.mjs']) assert.ok(!existsSync(new URL(`../src/${f}`, import.meta.url)), f);
 });
 
-// 운영 Supabase의 Site URL(localhost:3001) + Authorization Path(/oauth/consent) → 본체가 오피스 동의 화면으로 넘긴다
-test('OAuth 동의 넘김 — 쿼리를 그대로 붙여 오피스 /oauth/consent로, 목적지는 고정', async () => {
-  const { officeConsentTarget } = await import('../src/oauth-consent.mjs');
-  const { OFFICE_CONSENT_URL } = await import('../src/oauth-consent.mjs');
-  const ko = CONNECTOR_CATALOG.find((c) => c.id === 'argo-office');
-  assert.equal(new URL(OFFICE_CONSENT_URL).origin, new URL(ko.url).origin, '커넥터와 같은 오피스');
-  assert.equal(officeConsentTarget('http://localhost:3001/oauth/consent?authorization_id=abc-123'),
-    'https://argo-office.vercel.app/oauth/consent?authorization_id=abc-123');
-  assert.equal(officeConsentTarget('http://localhost:3001/oauth/consent?authorization_id=a%2Fb&x=1'),
-    'https://argo-office.vercel.app/oauth/consent?authorization_id=a%2Fb&x=1', '인코딩 그대로');
-  assert.equal(officeConsentTarget('http://localhost:3001/oauth/consent'), 'https://argo-office.vercel.app/oauth/consent');
-  // 경로·호스트를 쿼리에 실어도 목적지는 바뀌지 않는다(열린 리디렉트 아님)
-  assert.match(officeConsentTarget('http://localhost:3001/oauth/consent?next=https://evil.example/'), /^https:\/\/argo-office\.vercel\.app\/oauth\/consent\?/);
+// 오피스 동의 넘김(/oauth/consent)도 지웠다 — 본체는 오피스 OAuth 흐름을 모른다. 로그인 게이트 공개 경로에도 없다.
+test('동의 넘김 경로 없음 — app/oauth/consent·src/oauth-consent.mjs가 없고 미들웨어 공개 경로에 /oauth/consent가 없다', async () => {
+  assert.ok(!existsSync(new URL('../app/oauth/consent/route.js', import.meta.url)));
+  assert.ok(!existsSync(new URL('../src/oauth-consent.mjs', import.meta.url)));
+  const { readFileSync } = await import('node:fs');
+  assert.doesNotMatch(readFileSync(new URL('../middleware.js', import.meta.url), 'utf8'), /oauth\/consent/);
 });

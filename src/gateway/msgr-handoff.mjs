@@ -77,7 +77,7 @@ export function ownerDirectTurn({ from = null, notOwnerDirect = null, mirrorCtx 
  *  - 데스크톱 1:1 대화: 대화 API 라우트(app/api/companies/[ws]/chat/route.js)만 ownerSeat:'desktop'을 붙인다. 그 화면은 이 회사 주인만 연다
  *    (app/auth.mjs guardCompany — 로그인 모드에서 ownerId 대조, 로컬 모드는 이 기기 루프백만). 메신저 맥락·출처(source)·위임·쪽지·예약·작업 표지가 없어야 한다.
  *    같은 모양(출처 없음·맥락 없음)의 다른 턴 — 결재 후속, argo CLI, 텔레그램·슬랙 1:1(source 'messenger') — 은 이 표지가 없어 빠진다.
- *  - 메신저: 게이트웨이가 방 구성원을 조회해 붙인 "주인 혼자 1:1"(ownerSoloTurn — ctx.ownerSolo는 msgr.mjs가 office-audience ownerSoloRoom으로 확인한 뒤에만 붙는다).
+ *  - 메신저: 게이트웨이가 방 구성원을 조회해 붙인 "주인 혼자 1:1"(ownerSoloTurn — ctx.ownerSolo는 msgr.mjs가 owner-solo.mjs ownerSoloRoom으로 확인한 뒤에만 붙는다).
  *  - 나머지(회의실·루틴·장시간 작업·쪽지·세션 메시지·위임받은 턴·메신저 채널·손님·오피스에서 맡긴 글·결재 후속)는 거짓 → 결재 카드.
  * 입력은 전부 runChat이 서버에서 정한 값이다 — 도구 인자에서 오지 않는다(에이전트가 출처를 적어 보내도 판정이 바뀌지 않는다).
  */

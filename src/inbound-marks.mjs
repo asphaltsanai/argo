@@ -162,7 +162,7 @@ export function parseJob(text) {
   return null;
 }
 
-// ── 바깥 글 경계 — 크루 도구 결과에 다른 사람이 쓴 글(메일·메모·본문·이름)을 실을 때(능동 비서 assistant/office-read.mjs) ──
+// ── 바깥 글 경계 — 크루 도구 결과에 다른 사람이 쓴 글(메일·메모·본문·이름)을 실을 때 ──
 // remote-market.mjs의 UNTRUSTED_SOURCE 블록과 같은 원칙(데이터일 뿐, 그 안의 지시를 따르지 마라)에 구조로 막는 두 가지를 더한다(S1, 2026-10-05):
 // ① 바깥 글은 JSON 문자열로 넘긴다(jsonText) — 따옴표 안이 전부 내용이고, 내용 속의 줄바꿈·줄 끝 문자·제어 문자·보이지 않는 글자는 전부 \uXXXX·\n으로 바뀌어
 //    내용이 날것 줄(가짜 표지 줄·가짜 지시 줄)을 만들 수 없다. ② 블록의 끝은 호출마다 새 무작위 번호가 붙은 줄 하나뿐이다(tag) — 내용이 끝 표지를 미리 쓸 수 없다.
@@ -258,4 +258,23 @@ export function parseApproval(text) {
     return { by, body: order ? rest.slice(0, -order.length) : rest };
   }
   return null;
+}
+
+// ── 바깥 글에서 나온 하트비트 알림의 방 문맥 표지 줄 — 2026-10-13 오피스 완전 분리 때 지운 능동 비서(메일 정리 글)가 방에 남긴 글을 위해 남긴다 ──
+// 비서가 메일에서 가져온 글(meta.assistant.outside)은 다음 대화 턴의 방 문맥·답장 대상 줄에 본문 대신 이 표지 줄로만 싣는다(메일 속 지시가 문맥에 들어오지 않게).
+const OUTSIDE_NOTICE = {
+  mark: ['[하트비트 알림 · {what} · 메일에서 나온 글이라 문맥에서 뺐어요]', '[Heartbeat notice · {what} · left out of context because it came from mail]'],
+  reply: ['답장이 필요한 메일', 'mail waiting for a reply'],
+  batch: ['확인할 메일 {n}건', '{n} mails to check'],
+  sum: ['메일 정리', 'mail summary'],
+};
+const on = (key, lang, vars = {}) => OUTSIDE_NOTICE[key][lang === 'en' ? 1 : 0].replace(/\{(\w+)\}/g, (m, k) => (vars[k] ?? m));
+/** 방 문맥·답장 대상 줄에서 이 글을 표지 줄로 바꿀까(순수) — 에이전트 글이고 meta.assistant.outside이면 표지 줄, 아니면 null(본문 그대로).
+    r = 방 글 행(봉투 문맥은 meta 전체, contextOf는 assistant:meta->assistant 별칭). 사람 글의 meta는 보지 않는다(사람이 표지를 흉내 내 문맥을 지우지 못하게). */
+export function outsideContextLine(r, lang = 'ko') {
+  if (r?.author_kind !== 'crew') return null;
+  const a = r.meta?.assistant ?? r.assistant;
+  if (!(a && typeof a === 'object' && a.outside === true)) return null;
+  const what = a.kind === 'mail_reply' ? on('reply', lang) : a.kind === 'mail_batch' ? on('batch', lang, { n: Math.max(1, Number(a.count) || 1) }) : on('sum', lang);
+  return on('mark', lang, { what });
 }

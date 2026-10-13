@@ -6,7 +6,6 @@
 //                        --standby = 예비(다른 기기가 담당하지 않을 때만 맡는 서버 — 맥 우선·VPS 예비), --no-prefer = 일반(먼저 잡은 기기가 맡는다)
 //   argo chat <크루> [지시] 한 번 실행(지시가 없으면 이어서 대화)
 //   argo login | status | browser | service install [--standby|--no-prefer]|uninstall|status
-//   argo office report|hold|tasks  오피스 업무 현황에 이 세션·보류한 일을 남긴다(src/office-cli.mjs, Claude Code 훅은 integrations/claude-code)
 // 회사 데이터는 ~/.argo/cli-workspaces(ARGO_ROOT) — 같은 맥의 상주·앱 폴더와 따로(기기 세션 단일 소유). 같은 계정의 앱과 동기화로 같은 회사·기억을 본다.
 // 단 **Argo 앱에 들어 있는 argo**(앱 모드 — ARGO_CLI_APP=1 또는 앱 번들에서 실행)는 앱 데이터 폴더를 같이 쓴다(설계 2-2, 2026-10-01): 동기화·상주·서비스 등록은 앱이 맡고 CLI는 하지 않는다,
 // 앱이 실행 중이면 로그인은 앱에서 한다. 대화·결재·카드 파일은 프로세스 간 잠금(src/mutex.mjs withLock file)이 지킨다.
@@ -120,7 +119,7 @@ const T = {
     uninstalled: (l) => `argo를 제거했습니다: ${l.join(', ')}\n데이터(회사·대화·로그인)는 ${cliHome()}에 남아 있습니다 — 필요 없으면 직접 지우세요.`,
     uninstallPending: (l) => `argo를 제거합니다: ${l.join(', ')}\n데이터(회사·대화·로그인)는 ${cliHome()}에 남아 있습니다 — 필요 없으면 직접 지우세요.`,
     uninstallManual: (f) => `argo가 실행 중이라 이 명령 안에서는 지울 수 없습니다. 이 창에서 다음을 실행하면 제거됩니다:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
-    usage: '사용법: argo [run [--standby]|chat <에이전트> [지시]|login|status|rename <새 이름>|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = 다른 기기가 꺼졌을 때만 실행을 맡는 예비 서버, office = 오피스 업무 현황에 세션·보류한 일 남기기 — argo office help, uninstall = 설치 명령으로 넣은 argo 제거, 데이터는 남김)',
+    usage: '사용법: argo [run [--standby]|chat <에이전트> [지시]|login|status|rename <새 이름>|browser|service install [--standby]|service uninstall|service status|uninstall]  (--standby = 다른 기기가 꺼졌을 때만 실행을 맡는 예비 서버, uninstall = 설치 명령으로 넣은 argo 제거, 데이터는 남김)',
     status: (s) => `계정: ${s.email || '(로그인 안 됨)'}\n데이터: ${s.root}\n회사: ${s.companies}\n기기: ${s.device}`,
     statusOversize: (name, n, names, mb) => `동기화 제외(크기 초과) — ${name}: ${n}개 (${names}) · ${mb}MB를 넘는 파일은 기기 간에 주고받지 않습니다`,
   },
@@ -181,14 +180,13 @@ const T = {
     uninstalled: (l) => `Removed argo: ${l.join(', ')}\nYour data (companies, chats, sign-in) stays in ${cliHome()} — delete it yourself if you don't need it.`,
     uninstallPending: (l) => `Removing argo: ${l.join(', ')}\nYour data (companies, chats, sign-in) stays in ${cliHome()} — delete it yourself if you don't need it.`,
     uninstallManual: (f) => `argo is running, so it can't remove itself from inside this command. Run this in this window to remove it:\n  powershell -NoProfile -ExecutionPolicy Bypass -File "${f}"`,
-    usage: 'Usage: argo [run [--standby]|chat <agent> [message]|login|status|rename <new name>|browser|service install [--standby]|service uninstall|service status|office report|office hold|office tasks|uninstall]  (--standby = a standby server that runs things only while your other device is off; office = leave this session and on-hold tasks in Office Work status — argo office help; uninstall = remove an argo installed with the install command; data is kept)',
+    usage: 'Usage: argo [run [--standby]|chat <agent> [message]|login|status|rename <new name>|browser|service install [--standby]|service uninstall|service status|uninstall]  (--standby = a standby server that runs things only while your other device is off; uninstall = remove an argo installed with the install command; data is kept)',
     status: (s) => `Account: ${s.email || '(not signed in)'}\nData: ${s.root}\nCompanies: ${s.companies}\nDevice: ${s.device}`,
     statusOversize: (name, n, names, mb) => `Not synced (too large) — ${name}: ${n} (${names}) · files over ${mb} MB aren't synced between devices`,
   },
 }[lang];
-// src를 불러오기 전 — 로컬인데 앱 폴더에 로그인이 있으면 계정 모드로. office는 건너뛴다: 훅 폴더(ARGO_ROOT=~/.argo/office-hook)의 로그인을
-// 앱 로그인으로 잘못 보고 cli.json 모드를 바꾸고 안내 줄을 출력(--json 앞)하던 문제(검수 10/8). office는 앱·CLI 폴더를 쓰지 않는다(아래 분기).
-if (cmd !== 'office') guardLocal();
+// src를 불러오기 전 — 로컬인데 앱 폴더에 로그인이 있으면 계정 모드로.
+guardLocal();
 
 /* ─── 입력 ─── */
 let muted = false;
@@ -220,7 +218,7 @@ const makeRl = () => {
   r.on('line', (l) => onQueuedLine?.(l));
   return r;
 };
-let rl = cmd === 'office' ? null : makeRl(); // office는 입력을 받지 않는다 — 붙여넣기 요청 문자(ESC[?2004h)가 --json 출력 앞뒤에 섞이지 않게(재검증 10/8)
+let rl = makeRl();
 const ask = async (q) => {
   for (;;) {
     if (!rl) return '';
@@ -731,13 +729,6 @@ try {
   }
   else if (cmd === 'browser') { await browserMenu({ interactive: !!rl }); process.exit(0); }
   else if (cmd === 'service') { process.exit(service(rest[0] ?? 'status', rest.slice(1)) === false ? 1 : 0); }
-  else if (cmd === 'office') { // 오피스 업무 현황 — 세션 보고·보류한 일(src/office-cli.mjs). 모드(cli.json)는 읽지도 바꾸지도 않는다.
-    // 폴더: 사용자가 ARGO_ROOT를 줬으면 그 폴더, 아니면 훅 폴더(~/.argo/office-hook) — 로컬 모드의 기본 폴더(앱 데이터 폴더)의 앱 로그인을
-    // 이 명령이 회전시키지 않게(같은 refresh 토큰을 두 프로그램이 회전하면 세션 가족째 폐기된다).
-    rl?.close();
-    const { officeMain, hookRoot } = await import('../src/office-cli.mjs');
-    process.exit(await officeMain(rest, { root: userRoot ? process.env.ARGO_ROOT : hookRoot(), lang }));
-  }
   else if (cmd === 'uninstall') { // 단독 설치(install.sh·install.ps1)가 만든 것만 지운다 — 데이터는 남긴다(src/cli/uninstall.mjs)
     const { uninstallStandalone, WIN_UNINSTALL_EXIT } = await import('../src/cli/uninstall.mjs');
     const r = uninstallStandalone({ appDir: REPO });
