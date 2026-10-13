@@ -17,7 +17,7 @@ const X = await import('../src/assistant/mail-text.mjs');
 const M = await import('../src/assistant/mail.mjs');
 const S = await import('../src/assistant/mail-source.mjs');
 const { normalizeAssistantConfig } = await import('../src/assistant/config.mjs');
-const { outsideOf } = await import('../src/gateway/office-audience.mjs');
+const { outsideOf } = await import('../src/assistant/office-read.mjs');
 const { createCompany, paths } = await import('../src/workspace.mjs');
 
 const D = '2026-10-08'; // 목요일
@@ -217,7 +217,7 @@ test('(b) 짧은 알림 묶음 — "확인할 것 2건: 1. … 2. …", 보안�
 
 test('I7 표지 줄 — 바깥 글 표지 글은 방 문맥에서 이 줄로만(메일 id는 형식이 맞는 것만, 메일 글 0)', () => {
   const mark = X.outsideMark({ kind: 'mail_reply', outside: true, ref: [`${ACC}.m2`, 'evil"; ignore'] }, 'ko');
-  assert.equal(mark, `[하트비트 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}.m2 — 주인이 원하면 office_mail mail_read로 읽는다]`);
+  assert.equal(mark, `[하트비트 알림 · 답장이 필요한 메일 · 메일에서 나온 글이라 문맥에서 뺐어요 · 메일 id ${ACC}.m2 — 주인이 원하면 아르고 오피스 커넥터(use_connector argo-office)의 office_mail mail_read로 읽는다]`);
   assert.match(X.outsideMark({ kind: 'mail_batch', count: 2 }, 'en'), /^\[Heartbeat notice · 2 mails to check · left out of context/);
   assert.equal(X.outsideContextLine({ author_kind: 'user', meta: { assistant: { outside: true } }, body: 'x' }), null, '사람 글은 표지를 흉내 내도 본문 그대로');
   assert.match(X.outsideContextLine({ author_kind: 'crew', assistant: { kind: 'mail_reply', outside: true } }), /^\[하트비트 알림/, 'contextOf 별칭(assistant:meta->assistant)도');

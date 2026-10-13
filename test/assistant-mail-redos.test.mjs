@@ -9,7 +9,6 @@ const g = await import(new URL('../apps/office/server/gmail.js', import.meta.url
 const C = await import('../src/assistant/mail-classify.mjs');
 const P = await import('../src/assistant/mail-prep.mjs');
 const X = await import('../src/assistant/mail-text.mjs');
-const { htmlText } = await import('../src/gateway/office-mail.mjs'); // 에이전트 메일 도구(mail_read)의 같은 변환 — 기기에서 돈다
 
 const N = 50_000;
 const ATTACKS = {
@@ -30,7 +29,6 @@ function within(name, fn) {
 
 test('ReDoS — 오피스 서버: htmlToText·stripQuoted·parseAddress·authOf·threadView가 공격 입력에서 300ms 안', () => {
   within('htmlToText', (s) => g.htmlToText(s));
-  within('office-mail htmlText(기기)', (s) => htmlText(s));
   within('stripQuoted', (s) => g.stripQuoted(s));
   within('parseAddress', (s) => g.parseAddress(s));
   within('authOf', (s) => g.authOf({ payload: { headers: [{ name: 'Authentication-Results', value: `mx.google.com; dmarc=${s}` }] } }));
@@ -72,7 +70,5 @@ test('선형으로 바꾼 뒤에도 정상 메일 변환은 그대로 — 블록
 
 test('범위 밖 숫자 엔터티(&#99999999999;)가 변환을 깨지 않는다 — 예전에는 String.fromCodePoint가 던져 그 메일의 스레드 읽기·메일 읽기가 통째로 실패했다', () => {
   assert.equal(g.htmlToText('<p>a &#99999999999; b &#x110000; c &#65;</p>'), 'a &#99999999999; b &#x110000; c A');
-  assert.equal(htmlText('<p>a &#99999999999; b &#65;</p>'), 'a &#99999999999; b A');
-  assert.equal(htmlText('<script>x()</script>A&nbsp;<b>B</b>&#44;'), 'A B,', '도구의 기존 기대값 그대로');
   assert.doesNotThrow(() => g.envelope({ id: 'g', snippet: '&#99999999999;', payload: { headers: [] } }, 'acc'));
 });
