@@ -2614,3 +2614,12 @@ html[data-os='win'] .table th { letter-spacing: 0.06em; }
 /* 폰 폭 설정 탭 — 다섯 탭이 두 줄로 다 보이게(가로 스크롤 숨김이라 '위험 구역'이 안 보였다), 터치 탭 높이 40px(UX-A10) */
 @media (max-width: 560px) { .settings-tabs { flex-wrap: wrap; } }
 @media (pointer: coarse) { .tabbar .tab { min-height: 40px; } }
+
+/* 최소 앱 버전 일시 정지 화면(app/app-gate.jsx) — 닫을 수 없는 전체 화면. 표면 단계로만 위계, 액션 색은 primary 하나 */
+.app-gate { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--bg); }
+.app-gate-card { width: 100%; max-width: 440px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 28px 24px; display: flex; flex-direction: column; gap: 12px; }
+.app-gate-card h1 { margin: 0; font-size: 20px; font-weight: 650; color: var(--fg); }
+.app-gate-card p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--fg-2); }
+.app-gate-card .app-gate-safe { color: var(--fg-3); font-size: 13px; }
+.app-gate-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.app-gate-card .app-gate-fail { font-size: 13px; color: var(--fg-2); }
