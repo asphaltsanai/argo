@@ -450,3 +450,108 @@ test('계획(순수): 끊김·노드·잠자기·로컬 변경·2분 경과 → 
   assert.equal(M.msgrTickPlan({ ...base, rejoined: true }), 'wake');
   assert.equal(M.IDLE_POLL_MS, 120_000);
 });
+
+// ── 권한으로 거절된 조직 토픽(2026-10-13 Supabase 로그 과금 점검 C) ─────────────────────────────────────────────
+// 조직 토픽 하나가 서버 권한 판정으로 거절되면(탈퇴·권한 회수 뒤 남은 행) 그 토픽은 영영 붙지 않는다. 종전에는 그것 하나로 rtHealthy가 늘 거짓이라
+// 기기가 15초 전체 조회(관리 작업 포함 분당 약 32건)를 멈추지 않았다. 이제 그 토픽은 판정에서 빼고 받은 글만 15초마다 본다(같은 지연).
+const ORG2 = 'aaaaaaaa-0000-4000-8000-000000000002';
+const CREW2 = { ...CREW, id: 'cccccccc-0000-4000-8000-000000000002', org_id: ORG2, slug: 'c2', display_name: '크루2' };
+const twoOrgs = () => [CREW, CREW2];
+const DENY = () => new Error('Unauthorized: You do not have permissions to read from this Channel topic: org:x');
+// realtime-js처럼: 거절된 채널은 errored로 두고 재가입이 실패할 때마다 같은 콜백을 다시 부른다
+const deny = (h, topic) => { const ch = h.chans.get(topic); assert.ok(ch, `구독 안 됨: ${topic}`); ch.state = 'errored'; ch.cb?.('CHANNEL_ERROR', DENY()); };
+// 쓰기 요청(심박 제외) — 쉬는·거절 확인 틱이 이것을 부르면 안 된다
+const WRITES = /^(advance|setCursor|cursor|mirror|upsert|insert|update|delete|enqueue|ack|claim|post|send|nodeHeartbeat|workHeartbeat)/i;
+
+test('⑲ 조직 토픽 하나가 권한으로 거절돼도 15초 전체 조회에 갇히지 않는다 — 받은 글만 15초, 관리 작업은 2분, 재가입 실패마다 추가 조회 없음', async () => {
+  const warn = mock.method(console, 'warn', () => {});
+  const h = await start({ crews: twoOrgs });
+  try {
+    joinAll(h); deny(h, `org:${ORG2}`); await settle();
+    await advance(30_000); // 거절 뒤 첫 틱의 따라잡기까지 지난다
+    const d0 = drains(h), a0 = h.at('rpc:msgr_automation_dispatch_due').length;
+    for (let i = 0; i < 40; i++) { mock.timers.tick(POLL); if (i % 2) deny(h, `org:${ORG2}`); await settle(); } // 10분, 재가입 실패 알림 20번
+    const d = drains(h) - d0, auto = h.at('rpc:msgr_automation_dispatch_due').length - a0;
+    assert.ok(d >= 39 && d <= 41, `10분 동안 받은 글 조회 ${d}회(15초마다 40회 — 거절된 조직 글도 종전 지연 그대로, 재가입 실패로 늘지 않는다)`);
+    assert.ok(auto <= 7, `관리 작업(자동화 조회) ${auto}회(종전 15초 전체 조회면 40회)`);
+    const lines = warn.mock.calls.map((c) => String(c.arguments[0])).filter((l) => l.includes('구독이 안 붙음') && l.includes(ORG2));
+    assert.equal(lines.length, 1, `진단 로그는 한 번만 (${lines.length}줄)`);
+    assert.match(lines[0], /Unauthorized/);
+  } finally { warn.mock.restore(); h.stop(); }
+});
+
+test('⑲ 거절된 토픽이 있는 동안 관리 틱이 아닌 15초 틱은 쓰기 요청 0(심박만 기한마다) — 받을 글이 없으면 DB를 바꾸지 않는다', async () => {
+  const warn = mock.method(console, 'warn', () => {});
+  const h = await start({ crews: twoOrgs });
+  try {
+    joinAll(h); deny(h, `org:${ORG2}`); await settle();
+    await advance(30_000);
+    const c0 = h.calls.length;
+    await advance(90_000); // 관리 틱(2분) 사이의 15초 틱들
+    const names = h.calls.slice(c0).map((c) => c.name);
+    const writes = names.filter((n) => WRITES.test(n));
+    assert.deepEqual(writes, [], `쓰기 요청 ${writes}`);
+    assert.ok(names.filter((n) => n === 'heartbeat').length <= 3, `심박 ${names.filter((n) => n === 'heartbeat').length}회(약 45초마다)`);
+  } finally { warn.mock.restore(); h.stop(); }
+});
+
+test('⑲ 권한이 돌아와 거절됐던 토픽이 붙으면 한 번 따라잡고 쉬는 주기로', async () => {
+  const warn = mock.method(console, 'warn', () => {});
+  const h = await start({ crews: twoOrgs });
+  try {
+    joinAll(h); deny(h, `org:${ORG2}`); await settle(); await advance(30_000);
+    h.join(`org:${ORG2}`); await settle();
+    await advance(15_000); // 다음 틱이 붙은 상태를 본다(쉬는 주기 — 거절 표지가 풀렸다)
+    const d = drains(h);
+    await advance(60_000);
+    assert.equal(drains(h), d, '붙은 뒤 1분은 조회 없음(쉬는 주기)');
+  } finally { warn.mock.restore(); h.stop(); }
+});
+
+test('⑲ 권한 거절이 아닌 실패(연결 끊김·시간 초과)와 u: 토픽 거절은 종전대로 15초 전체 조회', async () => {
+  const warn = mock.method(console, 'warn', () => {});
+  for (const [topic, err] of [[`org:${ORG2}`, new Error('channel error: connection lost')], [`u:${UID}`, DENY()]]) {
+    const h = await start({ crews: twoOrgs });
+    try {
+      h.join(`org:${ORG}`); h.join(`org:${ORG2}`); h.join(`u:${UID}`); await settle(); await advance(30_000);
+      const ch = h.chans.get(topic); ch.state = 'errored'; ch.cb?.('CHANNEL_ERROR', err); await settle();
+      const a0 = h.at('rpc:msgr_automation_dispatch_due').length;
+      await advance(60_000);
+      assert.ok(h.at('rpc:msgr_automation_dispatch_due').length - a0 >= 4, `${topic} ${err.message}: 1분 동안 15초마다 전체 조회`);
+    } finally { h.stop(); mock.timers.reset(); }
+  }
+  warn.mock.restore();
+});
+
+test('⑲ 토큰 회전(새 클라이언트)이면 옛 클라이언트의 거절 표지는 쓰지 않는다 — 새 채널이 붙거나 다시 거절될 때까지 15초 전체 조회', async () => {
+  const warn = mock.method(console, 'warn', () => {});
+  const h = await start({ crews: twoOrgs });
+  try {
+    joinAll(h); deny(h, `org:${ORG2}`); await settle(); await advance(30_000);
+    const old = h.chans.get(`org:${ORG2}`);
+    const c2 = { ...h.client, channel: h.client.channel, realtime: h.client.realtime }; h.setClient(c2);
+    const a0 = h.at('rpc:msgr_automation_dispatch_due').length;
+    await advance(30_000);
+    assert.notEqual(h.chans.get(`org:${ORG2}`), old, '새 클라이언트로 다시 구독');
+    assert.ok(h.at('rpc:msgr_automation_dispatch_due').length - a0 >= 2, '새 채널이 판정되기 전에는 15초 전체 조회');
+  } finally { warn.mock.restore(); h.stop(); }
+});
+
+test('구독 실패 진단 로그(순수): 같은 토픽·상태·사유는 한 번, 해제(CLOSED)·붙음은 남기지 않는다', () => {
+  const lines = []; const log = (l) => lines.push(l);
+  assert.equal(M.noteRtFailure('org:t1', 'CHANNEL_ERROR', DENY(), log), true);
+  assert.equal(M.noteRtFailure('org:t1', 'CHANNEL_ERROR', DENY(), log), false);
+  assert.equal(M.noteRtFailure('org:t1', 'TIMED_OUT', undefined, log), true);
+  assert.equal(M.noteRtFailure('org:t1', 'CLOSED', undefined, log), false);
+  assert.equal(M.noteRtFailure('org:t1', 'SUBSCRIBED', undefined, log), false);
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /org:t1.*Unauthorized.*15초마다 확인/);
+  assert.match(lines[1], /TIMED_OUT.*전체 조회/);
+});
+
+test('계획(순수): 거절된 조직 토픽이 있으면(degraded) 쉬지 않고 받은 글만 — 2분 경과·끊김은 종전대로 전체', () => {
+  const base = { now: 1_000_000, lastFireAt: 985_000, lastHousekeeping: 950_000, healthy: true, rejoined: false, held: false, nodeCompany: false, localChanged: false, pollMs: POLL, idlePollMs: M.IDLE_POLL_MS };
+  assert.equal(M.msgrTickPlan({ ...base, degraded: true }), 'wake');
+  assert.equal(M.msgrTickPlan({ ...base, degraded: true, lastHousekeeping: 1_000_000 - M.IDLE_POLL_MS }), 'poll');
+  assert.equal(M.msgrTickPlan({ ...base, degraded: true, healthy: false }), 'poll');
+});

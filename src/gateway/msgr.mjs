@@ -2425,17 +2425,32 @@ async function serverWakes(db, t) {
     구독이 하나라도 안 붙었거나 끊겼으면, 회사 노드면(비공개 채널 크루 요청 방송이 노드 계정에 닿지 않을 수 있다 — msgr_room_send는 방 사람·방에 든 크루 주인에게만),
     잠자기에서 깨어났으면(틱 간격이 3배 넘게 벌어짐 — 소켓이 살아 보여도 그 사이 방송을 못 받았을 수 있다), 로컬 변경이 있으면, 예비 조회 간격이 지났으면 전체 조회.
     처리 보류(방 목록 실패·러너 양보·한 번에 꽉 참·결재 동기화 실패 — drain의 held)와 재연결은 받은 글만 바로 다시 본다. */
-export function msgrTickPlan({ now, lastFireAt, lastHousekeeping, healthy, rejoined, held, nodeCompany, localChanged, pollMs = POLL_MS, idlePollMs = IDLE_POLL_MS }) {
+export function msgrTickPlan({ now, lastFireAt, lastHousekeeping, healthy, rejoined, held, nodeCompany, localChanged, degraded = false, pollMs = POLL_MS, idlePollMs = IDLE_POLL_MS }) {
   if (!healthy || nodeCompany) return 'poll';
   if (lastFireAt != null && now - lastFireAt > pollMs * 3) return 'poll';
   if (localChanged || now - lastHousekeeping >= idlePollMs) return 'poll';
-  if (held || rejoined) return 'wake';
+  if (held || rejoined || degraded) return 'wake'; // degraded = 권한으로 거절된 조직 토픽이 있다 — 그 조직 방송은 오지 않으니 받은 글은 15초마다(종전 지연), 관리 작업만 쉬는 주기로
   return 'idle';
 }
 /** 미러가 보는 로컬 상태의 지문 — 카드(이름·직무)·커맨더 목록·루틴(미러 행 모양). 쉬는 틱에 바뀐 것이 보이면 다음 예비 조회를 기다리지 않고 미러한다(종전처럼 15초 안). 로컬 파일만 읽는다. */
 async function msgrLocalState(wsId) {
   const [cards, commands, routines] = await Promise.all([listAgentsForInventory(wsId), listCommandsForWs(wsId), loadRoutines(wsId)]);
   return JSON.stringify([cards, commands, (Array.isArray(routines) ? routines : []).map((r) => [r.agentSlug ?? null, buildRoutineRows([r], r.agentSlug)])]);
+}
+
+/** 조직 토픽 구독이 서버 권한 판정(realtime.messages RLS)으로 거절됐나 — 서버 답(join error)의 사유 문구로 가른다. 연결 끊김·시간 초과는 거절이 아니다 */
+const RT_DENIED = /unauthori[sz]ed|permission/i;
+const rtFailNoted = new Set(); // 구독 실패 진단 로그는 프로세스당 (토픽·상태·사유)마다 한 번 — 재가입 실패마다 반복되지 않게
+/** 어느 토픽이 왜 안 붙었는지 한 번만 남긴다(15초 전체 조회로 도는 기기의 원인을 기기 로그로 알 수 있게, 2026-10-13 Supabase 로그 과금 점검) */
+export function noteRtFailure(topic, status, err, log = console.warn) {
+  if (status === 'SUBSCRIBED' || status === 'CLOSED') return false; // CLOSED = 우리가 해제했다
+  const reason = String(err?.message ?? '').slice(0, 160);
+  const key = `${topic}|${status}|${reason}`;
+  if (rtFailNoted.has(key) || rtFailNoted.size >= 200) return false;
+  rtFailNoted.add(key);
+  const denied = RT_DENIED.test(reason);
+  log(`[argo] msgr realtime 구독이 안 붙음(${topic}, ${status}${reason ? ` — ${reason}` : ''}) — ${denied && topic.startsWith('org:') ? '권한 거절이라 이 조직의 받은 글은 15초마다 확인합니다' : '붙을 때까지 15초마다 전체 조회합니다'}`);
+  return true;
 }
 
 export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_MS, idlePollMs = IDLE_POLL_MS, beatMs = BEAT_EVERY_MS, runnerReady = turnRunnerAvailable, localState = msgrLocalState } = {}) { // runnerReady — drain의 러너 양보 판정(chat()과 같은 판정, drain 주석)
@@ -2458,17 +2473,27 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
   let lastGw = null;         // 마지막으로 쓴 연결 상태([ok, error]) — 쉬는 틱이 다시 써서 설정 화면 40초 창(connections.mjs readGatewayStatus)을 지킨다
   const gw = (ok, error = '') => { lastGw = [ok, error]; return beatGateway(wsId, MSGR_KEY, ok, error).catch(() => {}); };
   const joined = (ch) => !!ch && ch.__client === lastClient && (typeof ch.state === 'string' ? ch.state === 'joined' : ch.__status === 'SUBSCRIBED'); // 같은 토픽을 여러 회사가 같이 쓰면 두 번째 subscribe의 콜백은 오지 않는다 — 채널 상태가 정본
-  const rtHealthy = () => !!lastClient && wantOrgs !== null && [...wantOrgs].every((o) => joined(rtChannels.get(`${wsId}:${o}`))) && joined(rtChannels.get(`${wsId}:u`));
-  const checkHealth = () => { const healthy = rtHealthy(); const rejoined = healthy && !wasHealthy; wasHealthy = healthy; return { healthy, rejoined }; };
+  // 권한으로 거절된 조직 토픽(ch.__denied — 탈퇴·권한 회수 뒤 남은 행 등)은 판정에서 뺀다: 방송이 영영 오지 않으니 붙기를 기다리면 15초 전체 조회가 끝나지 않는다.
+  // 그 조직의 받은 글은 15초마다 본다(degraded → 'wake', 종전과 같은 지연). realtime-js가 계속 다시 가입하므로 권한이 돌아오면 붙고(SUBSCRIBED) 표지가 풀린다.
+  const deniedCh = (ch) => !!ch && ch.__client === lastClient && !!ch.__denied && !joined(ch);
+  const rtHealthy = () => !!lastClient && wantOrgs !== null && [...wantOrgs].every((o) => { const ch = rtChannels.get(`${wsId}:${o}`); return joined(ch) || deniedCh(ch); }) && joined(rtChannels.get(`${wsId}:u`));
+  const rtDegraded = () => wantOrgs !== null && [...wantOrgs].some((o) => deniedCh(rtChannels.get(`${wsId}:${o}`)));
+  const checkHealth = () => { const healthy = rtHealthy(); const rejoined = healthy && !wasHealthy; wasHealthy = healthy; return { healthy, rejoined, degraded: healthy && rtDegraded() }; };
   // 구독 상태 콜백 — 끊기면(CHANNEL_ERROR·TIMED_OUT·CLOSED) 바로 '안 붙음'으로 적어 두고(다음 15초 틱 판정 전에 realtime-js가 다시 붙여도 따라잡기를 놓치지 않게),
   // 붙는 순간(첫 구독 포함) 받은 글을 따라잡는다 — 조회와 구독 사이, 끊긴 사이에 온 글은 방송이 다시 오지 않는다
   // 끊김을 본 순간에도 받은 글을 한 번 본다 — 소켓이 죽은 뒤 끊김을 알기까지(realtime-js 심박 최대 약 50초) 온 글의 방송은 오지 않았다. 그 뒤로는 15초 조회
-  const onStatus = (status) => { if (stopped) return; if (status !== 'SUBSCRIBED') { const was = wasHealthy; wasHealthy = false; if (was) tick('wake').catch(() => {}); return; } if (checkHealth().rejoined) tick('wake').catch(() => {}); };
+  const onStatus = (status, _err, ch) => { if (stopped) return; if (status !== 'SUBSCRIBED') { if (ch?.__org && ch.__denied) return; /* 권한 거절된 조직 토픽 — 판정 밖, 재가입 실패마다 깨우지 않는다 */ const was = wasHealthy; wasHealthy = false; if (was) tick('wake').catch(() => {}); return; } if (checkHealth().rejoined) tick('wake').catch(() => {}); };
   // 같은 토픽은 한 클라이언트에서 채널 객체 하나다(realtime-js channel()) — 같은 계정의 회사 여럿이 같이 쓰면 두 번째 subscribe의 콜백은 등록되지 않는다.
   // 콜백을 채널에 하나 두고 회사마다 듣는 함수를 더한다(그래도 판정의 정본은 채널 상태 — joined)
   const attach = (ch) => {
     (ch.__watchers ??= new Set()).add(onStatus);
-    ch.__dispatch ??= (status) => { ch.__status = status; for (const f of ch.__watchers) f(status); };
+    ch.__dispatch ??= (status, err) => {
+      ch.__status = status;
+      if (status === 'SUBSCRIBED' || status === 'CLOSED') ch.__denied = null;
+      else if (ch.__org && status === 'CHANNEL_ERROR' && RT_DENIED.test(String(err?.message ?? ''))) ch.__denied = String(err.message).slice(0, 160);
+      noteRtFailure(ch.topic ?? '?', status, err);
+      for (const f of ch.__watchers) f(status, err, ch);
+    };
     ch.subscribe(ch.__dispatch);
   };
   // 쉬는 틱의 심박 — 마지막 관리 틱의 대상 그대로, 기한(beatMs)이 지났을 때만. 실패하면 시각을 옮기지 않아 다음 15초 틱에 다시 보낸다
@@ -2510,8 +2535,8 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
         const h = checkHealth();
         // 쉬는 주기는 서버가 깨우기 방송(crew_sync)을 보낼 때만 — 옛 서버면 새 파견·재개·조직 가입을 알 길이 15초 조회뿐이다(어떤 경우에도 종전보다 늦지 않게)
         const healthy = h.healthy && await serverWakes(c.db, t), rejoined = h.rejoined;
-        idleWas = healthy && !nodeCompany && !rejoined; // 쉬는 주기의 예비 조회인가(끊김·재연결 따라잡기는 아니다)
-        mode = msgrTickPlan({ now: t, lastFireAt, lastHousekeeping, healthy, rejoined, held, nodeCompany, pollMs, idlePollMs }); // 로컬 변경은 아래에서(파일 읽기라 'poll'이 아닐 때만)
+        idleWas = healthy && !nodeCompany && !rejoined && !h.degraded; // 쉬는 주기의 예비 조회인가(끊김·재연결 따라잡기·거절된 조직의 15초 확인은 아니다)
+        mode = msgrTickPlan({ now: t, lastFireAt, lastHousekeeping, healthy, rejoined, held, nodeCompany, degraded: h.degraded, pollMs, idlePollMs }); // 로컬 변경은 아래에서(파일 읽기라 'poll'이 아닐 때만)
         lastFireAt = t;
         if (mode !== 'poll' && localSeen !== null) { // 로컬 변경(에이전트 고용·직무·커맨더·루틴) — 다음 예비 조회까지 미루지 않는다
           const sig = await localState(wsId).catch(() => null);
@@ -2577,7 +2602,7 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
           .on('broadcast', { event: 'crew_request' }, wake); // I-5: 요청 즉시 깨어난다(정본은 pending 조회)
           // stop_request는 여기 두지 않는다 — org:<조직>은 그 조직 멤버 누구나 msgr_realtime_send로 방송을 보낼 수 있어(RLS 발신 정책이 org:%를
           // 멤버에게 허용) 위조된 중단 요청으로 남의 크루 턴을 멈출 수 있었다(검수 2026-09-26 H-1). u:<owner> 구독 쪽으로 옮긴다(아래).
-        ch.__client = c.client;
+        ch.__client = c.client; ch.__org = true;
         attach(ch);
         rtChannels.set(key, ch);
         subscribedOrgs.add(orgId);
