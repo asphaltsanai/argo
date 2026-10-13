@@ -25,8 +25,27 @@ export function groupAgents(rows, { orgOrder = [] } = {}) {
   }
   return [...byKey.entries()].map(([key, list]) => {
     const rs = list.slice().sort((a, b) => rank(a) - rank(b));
-    return { key, rows: rs, id: rs[0].id, display_name: rs[0].display_name, role_text: rs.find((r) => r.role_text)?.role_text ?? null, avatar_url: rs.find((r) => r.avatar_url)?.avatar_url ?? null, ext: rs.some((r) => r.hosting === 'bot') };
+    return { key, agent_id: rs.find((r) => r.agent_id)?.agent_id ?? null, rows: rs, id: rs[0].id, display_name: rs[0].display_name, role_text: rs.find((r) => r.role_text)?.role_text ?? null, avatar_url: rs.find((r) => r.avatar_url)?.avatar_url ?? null, ext: rs.some((r) => r.hosting === 'bot') };
   }).sort((a, b) => String(a.display_name).localeCompare(String(b.display_name), 'ko'));
+}
+
+// 기억·공간 3단계 U1(*_msgr_agents_identity.sql): 서버가 자리 행에 에이전트 id(agent_id → msgr_agents)를 붙인다. 묶음 판정은 여전히 agentKey —
+// 서버가 같은 (주인·회사·slug)로 agent_id를 정하므로 결과가 같고, 옛 DB(열 없음)·agent_id가 빈 행(서버 fail-open)과 섞여도 묶음이 갈라지지 않는다.
+// 묶음의 agent_id는 0.1.109(U3·U4)가 쓸 재료로만 싣는다.
+// 새 앱 + 옛 DB: PostgREST가 '열이 없다'(42703 "column msgr_crews.agent_id does not exist")로 거절하면 그 열만 빼고 다시 읽고 10분 기억(face·접속 시각 폴백과 같은 모양).
+export const agentCol = { missingAt: 0 };
+const AGENT_RECHECK_MS = 600_000;
+// agent_id 이름이 든 '열 없음'만 — 접속 시각 계산 열(msgr_crew_seen)이 없는 더 옛 서버의 42703을 여기서 삼키면 crew-seen.mjs 폴백이 못 본다
+export const agentColMissing = (err) => { const m = String(err?.message ?? err ?? ''); return /\bagent_id\b/.test(m) && (err?.code === '42703' || /does not exist|schema cache|could not find/i.test(m)); };
+/** run(cols) — agent_id를 더해 읽고, 옛 DB면 빼고 한 번 더. 다른 오류는 그대로 던진다. 행에는 늘 agent_id 키가 있다(없으면 null) */
+export async function withAgentCol(cols, run, now = Date.now) {
+  const fill = (rows) => (rows ?? []).map((r) => ('agent_id' in r ? r : { ...r, agent_id: null }));
+  if (now() - agentCol.missingAt <= AGENT_RECHECK_MS) return fill(await run(cols));
+  try { return fill(await run(`${cols}, agent_id`)); } catch (e) {
+    if (!agentColMissing(e)) throw e;
+    agentCol.missingAt = now();
+    return fill(await run(cols));
+  }
 }
 
 /** 지금 보고 있는 공간의 행, 없으면 첫 공간 — 설정 '내 에이전트'의 카드, 개인 행이 없는 에이전트의 1:1 */
