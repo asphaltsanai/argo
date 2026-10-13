@@ -1,7 +1,7 @@
 // 아르고 메신저 봇 API — 외부 에이전트(헤르메스·오픈클로)가 봇 토큰으로 접속하는 플랫폼 주소(설계: 루트 MESSENGER-DESIGN.md 부록 N v3).
 // 이 함수는 번역만 한다: HTTP ↔ msgr_bot_* RPC(anon 키 + 토큰). 권한·정책은 DB가 판정한다.
 // 배포: `supabase functions deploy msgr-bot --no-verify-jwt` — 봇은 Supabase JWT가 없다(토큰이 자격). config.toml [functions.msgr-bot] verify_jwt = false.
-import { handle, parseRequest, parseLinkPath, handleLink, connectScript } from './core.js';
+import { handle, parseRequest, parseLinkPath, handleLink, connectScript, createRejectMemory } from './core.js';
 import { CONNECT_PY } from './connect-bundle.js';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -39,6 +39,8 @@ async function purgeUploads(paths: string[]): Promise<void> {
   if (!r.ok) throw new Error(`purge ${r.status}`);
 }
 
+const rejects = createRejectMemory(); // 거부 기억 — 이 인스턴스 메모리(core.js 주석). DB에 쓰지 않는다
+
 async function rpc(fn: string, args: Record<string, unknown>) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
     method: 'POST', headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, 'Content-Type': 'application/json' }, body: JSON.stringify(args),
@@ -63,6 +65,7 @@ Deno.serve(async (req) => {
   }
   const parsed = parseRequest(req.url, Object.fromEntries(req.headers), body);
   // planGate: 에이전트 주인이 Pro가 아니면 getUpdates를 403으로(20261010200100 msgr_bot_gate). 요청당 RPC 1회.
-  const { status, body: out } = await handle(parsed, rpc, { sign, signUpload, purgeUploads, planGate: (token: string) => rpc('msgr_bot_gate', { token }) });
-  return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json' } });
+  const { status, body: out } = await handle(parsed, rpc, { sign, signUpload, purgeUploads, rejects, planGate: (token: string) => rpc('msgr_bot_gate', { token }) });
+  const retry = (out as { parameters?: { retry_after?: number } })?.parameters?.retry_after;
+  return new Response(JSON.stringify(out), { status, headers: { 'Content-Type': 'application/json', ...(retry ? { 'Retry-After': String(retry) } : {}) } });
 });

@@ -73,9 +73,25 @@ def _redact(s: str) -> str:
 
 
 class ArgoMsgrError(Exception):
-    def __init__(self, status: int, description: str):
+    def __init__(self, status: int, description: str, retry_after: Optional[float] = None):
         super().__init__(f"{status}: {description}")
         self.status, self.description = status, description
+        self.retry_after = retry_after   # 서버가 정한 다시 올 때까지의 초(parameters.retry_after·Retry-After) — 없으면 None
+
+
+_RETRY_AFTER_MAX_S = 3600.0   # 서버가 준 대기의 상한(잘못된 값으로 영영 멈추지 않게)
+
+
+def _retry_after(body: Dict[str, Any], header: Optional[str]) -> Optional[float]:
+    """거부 응답의 대기 초 — 본문 parameters.retry_after(텔레그램 규약)가 먼저, 없으면 HTTP Retry-After(초). 양수만."""
+    for v in ((body.get("parameters") or {}).get("retry_after"), header):
+        try:
+            s = float(v)
+        except (TypeError, ValueError):
+            continue
+        if s > 0:
+            return min(s, _RETRY_AFTER_MAX_S)
+    return None
 
 
 _ATTACH_MAX = 25 * 1024 * 1024  # 받기(사람이 올린 첨부 내려받기) 상한
@@ -325,16 +341,18 @@ def _call(base: str, token: str, method: str, params: Optional[Dict[str, Any]] =
     elif params:
         url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
     req = urllib.request.Request(url, data=data, headers=headers, method="POST" if post else "GET")
+    header = None
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             body = json.loads(r.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as e:
+        header = e.headers.get("Retry-After") if e.headers else None
         try:
             body = json.loads(e.read().decode("utf-8") or "{}")
         except Exception:
             body = {"ok": False, "error_code": e.code, "description": str(e)}
     if not body.get("ok"):
-        raise ArgoMsgrError(int(body.get("error_code") or 500), str(body.get("description") or "unknown"))
+        raise ArgoMsgrError(int(body.get("error_code") or 500), str(body.get("description") or "unknown"), _retry_after(body, header))
     return body.get("result")
 
 
@@ -772,6 +790,10 @@ class ArgoMsgrAdapter(BasePlatformAdapter):
                     self._mark_disconnected()
                     return
                 streak += 1
+                if e.retry_after:   # 서버가 다시 올 때를 정했다(무료 주인 403·429 — 2026-10-13) — 사다리 대신 그만큼 쉰다
+                    logger.warning("Argo Messenger: getUpdates %s — server asked to retry in %.0fs", e, e.retry_after)
+                    await asyncio.sleep(e.retry_after)
+                    continue
                 # 429(레이트리밋)는 서버가 '천천히 오라'는 뜻이므로 짧은 캡을 적용하지 않는다.
                 backoff = await self._retry_wait(backoff, streak, e.status >= 500 or e.status == 408,
                                                  "getUpdates %s" % (e,))
