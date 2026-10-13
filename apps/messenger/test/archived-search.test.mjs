@@ -86,6 +86,7 @@ test('개인 공간 검색 — 보관 행 조회 1건 뒤 글 조회에 내 보�
   const msgOps = db.calls[1].ops;
   assert.deepEqual(msgOps.find(([k]) => k === 'or'), ['or', 'org_id.is.null,channel_id.in.(arch-mine)'], '내 보관 1:1만(남이 낀 보관 방은 빼고)');
   assert.ok(!msgOps.some(([k, col]) => k === 'is' && col === 'org_id'), 'org_id IS NULL 단독 조건 대신 or');
+  assert.ok(!msgOps.some(([k, col]) => k === 'eq' && col === 'org_id'), '개인 공간은 가상 org id로 조회하지 않는다(늘 빈다)');
   assert.equal(out.res.msgs.length, 1);
   assert.equal(out.res.archived.get('arch-mine').mine, true, '결과를 누를 때 쓸 보관 행을 결과에 싣는다');
 });
