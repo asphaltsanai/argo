@@ -741,13 +741,22 @@ export function _setTokenClaimForTest(token, state) { claimState.byHash.set(toke
 export function _resetTokenClaimsForTest(bootAt = Date.now()) { claimState.tokens = new Set(); claimState.byHash.clear(); claimState.removed = new Set(); claimState.renewedAt = CLAIM_NEVER; claimState.bootAt = bootAt; try { unlinkSync(claimStateFile()); } catch { /* 없음 */ } }
 export const _claimStateForTest = () => Object.fromEntries(claimState.byHash);
 export const CLAIM_ARBITRATION_GRACE = CLAIM_ARBITRATION_GRACE_MS;
-/** 원격 클레임 1건 읽기(캐시버스터) — 없음·손상은 null. 갱신 루프와 해제 청소가 같은 읽기를 쓴다. */
+/** 원격 클레임 1건 읽기(캐시버스터) — { doc, error }. 없음('Object not found')·손상(JSON 아님)은 doc null·error null이고,
+    읽지 못함(5xx·fetch failed·시간 초과·만료 토큰의 'Bucket not found'·응답 중단)은 error다. 예전에는 둘을 가르지 않아 읽기 한 번 실패가 '없음'이 됐고,
+    남의 살아 있는 클레임을 덮어써 같은 토큰을 두 기기가 폴링했다(텔레그램 409 — 2026-10-13, 리스는 #873 계열에서 같은 모양을 닫았다).
+    supabase-js download는 오류를 던지지 않고 { data: null, error }로 돌려준다. 갱신 루프와 해제 청소가 같은 읽기를 쓴다. */
 async function readRemoteClaim(key) {
   try {
-    const { data } = await client().storage.from(BUCKET).download(`${key}?t=${Date.now()}`);
-    return data ? JSON.parse(Buffer.from(await data.arrayBuffer()).toString()) : null;
-  } catch { return null; } // 최초·미존재
+    const { data, error } = await client().storage.from(BUCKET).download(`${key}?t=${Date.now()}`);
+    if (error) return isNotFound(error) ? { doc: null, error: null } : { doc: null, error };
+    if (!data) return { doc: null, error: null };
+    const text = Buffer.from(await data.arrayBuffer()).toString();
+    try { return { doc: JSON.parse(text), error: null }; } catch { return { doc: null, error: null }; } // 깨진 글 — 없음으로(종전)
+  } catch (e) { return { doc: null, error: e }; } // 응답을 받다 끊김 등 — 던져진 것도 읽지 못함이다
 }
+/** 토큰별 읽기 실패 시작 시각·마지막 자가 복구 시각 — TTL 넘게 한 번도 못 읽으면 '없음'으로 보고 한 번 써 본다(리스의 자가 복구와 같은 규칙:
+    읽을 수 없는 클레임 객체가 그 토큰을 영영 막지 않게, TTL에 한 번만). 메모리만. */
+const claimReadFail = (globalThis.__argoTgClaimReadFail ??= new Map());
 /** 토큰별 클레임 갱신 — write-후-재확인(리스와 같은 CAS 근사). 판정 불가(쓰기 실패)면 보유 중이던 것만 TTL 내 유지. (export: 배선·행동 테스트용) */
 export async function renewTokenClaims(owner, { now = Date.now(), force = false } = {}) {
   if (!force && now - claimState.renewedAt < CLAIM_RENEW_MS) return;
@@ -759,7 +768,7 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     // 제3 기기가 획득 → 같은 토큰 이중 폴링(재검수 MEDIUM-A). 소유 확인·삭제 실패는 재시도하지 않는다: 상대는 TTL(120s)을
     // 기다리면 되고, 이 경로는 토큰 해제라는 드문 사건이다(L-B).
     const key = skey(owner, CLAIM_DIR, `${h}.json`);
-    const cur = await readRemoteClaim(key);
+    const { doc: cur } = await readRemoteClaim(key); // 읽지 못하면 지우지 않는다(내 것인지 모른다)
     if (cur?.deviceId === me) await client().storage.from(BUCKET).remove([key]).catch(() => {});
     claimState.removed.delete(h);
   }
@@ -767,7 +776,21 @@ export async function renewTokenClaims(owner, { now = Date.now(), force = false 
     const hash = tokenClaimHash(token);
     const key = skey(owner, CLAIM_DIR, `${hash}.json`);
     const prev = claimState.byHash.get(hash);
-    const cur = await readRemoteClaim(key);
+    const { doc: cur, error: readErr } = await readRemoteClaim(key);
+    if (readErr) {
+      // 읽지 못함 — 이번 판정은 보류하고 쓰지 않는다. 확인된 보유자이고 내 글이 TTL 안이면 유지(리스의 holdsLeaseOnWriteFailure와 같은 절충), 아니면 미보유.
+      // 예외: TTL 넘게 한 번도 읽지 못했으면 '없음'으로 보고 TTL에 한 번 써 본다(아래로 흘려보낸다 — 쓰기 뒤 확인 읽기가 승자를 가린다).
+      const rf = claimReadFail.get(hash) ?? { since: now, escapeAt: -Infinity };
+      claimReadFail.set(hash, rf);
+      if (!(now - rf.since >= TG_CLAIM_TTL_MS && now - rf.escapeAt >= TG_CLAIM_TTL_MS)) {
+        const keep = !!(prev?.mine && prev.ownedAt > 0 && now - prev.ownedAt < TG_CLAIM_TTL_MS);
+        claimState.byHash.set(hash, keep ? { ...prev, ts: now } : { mine: false, holder: prev?.mine ? null : (prev?.holder ?? null), ts: now, ownedAt: 0 });
+        noteOnce(`tg-claim-read:${hash}`, `[argo] 텔레그램 토큰 클레임 읽기 실패(${hash.slice(0, 6)}): ${String(readErr.message || readErr).slice(0, 80)} — ${keep ? '보유 유지(쓰기 없음)' : '이번 판정 보류(쓰기 없음)'}`);
+        continue;
+      }
+      rf.escapeAt = now;
+      console.warn(`[argo] 텔레그램 토큰 클레임을 ${Math.round(TG_CLAIM_TTL_MS / 1000)}초 넘게 읽지 못함 — 없음으로 보고 한 번 써 본다(${hash.slice(0, 6)})`);
+    } else if (claimReadFail.has(hash)) { claimReadFail.delete(hash); noteOnce(`tg-claim-read:${hash}`, ''); }
     if (claimDecision(cur, me, now) === 'other') {
       if (prev?.mine) console.log(`[argo] 텔레그램 토큰 클레임 양보 → ${deviceLabel(cur.deviceId)} (${hash.slice(0, 6)})`);
       claimState.byHash.set(hash, { mine: false, holder: cur.deviceId, ts: now });

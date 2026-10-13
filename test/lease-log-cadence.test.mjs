@@ -125,6 +125,7 @@ test('리스 만료 경계 — 쉬는 보유자의 글은 다른 기기가 보�
 
 const { setClaimTokens, renewTokenClaims, tokenOwnership, tokenClaimHash, _resetTokenClaimsForTest, CLAIM_REWRITE_MS, TG_CLAIM_TTL_MS } = sync;
 const CLAIM_KEY = (owner, tok) => `${owner}/.tg-claims/${tokenClaimHash(tok)}.json`;
+const claimReadFailReset = () => globalThis.__argoTgClaimReadFail?.clear();
 
 test('쉬는 클레임 보유자(토큰 5개) — 10분 동안 토큰마다 읽기는 30초, 쓰기는 60초에 한 번, 소유는 끊기지 않는다', async () => {
   _resetTokenClaimsForTest();
@@ -150,4 +151,63 @@ test('쉬는 클레임 보유자(토큰 5개) — 10분 동안 토큰마다 읽�
   }
   assert.deepEqual(lost, [], '소유가 끊긴 판정 없음');
   assert.equal(CLAIM_REWRITE_MS, 60_000);
+});
+
+/* ── 클레임 읽기 오류 — '없음'으로 읽지 않는다(덮어쓰기 → 같은 토큰 이중 폴링·텔레그램 409) ── */
+
+const READ_ERRORS = [
+  { name: 'StorageApiError', message: 'Internal Server Error', status: 500, statusCode: '500' },
+  { name: 'StorageUnknownError', message: 'fetch failed' },
+  { name: 'StorageApiError', message: 'Bucket not found', status: 400, statusCode: '404' }, // 만료 토큰 GET을 Storage가 익명으로 처리
+  { throw: new TypeError('terminated') }, // 응답 본문을 받다 끊김
+];
+
+for (const err of READ_ERRORS) {
+  test(`클레임 읽기 오류(${err.message ?? err.throw.message}) — 남의 살아 있는 클레임을 덮어쓰지 않고, 미보유로 보류한다`, async () => {
+    _resetTokenClaimsForTest(); claimReadFailReset();
+    const f = fakeStore(); _setSyncClientForTest(f.client);
+    const owner = 'owner-claim-err'; const now = Date.now();
+    f.set(CLAIM_KEY(owner, 'x1'), { deviceId: 'Other-PC-deadbeef', nonce: 'n', ts: now - 10_000 });
+    setClaimTokens(['x1']);
+    f.failReads(err);
+    await renewTokenClaims(owner, { now });
+    assert.equal(f.calls.byKey.get(`PUT ${CLAIM_KEY(owner, 'x1')}`) || 0, 0, '쓰기 없음');
+    assert.equal(f.get(CLAIM_KEY(owner, 'x1')).deviceId, 'Other-PC-deadbeef', '남의 클레임이 그대로');
+    assert.equal(tokenOwnership('x1').mine, false, '이 기기는 폴링하지 않는다');
+    assert.equal(tokenOwnership('x1').pending, false);
+    await renewTokenClaims(owner, { now: now + 30_000 }); // 읽기가 돌아오면 정상 판정
+    assert.deepEqual({ mine: tokenOwnership('x1').mine, holder: tokenOwnership('x1').holder }, { mine: false, holder: 'Other-PC-deadbeef' });
+  });
+}
+
+test('클레임 읽기 오류 — 확인된 보유자는 내 글이 TTL 안이면 쓰지 않고 소유를 유지한다', async () => {
+  _resetTokenClaimsForTest(); claimReadFailReset();
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'owner-claim-keep'; let now = Date.now();
+  setClaimTokens(['k1']);
+  await renewTokenClaims(owner, { now });
+  const puts0 = f.calls.byKey.get(`PUT ${CLAIM_KEY(owner, 'k1')}`);
+  f.failReads(READ_ERRORS[0], READ_ERRORS[1]);
+  now += 30_000; await renewTokenClaims(owner, { now });
+  assert.equal(tokenOwnership('k1').mine, true, '30초 — 유지');
+  now += 30_000; await renewTokenClaims(owner, { now });
+  assert.equal(tokenOwnership('k1').mine, true, '60초 — 유지(글이 TTL 안)');
+  assert.equal(f.calls.byKey.get(`PUT ${CLAIM_KEY(owner, 'k1')}`), puts0, '읽기 오류 판정은 쓰지 않는다');
+  f.failReads(READ_ERRORS[0], READ_ERRORS[0]); // 90초·120초 — 읽기 실패가 시작된 지 90초라 아직 자가 복구 전
+  for (let i = 0; i < 2; i++) { now += 30_000; await renewTokenClaims(owner, { now }); }
+  assert.equal(tokenOwnership('k1').mine, false, '내 글이 TTL(120초)에 닿으면 미보유(다른 기기가 가져갈 수 있는 시점과 같다)');
+  assert.equal(f.calls.byKey.get(`PUT ${CLAIM_KEY(owner, 'k1')}`), puts0, '여전히 쓰지 않는다');
+});
+
+test('클레임 읽기 오류가 TTL 넘게 이어지면 TTL에 한 번만 써 본다 — 읽을 수 없는 객체가 토큰을 영영 막지 않게', async () => {
+  _resetTokenClaimsForTest(); claimReadFailReset();
+  const f = fakeStore(); _setSyncClientForTest(f.client);
+  const owner = 'owner-claim-escape'; let now = Date.now();
+  setClaimTokens(['e1']);
+  const errs = Array.from({ length: 20 }, () => READ_ERRORS[0]);
+  f.failReads(...errs); // 확인 읽기까지 실패
+  const puts = () => f.calls.byKey.get(`PUT ${CLAIM_KEY(owner, 'e1')}`) || 0;
+  for (let el = 0; el <= TG_CLAIM_TTL_MS + 60_000; el += 30_000) { await renewTokenClaims(owner, { now }); now += 30_000; }
+  assert.equal(puts(), 1, `TTL + 60초 동안 쓰기 ${puts()}번 — 자가 복구 한 번`);
+  assert.equal(tokenOwnership('e1').mine, false, '확인 읽기도 실패 — 보수적으로 미보유');
 });
