@@ -1,7 +1,7 @@
 // 아르고 메신저 봇 API — 정본(순수 JS). index.ts(Deno 엣지 펑션)와 test/msgr-bot-facade.test.mjs가 같이 쓴다.
 // 텔레그램 Bot API 규율을 차용한다: 주소 /bot<token>/<method>, 봉투 {ok, result} | {ok:false, error_code, description},
 // getUpdates 롱폴 + offset(= 마지막 update_id + 1 = ack). 정책·권한 판정은 전부 DB RPC(msgr_bot_*)에 있고 이 층은 번역만 한다.
-// ponytail: 레이트 리밋 없음 — 토큰당 롱폴 RPC는 대기 처음 3초만 초당 1회, 그 뒤 2·3초 간격(POLL_STEPS)이 상한. 남용이 보이면 엣지에서 토큰별 카운터.
+// ponytail: 레이트 리밋 없음 — 토큰당 롱폴 RPC는 대기 시작에 1회, 그 뒤 5초 간격(POLL_STEPS)이 상한. 남용이 보이면 엣지에서 토큰별 카운터.
 export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 'getFile',
   // 외부 에이전트 크루 계약 1-a(20260929130000) — 자동화(크루 루틴) 미러·편집, 위험 명령 결재 카드. 판정은 전부 msgr_bot_* RPC.
   'setRoutines', 'routineEditDone', 'requestApproval', 'ackApproval', 'expireApproval',
@@ -13,11 +13,11 @@ export const METHODS = ['getMe', 'getUpdates', 'sendMessage', 'sendChatAction', 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FILE_URL_TTL_S = 600; // getFile 서명 URL 수명 — 봇은 즉시 내려받는다
 const MAX_WAIT_MS = 25_000; // 텔레그램은 ~50초, 엣지 펑션 벽시계 안에서 여유 있게
-// 롱폴 간격 [대기 시작 뒤 경과 ms 미만, 간격 ms] — 처음 3초는 1초(연달아 오는 글에 바로 반응), 9초까지 2초, 그 뒤 3초.
-// 운영 실측(2026-10-09 10분): 1초 고정일 때 msgr_bot_updates_with_delivery가 분당 약 1,713회(대기 중인 봇 수 × 초당 1회).
-// 연결 도구(Hermes·OpenClaw)의 timeout 20초 빈 대기 한 번에 RPC 21회 → 11회. 쉬던 봇이 글을 받는 지연은 최대 2초 늘어난다(봇 답은 LLM 턴이라 수 초).
-// 연결 도구는 턴을 기다리지 않고 바로 다음 getUpdates를 부르므로 '대기 시작'은 대화의 박자와 맞지 않는다 — 앞 구간은 짧게 둔다.
-const POLL_STEPS = [[3_000, 1_000], [9_000, 2_000], [Infinity, 3_000]];
+// 롱폴 간격 [대기 시작 뒤 경과 ms 미만, 간격 ms] — 대기 시작에 1회(쌓인 글은 바로), 그 뒤 5초 간격.
+// 운영 실측(2026-10-09 10분): 1초 고정일 때 msgr_bot_updates_with_delivery가 분당 약 1,713회(대기 중인 봇 수 × 초당 1회) → 1·2·3초 사다리로 20초 빈 대기 11회.
+// 2026-10-13 로그 수집 과금(한도 20GB의 28배) — 사다리에서도 이 RPC 하나가 하루 32만 건(롱폴 2시간 2,818회 × 10.5회)이라 5초 간격으로 늘린다:
+// 연결 도구(Hermes·OpenClaw)의 timeout 20초 빈 대기 한 번에 RPC 11회 → 5회(0·5·10·15·20초). 쉬던 봇이 글을 받는 지연은 최대 5초(총괄 결정 — 봇 답은 LLM 턴이라 수 초).
+const POLL_STEPS = [[Infinity, 5_000]];
 const pollDelay = (elapsedMs) => POLL_STEPS.find(([until]) => elapsedMs < until)[1];
 
 // PostgREST 오류 메시지(P0001 raise 이름) → HTTP 상태
@@ -139,13 +139,29 @@ export function createRejectMemory({ now = Date.now } = {}) {
     get size() { return m.size; },
   };
 }
+/* 'ok' 판정 기억(2026-10-13 로그 과금 축소) — msgr_bot_gate(무료 주인 차단 판정)는 getUpdates마다 1회라 봇당 분당 약 3회였다.
+   같은 토큰이 'ok'를 받으면 GATE_OK_TTL_S 동안 판정 RPC를 부르지 않는다. 정책 값: 주인이 Pro를 해지·만료해도 이 인스턴스에서 봇이 막히기까지 최대 60초 늦다
+   ('ok' → 거절 지연). 거절 쪽(plan_required)은 기억하지 않고 매번 판정해 거부 기억(createRejectMemory)에 넘긴다 — 무료 → Pro로 바뀐 봇은 종전대로 거부 기억 TTL 뒤 풀린다.
+   거부 기억과 다른 Map이다(키도 만료도 섞이지 않는다). 판정 실패로 통과시킨 경우(옛 DB·시간 초과의 fail-open)는 기억하지 않는다. 토큰 오류(401)·거부 판정이 나오면 지운다.
+   기억은 이 엣지 인스턴스 메모리뿐 — DB에 쓰지 않는다. 토큰은 메모리 키로만 쓰고 기록하지 않는다. */
+export const GATE_OK_TTL_S = 60;
+const GATE_OK_MAX = 5_000; // 메모리 상한 — 넘으면 가장 오래된 것부터 버린다
+export function createGateOkMemory({ now = Date.now } = {}) {
+  const m = new Map(); // token → 만료 시각(ms)
+  return {
+    fresh(token) { const until = m.get(token); if (until == null) return false; if (now() < until) return true; m.delete(token); return false; },
+    remember(token) { m.delete(token); m.set(token, now() + GATE_OK_TTL_S * 1000); while (m.size > GATE_OK_MAX) m.delete(m.keys().next().value); },
+    forget(token) { m.delete(token); },
+    get size() { return m.size; },
+  };
+}
 const REJECT_REPLY = {
   plan: () => failRetry(403, ERR.msgr_bot_plan_required[1], REJECT_TTL_S.plan),
   auth: () => failRetry(401, ERR.msgr_bot_unauthorized[1], REJECT_TTL_S.auth),
 };
 
 // rpc(fn, args) → JSON. PostgREST 오류는 {message, code, details}를 throw.
-export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null, planGate = null, rejects = null } = {}) {
+export async function handle({ token, method, params = {} }, rpc, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, maxWaitMs = MAX_WAIT_MS, sign = null, signUpload = null, purgeUploads = null, planGate = null, rejects = null, gateOk = null } = {}) {
   if (!token) return fail(401, 'Unauthorized: token missing (use /bot<token>/<method> or Authorization: Bearer)');
   if (!METHODS.includes(method)) return fail(404, `Not Found: method ${method || '(none)'} — supported: ${METHODS.join(', ')}`);
   try {
@@ -164,13 +180,16 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
       if (known) { await sleep(Math.max(0, deadline - now())); return REJECT_REPLY[known](); }
       // 무료 계정 봇(2026-10-10): 판정 1회 → 롱폴 시간만큼 DB 조회 없이 붙잡았다가 403. 연결 도구는 403을 1→30초 사다리로 다시 오므로 간격 = 대기 + 사다리.
       // 판정 실패(옛 DB에 함수 없음·시간 초과)는 막지 않는다 — 5xx를 주면 Hermes가 3초 간격으로 다시 온다. 토큰 오류는 종전처럼 401.
-      if (planGate) {
+      if (planGate && !gateOk?.fresh(token)) { // 'ok'를 받은 지 GATE_OK_TTL_S 안이면 판정을 건너뛴다(위 createGateOkMemory)
+        let skipped = false;
         const verdict = await planGate(token).catch((e) => {
-          if (/msgr_bot_unauthorized/.test(String(e?.message ?? ''))) throw e;
+          if (/msgr_bot_unauthorized/.test(String(e?.message ?? ''))) { gateOk?.forget(token); throw e; }
           console.warn('[msgr-bot] plan gate skipped:', String(e?.message ?? '').slice(0, 200));
+          skipped = true;
           return 'ok';
         });
-        if (verdict === 'plan_required') { rejects?.reject(token, 'plan'); await sleep(Math.max(0, deadline - now())); return REJECT_REPLY.plan(); }
+        if (verdict === 'plan_required') { gateOk?.forget(token); rejects?.reject(token, 'plan'); await sleep(Math.max(0, deadline - now())); return REJECT_REPLY.plan(); }
+        if (verdict === 'ok' && !skipped) gateOk?.remember(token);
       }
       // 이벤트(루틴 편집·결재 결정)는 옵트인(events=1)한 어댑터에게만, 요청당 한 번 조회한다. update_id·offset과 무관하고
       // 서버가 60초 임대로 중복을 막는다. 이벤트 조회는 선택 기능 — 어떤 오류든(옛 서버의 RPC 없음, 시간 초과, 교착) 메시지 수신을
@@ -277,7 +296,7 @@ export async function handle({ token, method, params = {} }, rpc, { sleep = (ms)
   } catch (e) {
     const name = String(e?.message ?? '').match(/msgr_[a-z_]+/)?.[0];
     if (name === 'msgr_bot_unauthorized') { // 무효·폐기 토큰 — 받기(getUpdates)만 기억한다(폴링이 폭주의 자리, 다른 메서드는 사람이 부를 때만)
-      if (method === 'getUpdates') rejects?.reject(token, 'auth');
+      if (method === 'getUpdates') { rejects?.reject(token, 'auth'); gateOk?.forget(token); }
       return REJECT_REPLY.auth();
     }
     if (name && ERR[name]) return fail(ERR[name][0], ERR[name][1]);
