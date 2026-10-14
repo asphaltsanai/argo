@@ -81,6 +81,10 @@ const post = (ch, body, mentions = '[]', u = U.owner) => last(asUser(u, `insert 
 const updates = (after = 0, fn = 'msgr_bot_updates_with_delivery') => asAnon(`select public.${fn}('${TOKEN}', ${after})`).split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const seen = () => sql(`select b.last_seen_at::text || '|' || coalesce(b.scan_at::text, '') || '|' || c.xmin::text from public.msgr_bots b join public.msgr_crews c on c.id = b.crew_id where b.id = '${BOT}'`);
 const cursor = () => sql(`select cursor_msg_id from public.msgr_crews where id = '${BOT_CREW}'`);
+const xmins = () => sql(`select b.xmin::text || ':' || c.xmin::text from public.msgr_bots b join public.msgr_crews c on c.id = b.crew_id where b.id = '${BOT}'`);
+const scanAt = () => sql(`select scan_at::text from public.msgr_bots where id = '${BOT}'`);
+// 지문 확정 — 배달한 스캔은 실행 기록·커서를 바꾸므로 다음 호출의 지문이 한 번 달라진다(배포본과 같은 동작). 두 번 연속 같아질 때까지 부른다.
+const settle = (after) => { for (let i = 0; i < 5; i++) { const k = xmins(); updates(after); if (xmins() === k) return; } throw new Error('지문이 확정되지 않는다'); };
 let m1;
 
 test('새 글은 즉시 온다 · ack 뒤엔 없다', { skip }, () => {
@@ -274,4 +278,48 @@ test('검수 H2: 동의하지 않은 사람이 봇을 부르면 배달하지 않
   assert.equal(sql(`select count(*) from public.msgr_messages where channel_id='${PUB}' and client_msg_id='aiconsent:${BOT_CREW}:${PUB}'`), before, '안내는 한 번만 — 두 번째 호출은 dup 키로 조용히 억제');
   m1 = m;
   asUser(U.member, `select public.msgr_set_ai_consent(true)`); // 뒤 테스트 영향 없게 원복
+});
+
+// ── 2026-10-14 유휴 쓰기 줄이기(20261014210000) — 재스캔 시계(scan_at 30초)는 배포본 그대로, 크루 행은 바뀐 것만 ──
+// 검수 1: 첫 판(봇별 6초 구간 시계)은 구간 안 호출마다 전체 스캔했다(상한 없음). 상한은 scan_at 기록이 구조로 보장한다 — 아래 '재스캔 상한'이 잠근다.
+test('유휴 10회(30초 안·크루 접속 신선) — msgr_bots·msgr_crews 행이 하나도 다시 쓰이지 않는다(xmin 그대로)', { skip }, () => {
+  settle(m1);
+  sql(`update public.msgr_crews set last_seen_at = now() where id = '${BOT_CREW}'`);
+  const x = xmins();
+  for (let i = 0; i < 10; i++) assert.deepEqual(updates(m1), []);
+  assert.equal(xmins(), x);
+});
+
+test('크루 접속 시각이 45초 지나면 막힌 호출에서도 크루 1행만 쓰고(스캔 없음), 다음 호출은 쓰기 0', { skip }, () => {
+  settle(m1);
+  sql(`update public.msgr_crews set last_seen_at = now() - interval '46 seconds' where id = '${BOT_CREW}'`);
+  const [b0, c0] = xmins().split(':'); const s0 = scanAt();
+  assert.deepEqual(updates(m1), []);
+  const [b1, c1] = xmins().split(':');
+  assert.equal(b1, b0, '봇 행 그대로 — 전체 스캔 없음'); assert.equal(scanAt(), s0);
+  assert.notEqual(c1, c0, '크루 접속 시각 1행');
+  assert.equal(sql(`select last_seen_at > now() - interval '5 seconds' from public.msgr_crews where id = '${BOT_CREW}'`), 't');
+  updates(m1); updates(m1);
+  assert.equal(xmins(), `${b1}:${c1}`, '같은 45초 안 다음 호출은 쓰기 0');
+});
+
+test('재스캔(30초 기한) 때도 크루 접속이 신선하면 크루 행은 쓰지 않는다 — 봇 행(재스캔 기록) 1행만', { skip }, () => {
+  settle(m1);
+  sql(`update public.msgr_crews set last_seen_at = now() where id = '${BOT_CREW}'`);
+  sql(`update public.msgr_bots set scan_at = now() - interval '31 seconds' where id = '${BOT}'`);
+  const [b0, c0] = xmins().split(':');
+  assert.deepEqual(updates(m1), []);
+  const [b1, c1] = xmins().split(':');
+  assert.notEqual(b1, b0, '재스캔 기록(scan_at)'); assert.equal(c1, c0, '크루 행은 그대로(배포본은 여기서도 썼다)');
+});
+
+test('재스캔 상한 — 매초 호출(timeout=0 흉내)도, 5초 간격 롱폴도 30초 동안 전체 스캔은 1회 이하', { skip }, async () => {
+  for (const gapMs of [1000, 5000]) {
+    settle(m1);
+    sql(`update public.msgr_bots set scan_at = now() where id = '${BOT}'`); // 방금 훑은 것처럼 — 다음 재스캔은 30초 뒤
+    const seen = new Set([scanAt()]);
+    const until = Date.now() + 30_000;
+    while (Date.now() < until) { assert.deepEqual(updates(m1), []); seen.add(scanAt()); await new Promise((r) => setTimeout(r, gapMs)); }
+    assert.ok(seen.size - 1 <= 1, `${gapMs}ms 간격 30초 동안 전체 스캔 ${seen.size - 1}회(상한 1)`);
+  }
 });
