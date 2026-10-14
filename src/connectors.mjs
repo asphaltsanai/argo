@@ -349,7 +349,7 @@ const MSG = {
   // 막고(돌아오면 error=access_denied, 구글 화면에서 멈추면 시간 초과), 사용자는 이유를 모른 채 실패만 본다 — 원인과 할 일을 숨기지 않는다(검수 1, 2026-10-14).
   test_users_only: {
     ko: (d) => `${/^\d+$/.test(String(d)) ? `브라우저 인가가 ${d}초 안에 끝나지 않았습니다. 구글 화면에 'Error 403: access_denied'가 보였다면, ` : '연결이 거부되었습니다(access_denied). '}구글 검수 전이라 등록된 사용자만 연결할 수 있습니다 — 관리자에게 등록을 요청하세요`,
-    en: (d) => `${/^\d+$/.test(String(d)) ? `Authorization did not finish within ${d}s. If Google showed 'Error 403: access_denied', ` : 'The connection was denied (access_denied). '}this app is awaiting Google's review, so only registered users can connect — ask your admin to register you`,
+    en: (d) => `${/^\d+$/.test(String(d)) ? `Authorization did not finish within ${d}s. If Google showed 'Error 403: access_denied', this` : 'The connection was denied (access_denied). This'} app is awaiting Google's review, so only registered users can connect — ask your admin to register you`,
   },
   no_code: { ko: () => '콜백에 인가 코드가 없습니다', en: () => 'The callback did not carry an authorization code' },
   exchange_failed: { ko: (d) => `토큰 교환에 실패했습니다: ${d}`, en: (d) => `Token exchange failed: ${d}` },

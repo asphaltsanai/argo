@@ -129,7 +129,7 @@ test('⑥ 테스트 사용자 한정 — 구글이 access_denied로 돌려보내
   assert.equal(out.errorCode, 'test_users_only');
   assert.match(out.error, /구글 검수 전이라 등록된 사용자만 연결할 수 있습니다 — 관리자에게 등록을 요청하세요/);
   const en = (await listConnections(WS2, { lang: 'en' })).find((c) => c.id === 'gmail-deny');
-  assert.match(en.error, /only registered users can connect — ask your admin to register you/);
+  assert.equal(en.error, 'The connection was denied (access_denied). This app is awaiting Google\'s review, so only registered users can connect — ask your admin to register you');
   assert.equal(en.errorDetail, 'access_denied');
 });
 
