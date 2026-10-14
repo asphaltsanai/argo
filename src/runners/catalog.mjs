@@ -84,8 +84,11 @@ export const RUNNERS = {
       // gated:true(모델 메뉴 배지 표시) + 채팅 런타임 강등 가드(chat.mjs GATED_MODEL_ERR_RE —
       // 기본 모델 1회 자동 재시도) 전제로 허용한다. 첫 항목은 무권한 계정도 도는 모델일 것
       // (러너 전환 시 models[0]이 기본 선택되므로 게이트 모델을 앞에 두면 무료 계정이 이유 없이 죽는다).
-      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro (확인 2026-10-05)
-      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash (확인 2026-10-05)
+      // 2026-10-14: 2.5 Pro·Flash는 예전에 쓴 계정에만 열린다(ai.google.dev deprecations "limited to users who have actively used them") —
+      // 새 키는 404 "no longer available to new users"(사용자 제보, Windows 0.1.107). 첫 항목·기본값은 무료 등급이 있는 정식 3.8 Flash
+      // (pricing 문서 Free Tier "Free of charge", 2026-10-14 확인). 벤더 오류문이 권하는 3.1 Pro Preview는 무료 등급이 없다("Not available").
+      // 옛 2.5 id를 고른 카드는 원격 카탈로그 alias(scripts/gen-model-catalog.mjs LEGACY)가 3.8 Flash로 옮기고, 원격이 없으면 목록 밖 모델 → 기본(3.8 Flash) + '모델 대체' 안내.
+      { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash (확인 2026-10-14)
       { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', gated: true, ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-3.1-pro-preview (확인 2026-10-05)
       { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', gated: true, ctx: 1_048_576 }, // ctx 출처 https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash (확인 2026-10-05)
       // 3.6·3.7 Flash — ai.google.dev 모델 문서(2026-09-01 확인) stable. 같은 3.x 계정 게이트라 gated
@@ -218,7 +221,7 @@ export const isCliTurn = (r, credType) => isCliRunner(r) && !(
   (r === 'gemini' && credType === 'apikey' && nativeRunnerEnabled('gemini'))
   || (r === 'codex' && (credType === 'apikey' || credType === 'oauth') && nativeRunnerEnabled('codex')) // P-B: 옵트인 플래그(ARGO_NATIVE_RUNNERS에 codex 명시)일 때만 — host(이 컴퓨터 로그인)는 CLI
 );
-export const GEMINI_DEFAULT_MODEL = 'gemini-2.5-pro';
+export const GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash'; // 연결 확인(runner-health 턴 모양 프로브)·모델 없는 카드·게이트 모델 강등의 목적지 — 무료 키에서도 열리는 모델(위 models 주석)
 export const CODEX_DEFAULT_MODEL = 'gpt-5.6-sol';
 /** 모델을 비운 codex CLI 턴의 모델 — 프롬프트로 영입한 자동 에이전트·모델 없는 codex 카드·다른 러너에서 넘어온 대체 턴·목록 밖 모델,
     그리고 CLI 원샷(기억 정리·교정 감지·페르소나·직함·루틴 초안·대화 요약). 예전엔 `-m` 없이 돌아 서버 기본 모델을 썼는데, 서버 기본은

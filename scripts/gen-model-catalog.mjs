@@ -26,6 +26,14 @@ export const LEGACY = {
     retire: ['gpt-5.5'],
     alias: { 'gpt-5.5': 'gpt-5.6-sol' },
   },
+  // 2026-10-14: Gemini 2.5 Pro·Flash가 새 계정에 404(예전 사용 계정만 — catalog.mjs gemini 주석). 옛 앱(≤0.1.107)은 코드 목록에 3.8 Flash가 없어 add로 넣고,
+  // 고른 2.5 id를 3.8 Flash로 옮긴다. retire는 하지 않는다 — 옛 앱 목록에서 2.5를 빼면 첫 항목(러너 전환 때 고르는 모델)이 무료 등급 없는 3.1 Pro Preview(gated)가 되고,
+  // 남겨 두면 2.5를 골라도 alias가 3.8로 돌린다. 연결 확인·모델 없는 카드는 옛 앱 코드 상수(2.5 Pro)라 원격으로 못 고친다 — 앱 업데이트(0.1.108)로.
+  gemini: {
+    add: [{ id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' }],
+    retire: [], // 빈 배열로 둔다 — 아래 생성 로그가 LEGACY 항목마다 retire.length를 읽는다(없으면 발행 잡이 exit 1)
+    alias: { 'gemini-2.5-pro': 'gemini-3.8-flash', 'gemini-2.5-flash': 'gemini-3.8-flash' },
+  },
 };
 const doc = {
   schema: SCHEMA,

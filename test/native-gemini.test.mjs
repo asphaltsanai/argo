@@ -134,7 +134,7 @@ test('G6. 자격 축 분기 — gemini API 키는 네이티브(ARGO_WIRE env, CL
   process.env.ARGO_NATIVE_RUNNERS = 'none';
   try { assert.equal(isCliTurn('gemini', 'apikey'), true, '옵트아웃이면 종전 CLI'); const e2 = await runnerCredEnv(ws, 'gemini'); assert.equal(e2.env.ARGO_WIRE, undefined, 'CLI env(격리 HOME)로'); assert.ok(e2.home, 'geminiTurnHome'); }
   finally { delete process.env.ARGO_NATIVE_RUNNERS; }
-  assert.equal(isHiddenRunner('gemini'), false); assert.deepEqual(RUNNER_AUTH.gemini.methods, ['apikey']); assert.equal(GEMINI_DEFAULT_MODEL, 'gemini-2.5-pro');
+  assert.equal(isHiddenRunner('gemini'), false); assert.deepEqual(RUNNER_AUTH.gemini.methods, ['apikey']); assert.equal(GEMINI_DEFAULT_MODEL, 'gemini-3.8-flash'); // 2.5는 새 계정에 404(2026-10-14) — 무료 등급 있는 정식 모델
 });
 
 test('G7. 원샷 — gemini API 키 회사의 runOneShot이 가짜 Gemini 서버로 나가고(도구 없음) 텍스트를 돌려준다', async () => {
@@ -369,7 +369,7 @@ test('G16. 게이트 모델 강등(M1, 행동) — gemini API 키 크루가 gate
     const r = await chat(ws, 'crew-g', '안녕');
     assert.match(r.reply, /^\(이 계정에는 gemini-3.1-pro-preview 접근 권한이 없어/, '강등 고지가 답 머리에');
     assert.match(r.reply, /기본 모델 답/);
-    assert.deepEqual(srv.calls.map((c) => c.url), ['/models/gemini-3.1-pro-preview:generateContent', '/models/gemini-2.5-pro:generateContent'], '게이트 모델 1회 → 기본 모델 1회');
+    assert.deepEqual(srv.calls.map((c) => c.url), ['/models/gemini-3.1-pro-preview:generateContent', '/models/gemini-3.8-flash:generateContent'], '게이트 모델 1회 → 기본 모델 1회');
     const events = (await readFile(join(root, 'events.jsonl'), 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
     const turn = events.filter((e) => e.type === 'turn' && e.ok).at(-1);
     assert.equal(turn?.downgradedFrom, 'gemini-3.1-pro-preview', '이벤트 필드는 CLI 경로와 같다');
