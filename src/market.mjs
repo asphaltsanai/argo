@@ -214,9 +214,20 @@ export function mcpCatalogFor(lang = 'ko') {
    · PRM은 **도구별**(`/.well-known/oauth-protected-resource/<tool>`)이고 `scopes_supported`는 택일이다.
      Calendar 9개 도구 전부에 `auth/calendar`가 들어 있어 **이 하나로 전 도구가 열린다** — scopes에
      합집합을 다 적으면 동의 화면만 무섭게 길어지고 얻는 게 없다.
-   · Gmail·Drive는 뒤로 미룬다: 필요한 scope가 구글 '제한' 등급이라 프로덕션 게시에 CASA 보안 심사가
-     붙는다(Calendar의 '민감' 등급은 검증만). Gmail은 발송 도구 자체가 없다(초안까지).
+   · Gmail(2026-10-14 재실측, 유건 지시로 등재): 경로 같은 `/mcp/v1`, 도구 23개(8월 13개에서 늘었다), annotations 100%,
+     **발송 도구는 여전히 없다**(초안까지). 23개 전부를 덮는 scope는 `mail.google.com`(영구 삭제·발송 포함 전권)과
+     `gmail.modify` 둘뿐이라 좁은 `gmail.modify` 하나만 싣는다. 이 scope는 구글 '제한' 등급이라 Argo OAuth 앱을
+     프로덕션으로 게시하려면 CASA 보안 심사가 붙는다 — 그 전에는 콘솔의 테스트 사용자만 연결된다(Calendar의 '민감' 등급은 검증만).
+   · Drive는 아직 뒤로 미룬다(같은 '제한' 등급).
    검증 안 된 항목을 미리 실으면 화면에 "연결" 버튼이 생기고 누르면 실패한다 — 조용한 무동작보다 나쁘다. */
+// Gmail 원격 MCP의 쓰기 도구(실측 2026-10-14 무인증 tools/list, annotations.readOnlyHint=false 17개 — 읽기 전용은 6개). ko·en 항목이 같은 배열을 쓴다.
+// 결재 없이 실행하는 읽기 도구(허용 목록, fail-closed) — 이 6개 밖은 annotations와 상관없이 결재다(검수 1, 총괄 결정 2026-10-14).
+const GMAIL_READ_TOOLS = Object.freeze(['search_threads', 'get_thread', 'get_message', 'list_drafts', 'get_draft', 'list_labels']);
+const GMAIL_WRITE_TOOLS = Object.freeze([
+  'create_draft', 'label_thread', 'unlabel_thread', 'apply_sensitive_thread_label', 'trash_thread', 'untrash_thread',
+  'mark_thread_spam', 'unmark_thread_spam', 'label_message', 'update_message_labels', 'unlabel_message',
+  'apply_sensitive_message_label', 'trash_message', 'untrash_message', 'mark_message_spam', 'unmark_message_spam', 'create_label',
+]);
 export const CONNECTOR_CATALOG = [
   {
     id: 'google-calendar',
@@ -235,6 +246,23 @@ export const CONNECTOR_CATALOG = [
     // 실측 기준 이 4개가 쓰기다 — 목록이 어긋나면 테스트가 문다.
     dangerous: ['create_event', 'update_event', 'delete_event', 'respond_to_event'],
   },
+  {
+    id: 'gmail',
+    name: 'Gmail',
+    url: 'https://gmailmcp.googleapis.com/mcp/v1',
+    // 택일 목록 중 23개 도구 전부를 덮는 좁은 쪽(mail.google.com은 영구 삭제·발송까지 여는 전권이라 쓰지 않는다). 실측 2026-10-14.
+    scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+    note: '메일 검색·읽기·초안·라벨 조회는 바로, 초안 만들기·라벨 바꾸기·휴지통·스팸 처리는 결재 후 실행됩니다. 메일 보내기는 없습니다.',
+    oauth: {
+      client_id: '871799254033-m6keci1lbsheho954b4ib2kvn5al6osn.apps.googleusercontent.com', // 캘린더와 같은 Argo 구글 OAuth 클라이언트
+      client_secret_env: 'ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET',
+    },
+    // 실측 readOnlyHint=false 17개 전부(서버 annotations가 1순위, 이건 보완재).
+    dangerous: GMAIL_WRITE_TOOLS,
+    readOnlyAllow: GMAIL_READ_TOOLS,
+    // 구글 '제한' 범위(gmail.modify) — 구글 검수(CASA) 전에는 콘솔의 테스트 사용자만 로그인된다. 거부되면 등록 안내를 보인다(connectors.mjs test_users_only).
+    testUsersOnly: true,
+  },
 ];
 
 // 영어 미러 — 등재 시 **같은 id·같은 url·같은 scopes**로 짝을 맞춘다(name·note만 언어별).
@@ -251,6 +279,21 @@ export const CONNECTOR_CATALOG_EN = [
       client_secret_env: 'ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET',
     },
     dangerous: ['create_event', 'update_event', 'delete_event', 'respond_to_event'],
+  },
+  {
+    id: 'gmail',
+    name: 'Gmail',
+    url: 'https://gmailmcp.googleapis.com/mcp/v1',
+    scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+    note: 'Searching and reading mail, drafts and labels run right away; creating drafts, changing labels, trash and spam run after your approval. Sending mail is not available.',
+    oauth: {
+      client_id: '871799254033-m6keci1lbsheho954b4ib2kvn5al6osn.apps.googleusercontent.com',
+      client_secret_env: 'ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET',
+    },
+    dangerous: GMAIL_WRITE_TOOLS,
+    readOnlyAllow: GMAIL_READ_TOOLS,
+    // 구글 '제한' 범위(gmail.modify) — 구글 검수(CASA) 전에는 콘솔의 테스트 사용자만 로그인된다. 거부되면 등록 안내를 보인다(connectors.mjs test_users_only).
+    testUsersOnly: true,
   },
 ];
 
@@ -277,6 +320,8 @@ export function connectorCatalogItemErrors(item) {
   if (item.note !== undefined && typeof item.note !== 'string') e.push('note');
   if (item.scopes !== undefined && !strList(item.scopes)) e.push('scopes');
   if (item.dangerous !== undefined && !strList(item.dangerous)) e.push('dangerous');
+  if (item.readOnlyAllow !== undefined && !strList(item.readOnlyAllow)) e.push('readOnlyAllow'); // 허용 목록(fail-closed) — 이 읽기 도구만 결재 없이
+  if (item.testUsersOnly !== undefined && typeof item.testUsersOnly !== 'boolean') e.push('testUsersOnly');
   if (item.redirect_port !== undefined && !(Number.isInteger(item.redirect_port) && item.redirect_port >= 1024 && item.redirect_port <= 65535)) e.push('redirect_port'); // 고정 콜백 포트(등록한 redirect_uri와 정확히 맞춰야 하는 서버)
   if (item.oauth !== undefined) {
     const o = item.oauth;
@@ -305,6 +350,7 @@ export function connectorServerDef(item) {
     url: item.url,
     ...(item.scopes?.length ? { scopes: [...item.scopes] } : {}),
     ...(item.redirect_port !== undefined ? { redirect_port: item.redirect_port } : {}),
+    ...(item.testUsersOnly ? { testUsersOnly: true } : {}),
     ...(connectorMode(item) === 'fixed'
       ? { oauth: { client_id: item.oauth.client_id, ...resolveClientSecret(item.oauth) } }
       : {}),

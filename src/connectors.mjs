@@ -221,6 +221,8 @@ export async function startConnect(wsId, serverDef, { timeoutMs = CONNECT_TIMEOU
     clearTimeout(timer);
     cb.close(); // 1회용 — 첫 결과(성공·거부·타임아웃)로 콜백 창구를 닫는다
     if (out.errorCode) {
+      // 테스트 사용자 한정 커넥터에서 구글이 막은 모양(access_denied·시간 초과)이면 등록 안내로 바꿔 저장한다 — 원래 사유는 errorDetail에 남는다.
+      if (serverDef.testUsersOnly && ((out.errorCode === 'auth_denied' && out.detail === 'access_denied') || out.errorCode === 'auth_timeout')) out.errorCode = 'test_users_only';
       const text = connectorMessage(out.errorCode, 'ko', out.detail);
       await patchServer(wsId, id, { status: 'error', errorCode: out.errorCode, errorDetail: out.detail ?? null, error: text });
       return { ok: false, serverId: id, errorCode: out.errorCode, error: text };
@@ -343,6 +345,12 @@ const MSG = {
   connect_failed: { ko: (d) => `서버에 연결할 수 없습니다: ${d}`, en: (d) => `Could not reach the server: ${d}` },
   auth_timeout: { ko: (n) => `브라우저 인가가 ${n}초 안에 완료되지 않았습니다`, en: (n) => `Authorization was not completed within ${n}s` },
   auth_denied: { ko: (d) => `인가가 거부되었습니다(${d})`, en: (d) => `Authorization was denied (${d})` },
+  // 구글 '제한' 범위 커넥터(카탈로그 testUsersOnly) — 구글 검수(CASA) 전에는 콘솔의 테스트 사용자만 로그인된다. 그 밖의 계정은 구글이 403 access_denied로
+  // 막고(돌아오면 error=access_denied, 구글 화면에서 멈추면 시간 초과), 사용자는 이유를 모른 채 실패만 본다 — 원인과 할 일을 숨기지 않는다(검수 1, 2026-10-14).
+  test_users_only: {
+    ko: (d) => `${/^\d+$/.test(String(d)) ? `브라우저 인가가 ${d}초 안에 끝나지 않았습니다. 구글 화면에 'Error 403: access_denied'가 보였다면, ` : '연결이 거부되었습니다(access_denied). '}구글 검수 전이라 등록된 사용자만 연결할 수 있습니다 — 관리자에게 등록을 요청하세요`,
+    en: (d) => `${/^\d+$/.test(String(d)) ? `Authorization did not finish within ${d}s. If Google showed 'Error 403: access_denied', this` : 'The connection was denied (access_denied). This'} app is awaiting Google's review, so only registered users can connect — ask your admin to register you`,
+  },
   no_code: { ko: () => '콜백에 인가 코드가 없습니다', en: () => 'The callback did not carry an authorization code' },
   exchange_failed: { ko: (d) => `토큰 교환에 실패했습니다: ${d}`, en: (d) => `Token exchange failed: ${d}` },
   // 카탈로그에 없는 id로 연결을 시도(오래된 화면·잘못된 요청) — market.connectConnector가 던진다.
@@ -362,7 +370,10 @@ const MSG = {
     둘 중 하나만 쓰기라 해도 쓰기로 본다(안전한 방향으로 틀린다).
     readOnlyHint가 true면 결재 없이 통과 — 조회까지 결재를 걸면 크루가 아무것도 못 하고 사장은
     승인 버튼에 파묻힌다. (export: 회귀 테스트·설정 카드 표기 공용) */
-export function connectorToolNeedsApproval(toolName, tools = [], dangerous = []) {
+export function connectorToolNeedsApproval(toolName, tools = [], dangerous = [], readOnlyAllow = null) {
+  // 허용 목록(fail-closed) 항목 — 카탈로그 readOnlyAllow가 있으면 그 목록의 읽기 도구만 결재 없이 통과하고, 그 밖은 annotations와 상관없이
+  // 결재다(서버가 새 도구를 더하거나 readOnlyHint를 잘못 줘도 결재로 간다 — Gmail 검수 1, 총괄 결정 2026-10-14). 이 칸이 없는 항목은 종전 판정 그대로.
+  if (Array.isArray(readOnlyAllow)) return !readOnlyAllow.includes(toolName);
   const t = tools.find((x) => x?.name === toolName);
   const hint = t?.annotations?.readOnlyHint;
   if (hint === true) return false;                     // 서버가 "읽기 전용"이라고 말한 경우만 면제
@@ -384,15 +395,19 @@ const CONNECTOR_PURCHASE_WORDS = ['purchase', 'buy', 'order', 'checkout', 'pay',
 // 과차단(예: "reconnect_call" 같은 무관한 이름도 걸림)은 요구사항 3의 "애매하면 결재"를 그대로 따른
 // 의도된 선택이다.
 const CONNECTOR_SENSITIVE_WORDS = ['share', 'permission', 'acl', 'invite', 'public', 'password', 'credential', 'token', 'secret', 'key', 'oauth', 'billing', 'account', 'login', 'auth', 'connect', 'disconnect', 'unlink', 'revoke', 'filter', 'forward'];
+// 발송(send·reply) 추가(Gmail 검수 1, 총괄 결정 2026-10-14) — 메일·메시지를 남에게 보내는 일은 되돌릴 수 없어 풀 오토에서도 결재를 유지한다.
+// 유건 9/26 경계 예시의 "gmail send = 자동"을 바꾼 것이다. forward(자동전달)는 위 sensitive에 이미 있다. draft_send·send_draft·reply_all은 부분 문자열로 함께 잡힌다.
+const CONNECTOR_SEND_WORDS = ['send', 'reply'];
 const hasAnyWord = (name, words) => words.some((w) => name.includes(w));
 
-/** 이 도구가 풀 오토에서도 결재가 필요한 3계급 중 무엇인가 — 'delete'|'purchase'|'sensitive'|'general'.
+/** 이 도구가 풀 오토에서도 결재가 필요한 계급 중 무엇인가 — 'delete'|'purchase'|'sensitive'|'send'|'general'.
     'general'만 풀 오토가 결재를 건너뛴다. */
 export function connectorRiskCategory(toolName, annotations = {}) {
   const name = String(toolName ?? '').toLowerCase();
   if (annotations?.destructiveHint === true || hasAnyWord(name, CONNECTOR_DELETE_WORDS)) return 'delete';
   if (hasAnyWord(name, CONNECTOR_PURCHASE_WORDS)) return 'purchase';
   if (hasAnyWord(name, CONNECTOR_SENSITIVE_WORDS)) return 'sensitive';
+  if (hasAnyWord(name, CONNECTOR_SEND_WORDS)) return 'send';
   return 'general';
 }
 
@@ -439,13 +454,14 @@ async function callViaPool(wsId, serverId, url, tool, args, retryLeft, lang) {
     delete·purchase·sensitive 3계급(connectorAlwaysNeedsApproval)이 아니면 결재를 건너뛴다. */
 async function needsApprovalNow(wsId, serverId, tool, { fullAuto = false } = {}) {
   const { connectorCatalogFor } = await import('./market.mjs'); // 동적 — market→connectors 순환 방지
-  const dangerous = connectorCatalogFor('ko').find((c) => c.id === serverId)?.dangerous ?? [];
+  const item = connectorCatalogFor('ko').find((c) => c.id === serverId);
+  const dangerous = item?.dangerous ?? [];
   const listed = await listConnectorTools(wsId, serverId).catch(() => ({ ok: false, tools: [] }));
   // 조회 **성공**인데 그 이름이 목록에 없다 = 서버가 모르는 도구다. 결재로 보낸다 — 어차피 서버가
   // 거절할 호출이라 비용이 없고, 반대로 통과시키면 `dangerous`(닫힌 목록) 밖의 새 쓰기 도구가
   // 무결재로 나간다(분리 검수 실측: annotations 없는 쓰기 도구가 결재 0건으로 실행됐다).
   if (listed.ok && !listed.tools?.some((t) => t?.name === tool)) return true;
-  if (!connectorToolNeedsApproval(tool, listed.tools ?? [], dangerous)) return false;
+  if (!connectorToolNeedsApproval(tool, listed.tools ?? [], dangerous, item?.readOnlyAllow ?? null)) return false;
   if (!fullAuto) return true;
   const t = listed.tools?.find((x) => x?.name === tool);
   return connectorAlwaysNeedsApproval(tool, t?.annotations ?? {});

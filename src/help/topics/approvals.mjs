@@ -27,7 +27,7 @@ export default {
 
 **풀 오토 모드** (설정 → 일반 → 풀 오토 모드, 기본 꺼짐)
 - 켜면 사용자가 직접 지시한 턴(본체 대화·메신저 DM·텔레그램 등)과 사용자가 만든 루틴·장시간 작업에서는 결재 없이 바로 실행하고 결과를 보고합니다.
-- 켜도 항상 결재: 연결 서비스(Gmail·Drive·Notion 등)의 삭제, 구매·결제, 민감 정보 변경(비밀번호·API 키·토큰·로그인 연결·결제 수단·공유·권한·계정 설정).
+- 켜도 항상 결재: 연결 서비스(Gmail·Drive·Notion 등)의 보내기(발송·답장), 삭제, 구매·결제, 민감 정보 변경(비밀번호·API 키·토큰·로그인 연결·결제 수단·공유·권한·계정 설정).
 - 적용되지 않는 곳: 에이전트끼리 넘긴 일, 에이전트가 건 예약, 조직 채널에서 다른 사람이 한 지시, 손님 요청.
 - 연결 서비스 밖의 삭제·민감한 작업은 에이전트가 스스로 결재를 올리도록 안내받을 뿐 시스템이 강제하지는 않습니다. 켤 때 이 점을 고려하세요.
 - 풀 오토는 사용자만 설정 화면에서 켜고 끌 수 있습니다. 에이전트가 바꿀 수 없습니다.`,
@@ -58,7 +58,7 @@ export default {
 
 **Full auto mode** (Settings → General → Full auto mode, off by default)
 - When on, turns you gave directly (main chat, messenger DMs, Telegram, etc.) and routines and long tasks you created run without approval and report back.
-- Still always needs approval even when on: deletion, purchases and payments, and sensitive changes (passwords, API keys, tokens, login connections, payment methods, sharing, permissions, account settings) in connected services such as Gmail, Drive and Notion.
+- Still always needs approval even when on: sending (send, reply), deletion, purchases and payments, and sensitive changes (passwords, API keys, tokens, login connections, payment methods, sharing, permissions, account settings) in connected services such as Gmail, Drive and Notion.
 - Not covered: work handed between agents, schedules set by agents, instructions from other people in org channels, and guest requests.
 - Deletion or sensitive actions outside connected services rely on agents being instructed to ask first; the system does not enforce it. Keep that in mind before turning it on.
 - Only you can turn Full auto on or off, in Settings. Agents cannot change it.`,

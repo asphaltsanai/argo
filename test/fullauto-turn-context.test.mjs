@@ -50,7 +50,7 @@ const { saveRunnerCred } = await import('../src/runners/creds.mjs');
 const { chat } = await import('../src/chat.mjs');
 const { startConnect, closeConnectorPools } = await import('../src/connectors.mjs');
 const { loadApprovals } = await import('../src/approvals.mjs');
-const { startOauthTestServer } = await import('./helpers/oauth-test-server.mjs');
+const { startOauthTestServer, UPDATE_NOTE_DEMO } = await import('./helpers/oauth-test-server.mjs');
 
 const ws = 'fa-ctx';
 await createCompany(ws, '풀 오토 맥락', 'owner', null, 'ko');
@@ -60,7 +60,7 @@ await writeFile(join(p.agents, 'a.md'), '---\nname: 알파\nrole: 검증\nrunner
 await saveRunnerCred(ws, 'claude', 'apikey', `sk-ant-api03-${'x'.repeat(80)}`); // 형식만 맞춘 가짜 — 요청은 로컬 가짜 엔드포인트로만 간다
 await updateCompany(ws, { fullAuto: true });
 
-const s = await startOauthTestServer();
+const s = await startOauthTestServer({ extraTools: [UPDATE_NOTE_DEMO] });
 after(async () => { await closeConnectorPools(); await s.close(); srv.close(); });
 const ID = 'demo-fa-ctx';
 const { authUrl, done } = await startConnect(ws, { id: ID, url: s.mcpUrl, scopes: ['spike.read', 'spike.write'] });
@@ -71,15 +71,15 @@ const OWNER = '11111111-1111-4111-8111-111111111111'; const GUEST = '22222222-22
 const msgr = (extra = {}) => ({ kind: 'msgr', chatType: 'group', channelKind: 'public', orgId: 'org-1', channelId: 'ch-1', crewId: 'crew-1', threadRoot: 1, sourceMsgId: 1,
   uid: OWNER, wsId: ws, origin: OWNER, hop: 0, orgSlug: null, channelName: 'general', peers: [], handoffs: [], ...extra });
 const FULL_AUTO = /풀 오토 모드가 켜져/; // commonDirectives의 풀 오토 문구(ko) — 꺼진 턴의 글에는 없다
-const sent = () => s.counters.toolCalls.send_mail_demo ?? 0;
+const sent = () => s.counters.toolCalls.update_note_demo ?? 0;
 
 /** 턴 하나 — 모델이 use_connector로 발송을 시도한다. 반환 = 게이트 인자·모델에게 간 글·결과 */
 async function turn(label, mirrorCtx) {
-  fire = { name: 'mcp__crew__use_connector', input: { server: ID, tool: 'send_mail_demo', args: { to: `${label}@example.com`, body: 'hi' } } };
+  fire = { name: 'mcp__crew__use_connector', input: { server: ID, tool: 'update_note_demo', args: { to: `${label}@example.com`, body: 'hi' } } };
   fired = false; seen.length = 0; globalThis.__connectorGateCalls = [];
   const before = sent(); const ap0 = new Set((await loadApprovals(ws)).map((x) => x.id));
   await chat(ws, 'a', '메일 보내 줘', null, mirrorCtx ? { mirrorCtx, source: 'messenger', journal: { off: true } } : {});
-  const gate = globalThis.__connectorGateCalls.filter((c) => c.server === ID && c.tool === 'send_mail_demo');
+  const gate = globalThis.__connectorGateCalls.filter((c) => c.server === ID && c.tool === 'update_note_demo');
   assert.equal(gate.length, 1, `${label}: 게이트를 한 번 지났다(모델의 발송 시도가 커넥터 단일 경로로 갔다)`);
   assert.ok(seen.length >= 1, `${label}: 실제 SDK 턴이 가짜 엔드포인트와 왕복했다`);
   return {
