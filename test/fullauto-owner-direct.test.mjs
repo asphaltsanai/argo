@@ -53,7 +53,7 @@ const { loadApprovals } = await import('../src/approvals.mjs');
 const { crewmailTurn } = await import('../src/scheduler.mjs');
 const { _makeJobHandlerForTest, queueDir, JOBS_QUEUE } = await import('../src/gateway.mjs');
 const { _followUpForTest } = await import('../src/approval-actions.mjs');
-const { startOauthTestServer } = await import('./helpers/oauth-test-server.mjs');
+const { startOauthTestServer, UPDATE_NOTE_DEMO } = await import('./helpers/oauth-test-server.mjs');
 
 const ws = 'fa-owner';
 await createCompany(ws, '풀 오토 검수', 'owner', null, 'ko');
@@ -63,15 +63,15 @@ for (const [slug, name, mark] of [['a', '알파', 'A'], ['b', '브라보', 'B'],
 await saveRunnerCred(ws, 'claude', 'apikey', `sk-ant-api03-${'x'.repeat(80)}`); // 형식만 맞춘 가짜 — 요청은 로컬 가짜 엔드포인트로만 간다
 await updateCompany(ws, { fullAuto: true });
 
-const s = await startOauthTestServer();
+const s = await startOauthTestServer({ extraTools: [UPDATE_NOTE_DEMO] });
 after(async () => { await closeConnectorPools(); await s.close(); srv.close(); });
 const ID = 'demo-fa';
 const { authUrl, done } = await startConnect(ws, { id: ID, url: s.mcpUrl, scopes: ['spike.read', 'spike.write'] });
 { const r1 = await fetch(authUrl, { redirect: 'manual' }); await fetch(new URL(r1.headers.get('location'))); }
 assert.equal((await done).ok, true, '사전 조건: 커넥터 연결');
 
-const SEND = (to) => ({ name: 'mcp__crew__use_connector', input: { server: ID, tool: 'send_mail_demo', args: { to, body: 'hi' } } });
-const sent = () => s.counters.toolCalls.send_mail_demo ?? 0;
+const SEND = (to) => ({ name: 'mcp__crew__use_connector', input: { server: ID, tool: 'update_note_demo', args: { to, body: 'hi' } } });
+const sent = () => s.counters.toolCalls.update_note_demo ?? 0;
 const reset = (next) => { plan = next; firedBy.clear(); reqs.length = 0; };
 // 새로 생긴 결재만 — addApproval은 목록 앞에 넣는다(unshift). 길이로 자르면 가장 오래된 결재를 본다(재검수 3차 MEDIUM-1)
 const snap = async () => new Set((await loadApprovals(ws)).map((x) => x.id));
@@ -198,7 +198,7 @@ test('MEDIUM-2 — CLI 지시 블록의 결재와 커넥터 결재도 출처(위
   const ap0 = await snap();
   await runDirectives(ws, 'b', [{ action: 'approval', request: '메일 발송', reason: '보고' }], { chain: ['a'], hop: 1 });
   const { callConnectorTool } = await import('../src/connectors.mjs');
-  const r = await callConnectorTool(ws, ID, 'send_mail_demo', { to: 'x@example.com', body: 'x' }, { slug: 'b', fullAuto: false, from: 'a' });
+  const r = await callConnectorTool(ws, ID, 'update_note_demo', { to: 'x@example.com', body: 'x' }, { slug: 'b', fullAuto: false, from: 'a' });
   assert.equal(r.error, 'approval_pending');
   const added = await newer(ap0);
   assert.equal(added.length, 2);

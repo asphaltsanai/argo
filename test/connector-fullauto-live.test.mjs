@@ -16,13 +16,14 @@ const { startConnect, callConnectorTool, closeConnectorPools } = await import('.
 const { loadApprovals } = await import('../src/approvals.mjs');
 const { createCompany, updateCompany } = await import('../src/workspace.mjs');
 const { readEvents } = await import('../src/events.mjs');
-const { startOauthTestServer } = await import('./helpers/oauth-test-server.mjs');
+const { startOauthTestServer, UPDATE_NOTE_DEMO } = await import('./helpers/oauth-test-server.mjs');
 
 const WS = 'co-fullauto-live';
 await createCompany(WS, '풀오토 테스트사', 'captain');
 
 const s = await startOauthTestServer({
   extraTools: [
+    UPDATE_NOTE_DEMO, // 일반 쓰기(풀 오토 자동) — 2026-10-14부터 발송은 풀 오토에서도 결재라 자동 실행 대조는 이 도구로 잰다
     { name: 'delete_thread_demo', description: '데모 삭제(쓰기) — annotations.destructiveHint=true',
       annotations: { readOnlyHint: false, destructiveHint: true } },
     // readOnlyHint:false로 기본 게이트는 이미 결재 대상 — 여기서 재는 것은 fullAuto가 "이름에 charge가
@@ -58,14 +59,24 @@ test('풀 오토 켜짐 + 주인 직접 턴 — 일반 쓰기는 결재 없이 �
   await updateCompany(WS, { fullAuto: true });
   const beforeApprovals = (await loadApprovals(WS)).length;
   // mirrorCtx 생략 = 본체 채팅·주인의 텔레그램과 같은 문맥(isGuestCtx가 kind !== 'msgr'로 false를 준다).
-  const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'b@example.com', body: 'auto' }, { slug: 'captain' });
+  const r = await callConnectorTool(WS, ID, 'update_note_demo', { to: 'b@example.com', body: 'auto' }, { slug: 'captain' });
   assert.equal(r.ok, true, '풀 오토인데 결재가 걸렸다');
   assert.equal((await loadApprovals(WS)).length, beforeApprovals, '결재가 새로 등록됐다 — 풀 오토가 안 먹었다');
-  assert.equal(s.counters.toolCalls.send_mail_demo ?? 0, 1, '실제 발송이 서버에 닿지 않았다');
+  assert.equal(s.counters.toolCalls.update_note_demo ?? 0, 1, '실제 발송이 서버에 닿지 않았다');
   const ev = (await readEvents(WS)).filter((e) => e.type === 'approval' && e.id === 'auto').at(-1);
   assert.ok(ev, '풀 오토 자동 승인이 활동 원장에 안 남았다(요구사항 c)');
   assert.equal(ev.status, 'approved');
-  assert.match(ev.action, /send_mail_demo/);
+  assert.match(ev.action, /update_note_demo/);
+});
+
+test('풀 오토 켜짐 + 주인 직접 턴 — 발송(send) 이름 도구는 결재로 간다(Gmail 검수 1, 총괄 결정 2026-10-14 — 유건 9/26 예시 "gmail send=자동" 변경)', async () => {
+  await updateCompany(WS, { fullAuto: true });
+  const before = (await loadApprovals(WS)).length;
+  const sent = s.counters.toolCalls.send_mail_demo ?? 0;
+  const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'send@example.com', body: 'x' }, { slug: 'captain' });
+  assert.equal(r.error, 'approval_pending', '풀 오토가 발송을 결재 없이 보냈다');
+  assert.equal((await loadApprovals(WS)).length, before + 1);
+  assert.equal(s.counters.toolCalls.send_mail_demo ?? 0, sent, '결재 전에 발송이 서버에 닿았다');
 });
 
 test('풀 오토 켜짐 + 주인 직접 턴 — 삭제 계열(destructiveHint)은 여전히 결재로 간다', async () => {
@@ -102,21 +113,21 @@ test('풀 오토 켜짐 + 오피스에서 맡긴 주인 턴(office) — 쓰기�
   await updateCompany(WS, { fullAuto: true });
   const ownerCtx = { kind: 'msgr', orgId: 'org-1', channelId: 'ch-1', crewId: 'crew-1', uid: 'owner-uid', wsId: WS, origin: 'owner-uid', hop: 0 };
   // 대조군 — 같은 주인 메신저 턴에 표지만 없으면 풀 오토로 바로 나간다(이 테스트가 풀 오토 켜짐 상태를 실제로 재는지 확인)
-  const control = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'f@example.com', body: 'owner' }, { slug: 'captain', mirrorCtx: ownerCtx });
+  const control = await callConnectorTool(WS, ID, 'update_note_demo', { to: 'f@example.com', body: 'owner' }, { slug: 'captain', mirrorCtx: ownerCtx });
   assert.equal(control.ok, true, '전제: 주인의 메신저 직접 턴은 풀 오토로 나간다');
   const officeCtx = { ...ownerCtx, office: true };
-  const sent = s.counters.toolCalls.send_mail_demo ?? 0;
-  const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'e@example.com', body: 'office' }, { slug: 'captain', mirrorCtx: officeCtx });
+  const sent = s.counters.toolCalls.update_note_demo ?? 0;
+  const r = await callConnectorTool(WS, ID, 'update_note_demo', { to: 'e@example.com', body: 'office' }, { slug: 'captain', mirrorCtx: officeCtx });
   assert.equal(r.error, 'approval_pending', '오피스에서 맡긴 턴인데 풀 오토가 결재 없이 보냈다');
-  assert.equal(s.counters.toolCalls.send_mail_demo ?? 0, sent, '결재 전에 발송이 서버에 닿았다');
+  assert.equal(s.counters.toolCalls.update_note_demo ?? 0, sent, '결재 전에 발송이 서버에 닿았다');
 });
 
 test('풀 오토 켜짐 + 이 턴이 주인 직접 턴이 아님(fullAuto:false — 크루가 보낸 세션 메시지의 받는 턴·깨움 턴) — 쓰기는 결재로 간다(0.1.94 분리 검수 MEDIUM-4)', async () => {
   await updateCompany(WS, { fullAuto: true });
-  const sent = s.counters.toolCalls.send_mail_demo ?? 0;
-  const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'g@example.com', body: 'crew-sent' }, { slug: 'captain', fullAuto: false });
+  const sent = s.counters.toolCalls.update_note_demo ?? 0;
+  const r = await callConnectorTool(WS, ID, 'update_note_demo', { to: 'g@example.com', body: 'crew-sent' }, { slug: 'captain', fullAuto: false });
   assert.equal(r.error, 'approval_pending', '턴이 풀 오토가 아닌데 결재 없이 보냈다');
-  assert.equal(s.counters.toolCalls.send_mail_demo ?? 0, sent, '결재 전에 발송이 서버에 닿았다');
+  assert.equal(s.counters.toolCalls.update_note_demo ?? 0, sent, '결재 전에 발송이 서버에 닿았다');
 });
 
 test('읽기 전용 도구는 이름에 sensitive 단어가 있어도 영향 없음 — 결재 자체가 애초에 없다(분리 검수 MEDIUM 반영)', async () => {

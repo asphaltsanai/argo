@@ -14,7 +14,7 @@ const { connectorRiskCategory, connectorAlwaysNeedsApproval } = await import('..
 
 test('유건이 준 경계 예시 — 그대로 통과해야 한다', () => {
   const cases = [
-    ['gmail_send', {}, 'general'],
+    ['gmail_send', {}, 'send'], // 2026-10-14 변경(Gmail 검수 1, 총괄 결정) — 발송은 풀 오토에서도 결재. 9/26 예시는 'general'(자동)이었다
     ['drive_delete', {}, 'delete'],
     ['drive_share', {}, 'sensitive'],
     ['stripe_charge', {}, 'purchase'],
@@ -65,12 +65,12 @@ test('대소문자·구분자 무관 — 서비스마다 네이밍이 달라도 
 });
 
 // 분리 검수 MEDIUM 반영(2026-09-26) — 단어 보강. 총괄이 준 경계 예시 그대로.
-test('보강 경계 예시 — disconnect_slack·create_filter·forward_email_rule은 결재, send_email은 자동', () => {
+test('보강 경계 예시 — disconnect_slack·create_filter·forward_email_rule은 결재, send_email도 결재(2026-10-14 변경)', () => {
   const cases = [
     ['disconnect_slack', 'sensitive'],
     ['create_filter', 'sensitive'],
     ['forward_email_rule', 'sensitive'],
-    ['send_email', 'general'],
+    ['send_email', 'send'],
   ];
   for (const [name, want] of cases) {
     assert.equal(connectorRiskCategory(name), want, `${name} → ${want}이어야 하는데 아니다`);
@@ -93,3 +93,11 @@ test('보강 결제 단어 — transfer·refund', () => {
 // 참고: 이름이 sensitive 단어(billing 등)를 포함해도 readOnlyHint:true 도구가 애초에 결재 대상이 아닌 것은
 // 이 순수함수의 몫이 아니다(needsApprovalNow가 그 신호로 먼저 걸러낸다) — 행동 증거는
 // connector-fullauto-live.test.mjs의 "읽기 전용은 이름이 sensitive여도 영향 없음" 테스트가 진다.
+
+test('발송 계열 이름 — send·reply(draft_send·reply_all 포함)는 풀 오토에서도 결재, 일반 쓰기는 그대로(2026-10-14)', () => {
+  for (const name of ['send_message', 'send_draft', 'draft_send', 'reply_to_thread', 'reply_all', 'SendMail']) {
+    assert.equal(connectorRiskCategory(name), 'send', name);
+    assert.equal(connectorAlwaysNeedsApproval(name), true, name);
+  }
+  for (const name of ['create_draft', 'label_thread', 'update_page']) assert.equal(connectorRiskCategory(name), 'general', name);
+});

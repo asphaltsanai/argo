@@ -221,6 +221,8 @@ export function mcpCatalogFor(lang = 'ko') {
    · Drive는 아직 뒤로 미룬다(같은 '제한' 등급).
    검증 안 된 항목을 미리 실으면 화면에 "연결" 버튼이 생기고 누르면 실패한다 — 조용한 무동작보다 나쁘다. */
 // Gmail 원격 MCP의 쓰기 도구(실측 2026-10-14 무인증 tools/list, annotations.readOnlyHint=false 17개 — 읽기 전용은 6개). ko·en 항목이 같은 배열을 쓴다.
+// 결재 없이 실행하는 읽기 도구(허용 목록, fail-closed) — 이 6개 밖은 annotations와 상관없이 결재다(검수 1, 총괄 결정 2026-10-14).
+const GMAIL_READ_TOOLS = Object.freeze(['search_threads', 'get_thread', 'get_message', 'list_drafts', 'get_draft', 'list_labels']);
 const GMAIL_WRITE_TOOLS = Object.freeze([
   'create_draft', 'label_thread', 'unlabel_thread', 'apply_sensitive_thread_label', 'trash_thread', 'untrash_thread',
   'mark_thread_spam', 'unmark_thread_spam', 'label_message', 'update_message_labels', 'unlabel_message',
@@ -257,6 +259,9 @@ export const CONNECTOR_CATALOG = [
     },
     // 실측 readOnlyHint=false 17개 전부(서버 annotations가 1순위, 이건 보완재).
     dangerous: GMAIL_WRITE_TOOLS,
+    readOnlyAllow: GMAIL_READ_TOOLS,
+    // 구글 '제한' 범위(gmail.modify) — 구글 검수(CASA) 전에는 콘솔의 테스트 사용자만 로그인된다. 거부되면 등록 안내를 보인다(connectors.mjs test_users_only).
+    testUsersOnly: true,
   },
 ];
 
@@ -286,6 +291,9 @@ export const CONNECTOR_CATALOG_EN = [
       client_secret_env: 'ARGO_CONNECTOR_GOOGLE_CLIENT_SECRET',
     },
     dangerous: GMAIL_WRITE_TOOLS,
+    readOnlyAllow: GMAIL_READ_TOOLS,
+    // 구글 '제한' 범위(gmail.modify) — 구글 검수(CASA) 전에는 콘솔의 테스트 사용자만 로그인된다. 거부되면 등록 안내를 보인다(connectors.mjs test_users_only).
+    testUsersOnly: true,
   },
 ];
 
@@ -312,6 +320,8 @@ export function connectorCatalogItemErrors(item) {
   if (item.note !== undefined && typeof item.note !== 'string') e.push('note');
   if (item.scopes !== undefined && !strList(item.scopes)) e.push('scopes');
   if (item.dangerous !== undefined && !strList(item.dangerous)) e.push('dangerous');
+  if (item.readOnlyAllow !== undefined && !strList(item.readOnlyAllow)) e.push('readOnlyAllow'); // 허용 목록(fail-closed) — 이 읽기 도구만 결재 없이
+  if (item.testUsersOnly !== undefined && typeof item.testUsersOnly !== 'boolean') e.push('testUsersOnly');
   if (item.redirect_port !== undefined && !(Number.isInteger(item.redirect_port) && item.redirect_port >= 1024 && item.redirect_port <= 65535)) e.push('redirect_port'); // 고정 콜백 포트(등록한 redirect_uri와 정확히 맞춰야 하는 서버)
   if (item.oauth !== undefined) {
     const o = item.oauth;
@@ -340,6 +350,7 @@ export function connectorServerDef(item) {
     url: item.url,
     ...(item.scopes?.length ? { scopes: [...item.scopes] } : {}),
     ...(item.redirect_port !== undefined ? { redirect_port: item.redirect_port } : {}),
+    ...(item.testUsersOnly ? { testUsersOnly: true } : {}),
     ...(connectorMode(item) === 'fixed'
       ? { oauth: { client_id: item.oauth.client_id, ...resolveClientSecret(item.oauth) } }
       : {}),

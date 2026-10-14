@@ -2128,9 +2128,9 @@ test('drain: 사장 글의 순차 멘션(@A > @B)은 크루 넘김 표지가 없
 
 test('handler: 풀 오토 회사 — 사장이 정한 순서의 턴은 커넥터 쓰기가 결재 없이, 크루가 넘긴 턴은 넘긴 크루를 잇고 결재로 간다', async () => {
   const { startConnect, callConnectorTool, closeConnectorPools } = await import('../src/connectors.mjs');
-  const { startOauthTestServer } = await import('./helpers/oauth-test-server.mjs');
+  const { startOauthTestServer, UPDATE_NOTE_DEMO } = await import('./helpers/oauth-test-server.mjs');
   const { updateCompany } = await import('../src/workspace.mjs');
-  const s = await startOauthTestServer();
+  const s = await startOauthTestServer({ extraTools: [UPDATE_NOTE_DEMO] });
   try {
     const ID = 'demo-msgr-fa';
     const { authUrl, done } = await startConnect(WS, { id: ID, url: s.mcpUrl, scopes: ['spike.read', 'spike.write'] });
@@ -2142,14 +2142,14 @@ test('handler: 풀 오토 회사 — 사장이 정한 순서의 턴은 커넥터
       const seen = [];
       const runChat = async (ws, slug, text, sid, opts) => {
         // 크루가 커넥터로 쓰기를 시도한다 — 게이트는 핸들러가 만든 턴 문맥(mirrorCtx)만 보고 판정한다(실제 게이트)
-        const r = await callConnectorTool(WS, ID, 'send_mail_demo', { to: `${job.msgId}@example.com`, body: 'x' }, { slug, mirrorCtx: opts.mirrorCtx });
+        const r = await callConnectorTool(WS, ID, 'update_note_demo', { to: `${job.msgId}@example.com`, body: 'x' }, { slug, mirrorCtx: opts.mirrorCtx });
         seen.push({ opts, r }); return { reply: 'ok', handover: null, sessionId: null, artifacts: [] };
       };
       await M.makeMsgrHandler(WS, { session: async () => ({ db: fakeDb({ peers }), uid: OWNER }), runChat })(job);
       return seen[0];
     };
     const base = { orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', authorId: OWNER, replyTo: null, createdAt: new Date().toISOString(), origin: OWNER, after: [] };
-    const sent = () => s.counters.toolCalls.send_mail_demo ?? 0;
+    const sent = () => s.counters.toolCalls.update_note_demo ?? 0;
     const b0 = sent();
     const owner = await run({ ...base, msgId: 70, threadRoot: 70, text: '@제드 > @서윤 정리', hop: 0, fromCrewId: null });
     assert.equal(owner.r.ok, true, '사장이 정한 순서의 턴은 풀 오토로 바로 발송'); assert.equal(sent(), b0 + 1);
@@ -2163,9 +2163,9 @@ test('handler: 풀 오토 회사 — 사장이 정한 순서의 턴은 커넥터
 // ── 통합본 3차 재검수 HIGH-1: DM 전달(msgr_dm_relay)이 옮겨 적은 크루 넘김 ──
 test('HIGH-1 drain+handler — 크루가 DM에서 비구성원 크루를 부른 넘김이 옮겨 적힌 글(사람 글·meta.relay.via_crew_id)은 크루 넘김: 커넥터 쓰기가 결재로', async () => {
   const { startConnect, callConnectorTool, closeConnectorPools } = await import('../src/connectors.mjs');
-  const { startOauthTestServer } = await import('./helpers/oauth-test-server.mjs');
+  const { startOauthTestServer, UPDATE_NOTE_DEMO } = await import('./helpers/oauth-test-server.mjs');
   const { updateCompany } = await import('../src/workspace.mjs');
-  const s = await startOauthTestServer();
+  const s = await startOauthTestServer({ extraTools: [UPDATE_NOTE_DEMO] });
   try {
     const ID = 'demo-relay';
     const { authUrl, done } = await startConnect(WS, { id: ID, url: s.mcpUrl, scopes: ['spike.read', 'spike.write'] });
@@ -2183,13 +2183,13 @@ test('HIGH-1 drain+handler — 크루가 DM에서 비구성원 크루를 부른 
     const peers = [{ id: CREW, slug: 'seoyun', display_name: '서윤' }, { id: ZED, slug: 'zed', display_name: '제드' }];
     let seen;
     const runChat = async (ws, slug, text, sid, opts) => {
-      seen = { opts, r: await callConnectorTool(WS, ID, 'send_mail_demo', { to: 'relay@example.com', body: 'x' }, { slug, mirrorCtx: opts.mirrorCtx }) };
+      seen = { opts, r: await callConnectorTool(WS, ID, 'update_note_demo', { to: 'relay@example.com', body: 'x' }, { slug, mirrorCtx: opts.mirrorCtx }) };
       return { reply: 'ok', handover: null, sessionId: null, artifacts: [] };
     };
-    const b0 = s.counters.toolCalls.send_mail_demo ?? 0;
+    const b0 = s.counters.toolCalls.update_note_demo ?? 0;
     await M.makeMsgrHandler(WS, { session: async () => ({ db: fakeDb({ peers, dm: [DM] }), uid: OWNER }), runChat })({ ...job, channelId: DM });
     assert.equal(seen.r.error, 'approval_pending', '결재로 간다');
-    assert.equal(s.counters.toolCalls.send_mail_demo ?? 0, b0, '발송이 서버에 닿지 않았다');
+    assert.equal(s.counters.toolCalls.update_note_demo ?? 0, b0, '발송이 서버에 닿지 않았다');
     assert.equal(seen.opts.notOwnerDirect, 'zed'); assert.equal(seen.opts.mirrorCtx.handoffFrom, ZED);
   } finally { await updateCompany(WS, { fullAuto: false }); await closeConnectorPools(); await s.close(); }
 });

@@ -22,6 +22,11 @@ import { z } from 'zod';
  * toolCalls[name] = 그 도구가 **실제로 실행된 횟수**. 결재 게이트가 부작용을 정말 막았는지 재는 유일한 근거다.
  * accessTtlMs를 짧게 주면 만료→자동 refresh 시나리오를 실시간으로 돌릴 수 있다.
  */
+// 일반 쓰기(풀 오토에서 자동 실행되는 계급) 데모 도구 — 옵트인(extraTools). 2026-10-14부터 발송(send·reply)은 풀 오토에서도 결재라
+// "일반 쓰기는 풀 오토에서 결재 없이"를 재는 시험은 send_mail_demo 대신 이 도구를 쓴다(인자는 send_mail_demo와 같은 모양).
+export const UPDATE_NOTE_DEMO = Object.freeze({ name: 'update_note_demo', description: '데모 메모 수정(일반 쓰기) — annotations.readOnlyHint=false',
+  inputSchema: { to: z.string().optional(), body: z.string().optional() }, annotations: { readOnlyHint: false } });
+
 export async function startOauthTestServer({ accessTtlMs = 3_600_000, extraTools = [] } = {}) {
   // 포트 0 임의 배정 — BASE(issuerUrl)가 라우터 구성보다 먼저 필요하므로, http 서버를 먼저 listen하고
   // 실제 포트를 안 뒤 express 앱을 request 핸들러로 붙인다(선점 경쟁 없음).
