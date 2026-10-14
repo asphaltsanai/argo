@@ -87,6 +87,18 @@ const FS_NARRATION = [
 // 넓히는 방향으로 유인한다(검수 MEDIUM-1). 신규 프롬프트가 크루에게 직접 시키는 발화이기도 하다.
 const PROTECTED_TALK = /보호 구역|protected zone|제어 파일|control file|\.secrets\.json|capabilities\.json|[~/]\.argo/i;
 
+// codex 자체 정책의 강제 삭제 거절(codex-rs core exec_policy.rs ForcedRm — 승인 정책 Never인 exec 경로, 핀 0.157.1·0.159.3 실측).
+// 문구가 고유한 영어 원문이라 줄 위치·코드펜스와 무관하게 찾는다 — 에이전트가 옮겨 적은 일지·답에도 같은 문구가 남았다(셀프호스트 제보 2026-10-14).
+const FORCED_RM_REJECTION = /rm -f style commands are not permitted/i;
+/** codex 강제 삭제 거절인가(순수). 걸리면 파일 접근 안내(fs) 대신 forcedRmNote를 붙인다 — 원인이 권한이 아니라 codex 정책이다. */
+export const detectForcedRmRejection = (text) => FORCED_RM_REJECTION.test(String(text ?? ''));
+/** 사용자에게 보이는 안내 한 줄(순수, ko·en) — 무엇을 하면 되는지: 승인한 삭제면 에이전트에게 다시 맡기면 -f 없이 지운다. */
+export function forcedRmNote(lang = 'ko') {
+  return lang === 'en'
+    ? '\n\n---\n⚠ The codex runner blocks forced deletion (`rm -f`, `rm -rf`) by its own policy, so the delete did not run. If you approved this deletion, ask the agent again — it will delete without `-f` (`rm -r`).'
+    : '\n\n---\n⚠ codex 러너가 강제 삭제(`rm -f`·`rm -rf`)를 자체 정책으로 막아 삭제가 실행되지 않았습니다. 결재로 승인한 삭제라면 에이전트에게 다시 맡겨 주세요 — `-f` 없이(`rm -r`) 지웁니다.';
+}
+
 /** 서술형 fs 거부 탐지(순수, loose) — boolean. strict(detectRunnerDenial)가 null일 때만 쓰라.
     보호 구역 담화가 함께 있으면 false — 그 거절은 결함이 아니라 계약이다. */
 export function detectDenialNarration(text) {

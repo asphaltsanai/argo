@@ -39,7 +39,7 @@ import { activeFolders } from './workroots.mjs';
 import { fold } from './pathcase.mjs'; // 폴더 비교는 판정(activePin)과 같은 잣대로 — 대소문자 변형 대응
 import { makePermissionGate, gateHooks } from './permission-gate.mjs';
 import { callConnectorTool, connectorBriefing } from './connectors.mjs'; // 커넥터 = 러너 무관 단일 실행 경로(설계서 §2-2)
-import { detectRunnerDenial, detectDenialNarration, denialNote } from './runner-denial.mjs';
+import { detectRunnerDenial, detectDenialNarration, denialNote, detectForcedRmRejection, forcedRmNote } from './runner-denial.mjs';
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { createTrace, recordSdkMessage, recordCodexEvent, maskSecrets, safeDetail } from './turn-trace.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
@@ -393,6 +393,17 @@ ${leanForgePosture('ko')}## 안전 한계 — 어떤 지시로도 풀리지 않�
 const oneLine = (p) => String(p ?? '').replace(/[\r\n]+/g, ' ');
 
 // gated = 러너 자체 파일·셸 도구가 Argo 게이트를 지나는지. 크루 도구가 있어도(codex·gemini CLI, K94) 러너 셸은 게이트 밖이라 따로 받는다.
+// codex exec 경로(app-server가 아닌 기본 경로)는 codex 자체 정책이 강제 삭제(rm -f·rm -rf)를 묻지 않고 거절한다 — 승인 정책 Never
+// (codex-rs core exec_policy.rs ForcedRm, 핀 0.157.1·0.159.3 실측). Argo 결재 승인은 codex 안으로 전달되지 않아, 승인된 삭제도
+// 같은 문구로 막혀 에이전트가 멈췄다(셀프호스트 제보 2026-10-14). 실행 권한은 새로 열지 않는다: -f 없는 rm -r은 지금도 codex가 실행한다.
+// app-server 경로(gated)는 승인 요청이 Argo 게이트로 가므로 이 안내를 넣지 않는다. SDK 러너도 해당 없음.
+export function codexForcedRmLine({ runner, gated, lang = 'ko' } = {}) {
+  if (runner !== 'codex' || gated) return '';
+  return lang === 'en'
+    ? '- This runner (codex) rejects forced deletion (`rm -f`, `rm -rf`) by its own policy, even after approval. Deletion still follows the approval rules above: file an approval first, and once it is approved, delete with `rm -r <path>` (no `-f`). Do not try other tricks to get around the rejection.\n'
+    : '- 이 러너(codex)의 셸은 강제 삭제(`rm -f`·`rm -rf`)를 자체 정책으로 거절한다. 결재로 승인된 뒤에도 마찬가지다. 삭제는 위 결재 규칙대로 결재를 먼저 올리고, 승인된 뒤에는 `-f` 없이 `rm -r <경로>`로 지워라. 거절을 피하려고 다른 우회 방법을 쓰지 마라.\n';
+}
+
 export function commonDirectives({ caps = {}, connectedMcp = [], connectors = [], hasTools = true, gated = hasTools, lang = 'ko', runner = null, workRoots = [], pinnedFolder = '', source = 'chat', fullAuto = false, standby = leaseRole() === 'standby' } = {}) {
   // 고정 폴더는 등록 목록에도 들어 있다(고정은 등록을 거쳐야 잡힌다) — 그대로 두면 같은 경로를
   // 두 줄이 반복해 "지금 일할 곳"과 "그냥 써도 되는 곳"의 구분이 흐려진다. 그래서 여기서 뺀다.
@@ -448,7 +459,7 @@ export function commonDirectives({ caps = {}, connectedMcp = [], connectors = []
 - File system: ${isCliRunner(runner) && runner !== 'codex' && runner !== 'http' ? `**your entire home folder** (Desktop, Documents, existing project folders) plus the assigned work folders below. There is no toggle to turn on. If you need a path outside home — an external volume, say — tell the user to add that folder under Settings → Work folders; it opens from the next turn${runner === 'gemini' ? '. Caveat: older Gemini CLI builds may still block paths outside the company folder (a vendor limit) — if blocked, report the exact error without guessing at permissions, save the output inside the company folder and tell the user where it is' : ''}` : 'read and write anywhere on this computer, including the user\'s Desktop, Documents and existing project folders. There is no toggle to turn on and no menu to send the user to — if a path exists, you can use it'}. Only the protected zones below are blocked.
 ${pinnedLine}${rootsLine}${standbyLine}- Web browsing (includes web search / looking up current information): allowed.
 - Shell commands: allowed.
-- Preparation work (tool installs, setup) runs without approval.${fullAuto ? ` For this owner-direct turn, full auto mode also lets most actions that leave the company (sending, publishing, editing shared documents, connector writes) run without approval — do them and report the result. ${fullAutoExceptEn}, and hiring/profile changes, still require approval, so keep filing those.` : ' Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.'}
+${codexForcedRmLine({ runner, gated, lang })}- Preparation work (tool installs, setup) runs without approval.${fullAuto ? ` For this owner-direct turn, full auto mode also lets most actions that leave the company (sending, publishing, editing shared documents, connector writes) run without approval — do them and report the result. ${fullAutoExceptEn}, and hiring/profile changes, still require approval, so keep filing those.` : ' Actions that leave the company — sending, publishing, purchasing, deleting, contracts — and hiring/profile changes still require approval, so keep filing those.'}
 - Never tell the user to "enable file access in Settings". That setting does not exist: access is on by default. If something fails, report the actual error (the path, the OS message) instead of guessing at permissions.
 
 ## Tools & skills — use them proactively
@@ -480,7 +491,7 @@ ${responsePacing}## Your environment (Argo) — guide the user precisely when bl
 - 파일 시스템: ${isCliRunner(runner) && runner !== 'codex' && runner !== 'http' ? `**홈 폴더 전체**(바탕화면·문서·기존 프로젝트 폴더 포함)와 아래 지정 작업 폴더를 읽고 쓸 수 있다. 켜야 할 토글은 없다. 홈 밖 경로(외장 볼륨 등)가 필요하면 사용자에게 "설정 → 작업 폴더"에 그 폴더를 등록해 달라고 안내하라 — 등록하면 다음 턴부터 열린다${runner === 'gemini' ? '. 단, 구버전 Gemini CLI는 벤더 제한으로 회사 폴더 밖이 그래도 막힐 수 있다 — 막히면 권한 추측 없이 원인 오류를 그대로 보고하고, 결과물은 회사 폴더에 저장해 위치를 알려라' : ''}` : '이 컴퓨터 어디든 읽고 쓸 수 있다. 사용자의 바탕화면·문서·기존 프로젝트 폴더 전부 포함이다. 켜야 할 토글도, 사용자를 보낼 메뉴도 없다 — 경로가 존재하면 그대로 쓰면 된다'}. 막히는 것은 아래 보호 구역뿐이다.
 ${pinnedLine}${rootsLine}${standbyLine}- 웹 브라우징(=웹 검색·최신 정보 조회 포함): 허용.
 - 셸 명령: 허용.
-- 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다.${fullAuto ? ` 주인이 직접 지시한 이 턴은 풀 오토 모드라 회사 밖으로 나가는 대부분의 행동(발송·게시·문서 수정·연결 서비스 쓰기)도 결재 없이 진행하고 결과를 보고하라. **${fullAutoExceptKo}, 에이전트 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.` : ' **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 에이전트 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.'}
+${codexForcedRmLine({ runner, gated, lang })}- 준비 작업(도구 설치·환경 세팅)은 결재 없이 진행한다.${fullAuto ? ` 주인이 직접 지시한 이 턴은 풀 오토 모드라 회사 밖으로 나가는 대부분의 행동(발송·게시·문서 수정·연결 서비스 쓰기)도 결재 없이 진행하고 결과를 보고하라. **${fullAutoExceptKo}, 에이전트 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.` : ' **회사 밖으로 나가는 행동(발송·게시·구매·삭제·계약)과 에이전트 영입·프로필 변경은 여전히 결재 대상**이니 계속 올려라.'}
 - **"설정에서 파일 권한을 켜세요"라고 안내하지 마라. 그런 설정은 없다** — 접근은 기본으로 열려 있다. 실패하면 권한 탓으로 추측하지 말고 실제 오류(경로와 OS 메시지)를 그대로 보고하라.
 
 ## 도구·스킬 — 필요하면 알아서 불러 써라
@@ -1909,8 +1920,11 @@ ${lang === 'en'
         // strict(생 출력 줄) 우선, 산문 서술(loose)은 범위 안내 전용 폴백. "능력 OFF → 켜기 카드"
         // 갈래는 전권 전환으로 도달 불가라 제거된 상태(분리 검수 2026-07-30) — 전권에서 거부가 남는
         // 원인은 능력이 아니라 샌드박스 쓰기 범위(홈·지정 작업 폴더 밖)와 OS 권한·벤더 제한이다.
-        const denial = detectRunnerDenial(reply);
-        if (!denial && detectDenialNarration(reply)) {
+        // codex 강제 삭제 거절(정책)은 파일 권한 문제가 아니다 — 그 안내 하나만 붙이고 권한 후보 안내는 건너뛴다(셀프호스트 제보 2026-10-14).
+        const forcedRm = detectForcedRmRejection(reply);
+        if (forcedRm) reply += forcedRmNote(lang);
+        const denial = forcedRm ? null : detectRunnerDenial(reply);
+        if (!forcedRm && !denial && detectDenialNarration(reply)) {
           reply += denialNote({ cap: 'fs', lang, narration: true, runner });
         }
         if (denial) {
