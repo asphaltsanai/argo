@@ -206,7 +206,7 @@ test('NC9. 모델별 창(카탈로그 ctx) — 공식 문서로 확인한 값만
   const { contextWindowFor } = await import('../src/runners/catalog-remote.mjs');
   const cases = [
     ['claude', 'claude-opus-5-5', 1_000_000], ['claude', 'claude-sonnet-5-5[1m]', 1_000_000], ['claude', 'claude-fable-5-1', 1_000_000], ['claude', 'claude-haiku-4-5-20251001', 200_000],
-    ['gemini', 'gemini-2.5-pro', 1_048_576], ['gemini', 'gemini-3.7-flash', 1_048_576],
+    ['gemini', 'gemini-3.8-flash', 1_048_576], ['gemini', 'gemini-3.7-flash', 1_048_576],
     ['kimi', 'kimi-k3', 1_048_576], ['kimi', 'kimi-k2.6', 262_144],
     ['grok', 'grok-4.6', 500_000], ['grok', 'grok-4.3', 1_000_000],
     ['glm', 'glm-5.3', 1_000_000], ['glm', 'glm-5.1', 200_000], ['glm', 'glm-4.5-air', 128_000],

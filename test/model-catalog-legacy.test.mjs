@@ -46,3 +46,17 @@ test('코드 대체표의 모든 항목이 생성 카탈로그에도 retire·ali
 test('Codex alias 목적지는 핀 0.157.1 옛 앱에서도 도는 모델이다 — GPT-6.1 Sol은 그 핀에서 400(2026-10-07 실측)', () => {
   for (const to of Object.values(doc.runners.codex.alias)) assert.notEqual(to, 'gpt-6.1-sol');
 });
+
+test('Gemini 2.5 새 계정 404(2026-10-14) — 옛 앱 목록에 3.8 Flash를 넣고 2.5를 옮기되, 첫 항목은 그대로 둔다', () => {
+  const v = validateOverlay(doc);
+  assert.deepEqual(v.runners.gemini.alias, { 'gemini-2.5-pro': 'gemini-3.8-flash', 'gemini-2.5-flash': 'gemini-3.8-flash' });
+  assert.deepEqual(v.runners.gemini.retire, [], '2.5를 빼면 옛 앱 첫 항목이 무료 등급 없는 게이트 모델이 된다');
+  // 옛 앱(0.1.107) 코드 목록 그대로 — 2.5 둘이 앞, 3.8 Flash 없음
+  const old = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash'].map((id) => ({ id, label: id, ...(id.startsWith('gemini-3') ? { gated: true } : {}) }));
+  const listed = applyOverlay('gemini', old, v);
+  assert.ok(listed.some((m) => m.id === 'gemini-3.8-flash' && !m.gated), 'alias 목적지가 옛 앱 목록에 있다(없으면 기본 2.5 Pro로 강등 — 404)');
+  assert.equal(listed[0].gated, undefined, '러너 전환 때 고르는 첫 항목은 게이트 모델이 아니다');
+  // 새 앱: 2.5는 코드 목록에 없고 첫 항목이 alias 목적지
+  assert.equal(RUNNERS.gemini.models.some((m) => /^gemini-2\.5/.test(m.id)), false);
+  assert.equal(RUNNERS.gemini.models[0].id, 'gemini-3.8-flash');
+});
