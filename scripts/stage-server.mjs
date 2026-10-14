@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, rmSync, existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { SHIM_SRC } from '../src/no-dock.mjs';
 import { stageCli } from './stage-cli.mjs';
+import { bakeServerEnv } from './bake-server-env.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -105,6 +106,13 @@ const leaks = [];
   }
 })(tree);
 if (leaks.length) { console.error('[stage-server] 시크릿 파일 잔존 — 배포 차단:\n' + leaks.join('\n')); process.exit(1); }
+
+// 3.6) 서버 전용 빌드 값(구글 커넥터 OAuth client secret) — CI 시크릿이 있을 때만 서버 트리 루트에 굽는다(scripts/bake-server-env.mjs).
+//      유출 가드 뒤에 둔다: 이 파일은 의도한 산출물이다. 클라이언트 번들(.next/static)에는 들어가지 않는다 — 발행 잡이 assert-not-in-client로 확인한다.
+{
+  const r = bakeServerEnv({ tree: tree, env: process.env });
+  console.log(r.names.length ? `[stage-server] 서버 전용 값 구움: ${r.names.join(', ')}` : '[stage-server] 서버 전용 값 없음 — 이 빌드의 구글 커넥터는 준비 중으로 보인다');
+}
 
 // 5) 타르볼 — 최상위 디렉터리 argo-server/ 로 통일(install.sh가 이 이름을 전제)
 const tarName = `argo-server-${VERSION}-${PLATFORM}.tar.gz`;
