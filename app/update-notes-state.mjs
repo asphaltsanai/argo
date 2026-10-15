@@ -38,6 +38,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.107': Object.freeze(['updates.note.appGate', 'updates.note.officeSplit']),
   '0.1.108': Object.freeze(['updates.note.googleConnect', 'updates.note.skillsMarket', 'updates.note.geminiDefault']),
   '0.1.109': Object.freeze(['updates.note.syncFix']),
+  // 0.1.110 — ownerNotice: 다른 사람 방에서 내 에이전트가 실행기 문제로 답하지 못하면 주인 개인 1:1로 알림(#1026) · codexRecover: codex 로그인 만료 자동 회복(#1027) · deviceHandoff: 바쁘거나 꺼진 기기 대신 같은 계정 다른 기기가 답함(#1028)
+  '0.1.110': Object.freeze(['updates.note.ownerNotice', 'updates.note.codexRecover', 'updates.note.deviceHandoff']),
 });
 
 export function stableVersion(value) {
