@@ -40,6 +40,8 @@ export const UPDATE_NOTES = Object.freeze({
   '0.1.109': Object.freeze(['updates.note.syncFix']),
   // 0.1.110 — ownerNotice: 다른 사람 방에서 내 에이전트가 실행기 문제로 답하지 못하면 주인 개인 1:1로 알림(#1026) · codexRecover: codex 로그인 만료 자동 회복(#1027) · deviceHandoff: 바쁘거나 꺼진 기기 대신 같은 계정 다른 기기가 답함(#1028)
   '0.1.110': Object.freeze(['updates.note.ownerNotice', 'updates.note.codexRecover', 'updates.note.deviceHandoff']),
+  // 0.1.111 — connectFresh: 첫 연결 직후 업데이트 요구 오류·연결 카드 새로 읽기(#1038·#1040) · noRunnerNotice: 연결된 AI가 없어 답 못 하면 방에 원인 안내(#1042) · singleDevice: 기기 하나뿐이면 바로 안내(#1045)
+  '0.1.111': Object.freeze(['updates.note.connectFresh', 'updates.note.noRunnerNotice', 'updates.note.singleDevice']),
 });
 
 export function stableVersion(value) {
