@@ -87,6 +87,22 @@ test('① 반입 판정 — 같은 계정·살아 있음·더 새 것일 때만,
   assert.equal(await reabsorbCodexFromHost(ws), false, '두 번째 호출 — 더 새 것이 없다(무한 반복 없음)');
 });
 
+test('① 반입 판정 — 같은 계정·살아 있음·다른 토큰이어도 더 오래된 로그인이면 반입하지 않는다(#1027 검수 1 MEDIUM-1)', async () => {
+  const ws = 'rb-older';
+  await createCompany(ws, '더 오래된 호스트', 'owner', null, 'ko');
+  await saveCodex(ws, 'oauth', authJson('acct_A', { exp: 10 * 86400, rt: 'R2-newer-valid' })); // Argo가 갱신해 둔 유효한 회사 자격
+  await putHost(authJson('acct_A', { exp: 3600, rt: 'R1-older-rotated' })); // 터미널의 더 오래된 로그인(refresh는 이미 회전돼 죽음)
+  assert.equal(await reabsorbCodexFromHost(ws), false, '더 오래된 로그인 — 반입하지 않는다');
+  assert.equal(JSON.parse((await loadRunnerCred(ws, 'codex')).value).tokens.refresh_token, 'R2-newer-valid', '유효한 회사 자격이 그대로');
+  // 격리 홈(Argo codex CLI가 회전시킨 곳)이 호스트보다 새것이어도 반입하지 않는다
+  await saveCodex(ws, 'oauth', authJson('acct_A', { exp: -60, rt: 'rt-seed-dead' }));
+  await mkdir(join(process.env.HOME, '.argo', `codex-home-${ws}`), { recursive: true });
+  await writeFile(join(process.env.HOME, '.argo', `codex-home-${ws}`, 'auth.json'), authJson('acct_A', { exp: 7200, rt: 'rt-isolated-newer' }));
+  assert.equal(await reabsorbCodexFromHost(ws), false, '격리 홈이 더 새것 — 호스트(1시간)를 반입하지 않는다');
+  await putHost(authJson('acct_A', { exp: 9000, rt: 'rt-host-newest' }));
+  assert.equal(await reabsorbCodexFromHost(ws), true, '셋 중 호스트가 가장 새것일 때만 반입');
+});
+
 test('① 반입 판정 — codex 구독이 아니면 반입하지 않는다(apikey·host·없음)', async () => {
   await putHost(authJson('acct_A', { rt: 'rt-new2' }));
   for (const [ws, type, value] of [['rb-apikey', 'apikey', `sk-proj-${'y'.repeat(40)}`], ['rb-host', 'host', 'host'], ['rb-none', null, null]]) {

@@ -15,7 +15,7 @@ import { provisionGeminiCli, geminiTurnHome, probeGeminiSubscription } from './g
 import { nativeRunnerEnabled } from '../engine/native-flags.mjs';
 import { GEMINI_DEFAULT_BASE } from '../engine/gemini-wire.mjs';
 import { CODEX_BACKEND_BASE, OPENAI_API_BASE } from '../engine/responses-wire.mjs';
-import { parseCodexAuth, accessExpiring, accountIdOf, refreshCodexTokens, readCliCodexAuth, cliAuthCandidates, mergeCodexAuth, codexHeaders, REFRESH_TIMEOUT_MS } from './codex-oauth.mjs';
+import { parseCodexAuth, accessExpiring, accountIdOf, jwtClaims, refreshCodexTokens, readCliCodexAuth, cliAuthCandidates, mergeCodexAuth, codexHeaders, REFRESH_TIMEOUT_MS } from './codex-oauth.mjs';
 
 /** codex 토큰 회전 락 — 최대 보유 = 리프레시 (1 + CLI 반입 후보 수)회 × REFRESH_TIMEOUT_MS(=24초). 불변식 셋(C13): stale > 최대 보유(2R N1: 아니면 대기자가
     잔재로 오판해 락을 탈취 → 같은 refresh 토큰 2회 교환 = 'Already Used' 재현), timeout > 최대 보유(1R MEDIUM-2: 옆 턴 503), timeout ≥ stale(3R NEW-2: 크래시 잔재는
@@ -292,9 +292,11 @@ export async function reabsorbCodexFromHost(wsId, { home = homedir() } = {}) {
   const acct = accountIdOf(cur);
   if (!acct || accountIdOf(host) !== acct) return false; // 다른 계정(또는 모름) — 반입하지 않는다(연결 방식·계정·과금 불변)
   if (accessExpiring(host.access_token, 0)) return false; // 호스트 로그인도 만료 — 살아 있는 로그인만
-  if (host.refresh_token === cur.refresh_token && host.access_token === cur.access_token) return false; // 더 새 것이 없다
-  const isolated = await readCliCodexAuth(cliAuthCandidates(wsId, home)[0]); // Argo codex CLI 턴이 쓰던 격리 홈 — 이미 같은 토큰으로 실패했으면 더 새 것이 아니다
-  if (isolated && isolated.refresh_token === host.refresh_token && isolated.access_token === host.access_token) return false;
+  // **엄격히 더 새것**만 — 호스트 액세스 토큰의 만료(exp)가 회사 자격과 격리 홈(Argo codex CLI가 회전시킨 곳)보다 늦어야 한다. "다르기만 하면" 반입하면
+  // Argo가 갱신해 둔 유효한 회사 자격을 터미널의 더 오래된(이미 회전돼 죽은 refresh) 토큰으로 덮어써 codex가 막힌다(#1027 검수 1 MEDIUM-1). 같은 토큰도 여기서 걸러진다(무한 반입 없음).
+  const expOf = (t) => Number(jwtClaims(t?.access_token)?.exp) || 0;
+  const isolated = await readCliCodexAuth(cliAuthCandidates(wsId, home)[0]);
+  if (!(expOf(host) > Math.max(expOf(cur), expOf(isolated)))) return false;
   console.warn(`[argo] codex 구독 로그인 회복 — 이 컴퓨터의 같은 계정 codex 로그인을 회사 자격으로 반입(${wsId}). 이후 Argo가 토큰을 갱신하면 터미널 codex가 다시 로그인을 요구할 수 있다`);
   await saveRunnerCred(wsId, 'codex', 'oauth', JSON.stringify(host.raw));
   return true;
