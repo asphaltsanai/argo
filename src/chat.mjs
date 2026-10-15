@@ -43,7 +43,7 @@ import { detectRunnerDenial, detectDenialNarration, denialNote, detectForcedRmRe
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { createTrace, recordSdkMessage, recordCodexEvent, maskSecrets, safeDetail } from './turn-trace.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
-import { scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
+import { invalidateDetectCache, reabsorbCodexFromHost, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { userAddressNote, turnUserName, userSetAddress } from './user-name.mjs'; // 에이전트가 사용자를 이름으로 부르기(T5) — 이름 출처·남의 이름 차단은 그 파일 한 곳
 import { USER_ABORT_ERROR, LEGACY_RECORD_TERMS_NOTE } from './legacy-terms.mjs'; // 중단 이벤트 문자열 — 읽는 쪽(runner-usable·failure-digest)은 옛 문자열도 본다
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
@@ -1292,6 +1292,12 @@ export const AUTH_ERR_RE = /not logged in|run \/login|invalid api key|incorrect 
     만료되면 종전엔 다른 러너로 계속 일하던 것이 게이트 무장 뒤 턴이 죽었다(라이브 A/B: 미무장 → GLM 폴백 답변,
     무장 → 시도 0회). 판정은 문자열이 아니라 필드로(aborted 선례). 구독 차단(subscriptionBlocked)은 여기 걸리지
     않는다 — 그 문구는 AUTH_ERR_RE 밖이고 authExpired 필드도 없다(E 불변식). (export: 회귀 테스트용) */
+/** 같은 계정 codex 구독 회복의 발동 판정(순수) — codex 턴의 인증 실패(필드 authExpired 또는 AUTH_ERR_RE)일 때만. 자가치유(러너 교체) 판정과 별개다:
+    교체가 아니라 같은 러너 1회 재시도이고, 실제 반입 여부는 reabsorbCodexFromHost(같은 계정·살아 있음·더 새 것)가 정한다(2026-10-15 유건 승인 예외). */
+export function codexReabsorbApplies(e, runner) {
+  return runner === 'codex' && !e?.aborted && (!!e?.authExpired || AUTH_ERR_RE.test(String(e?.message || e)));
+}
+
 export function shouldSelfHeal(e, { retried = false, lockup = true } = {}) {
   if (e?.authExpired) return true;
   if (AUTH_ERR_RE.test(String(e?.message || e))) return true;
@@ -1323,6 +1329,8 @@ export async function surfaceRunnerFailure(e, { wsId, runner, lang, cred = null,
     if (!e?.authError && !e?.authExpired) out = Object.assign(new Error(`${eMsg.slice(0, 300)}\n\n${runnerAuthNotice(lang, runner)}`), { authError: true, cause: e });
     if (!e?.knownInvalid) { // 게이트가 이미 끊은 턴은 재프로브·재각인 불요(이미 vendor 확정)
       const c = cred ?? await loadCredFn(wsId, runner).catch(() => null);
+      // 이 컴퓨터 로그인(host 마커·회사 자격 없음)으로 돈 턴 — 감지 캐시를 버려 다음 판정이 지금 로그인 상태를 보게 한다(10분 캐시가 옛 판정을 쥐지 않게, 2026-10-15 작업 C)
+      if (!c || c.type === 'host') invalidateDetectCache();
       if (c && c.type !== 'host') {
         if (HEALTH_BILLED_RUNNERS.has(runner)) { origin = 'probe'; }
         else {
@@ -1992,6 +2000,14 @@ ${lang === 'en'
         await reprovisionRunner(runner).catch((re) => console.warn(`[argo] ${runner} 재조달 실패:`, re?.message ?? re));
         try {
           return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, ownerSeat, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, msgrShellGate, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry: true });
+        } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
+      }
+      // 같은 계정 codex 구독 회복(2026-10-15 유건 승인 예외) — 인증 실패면 이 컴퓨터의 같은 ChatGPT 계정 codex 로그인을 반입(saveRunnerCred: savedAt 갱신·배너 해제)하고
+      // 같은 러너로 1회 재시도한다. 반입은 더 새 로그인이 있을 때만 일어나 같은 실패에 두 번 돌지 않는다(재시도 프레임이 또 실패하면 반입할 것이 없어 아래 자가치유로 낙하). 자가치유 판정·계약은 그대로.
+      if (!aborted && codexReabsorbApplies(e, runner) && await reabsorbCodexFromHost(wsId).catch(() => false)) {
+        console.warn(`[argo] codex 인증 실패 — 같은 계정 로그인 반입 뒤 같은 러너로 1회 재시도(${wsId}/${agentSlug})`);
+        try {
+          return await chat(wsId, agentSlug, userMsg, sessionId, { __turnControl, from, source, ownerSeat, __downgradedFrom, attachments, hop, chain, delegationRelaxed, delegationTree: tree, toolHop, mirrorCtx, msgrShellGate, runnerOverride, modelOverride, workFolder, journal, sessionChain, notOwnerDirect, runnerNote, __seedNotes: sharedNotes, __excludeRunners, __crashRetry, __lockupRetry });
         } catch (e2) { e = e2; if (e2?.aborted) aborted = true; }
       }
       if (!aborted && shouldSelfHeal(e, { retried: __lockupRetry })) { // 필드(authExpired) 우선 — 게이트가 끊은 턴도 다른 러너로(HIGH-1).

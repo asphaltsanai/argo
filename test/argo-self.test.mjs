@@ -267,7 +267,7 @@ test('데스크톱 표지는 대화 라우트만 붙이고(요청 본문에서 �
   assert.match(route, /const \{ slug, message, sessionId, attachments: rawAtt \} = await req\.json\(\);/, '본문에서 표지를 받지 않는다');
   assert.match(route, /await chat\(ws, slug, message\.trim\(\), sessionId \|\| null, \{ attachments, ownerSeat: 'desktop',/);
   const chatSrc = readFileSync(new URL('../src/chat.mjs', import.meta.url), 'utf8');
-  assert.equal((chatSrc.match(/await chat\(wsId, agentSlug, userMsg, (?:sessionId|null), \{ __turnControl, from, source, ownerSeat,/g) ?? []).length, 7, '재시도 재귀 7곳');
+  assert.equal((chatSrc.match(/await chat\(wsId, agentSlug, userMsg, (?:sessionId|null), \{ __turnControl, from, source, ownerSeat,/g) ?? []).length, 8, '재시도 재귀 8곳(2026-10-15 같은 계정 codex 구독 회복의 같은 러너 1회 재시도 포함 — 크래시 재시도와 같은 인자로 표지를 잇는다)');
   assert.doesNotMatch(chatSrc.match(/chatOpts: \{[^}]*\}/)[0], /ownerSeat/, '도구 결과 후속 턴은 잇지 않는다(외부 결과가 담긴 턴)');
   // runChat의 두 크루 서버 생성(Codex 다리 갈래·SDK/네이티브 갈래)이 모두 서버 판정값을 싣는다 — SDK 갈래의 행동은 argo-self-sdk.test.mjs가 잠근다
   assert.match(chatSrc, /const settingsDirect = settingsDirectTurn\(\{ ownerSeat, source, from, notOwnerDirect, hop, chain, mirrorCtx \}\);/);
