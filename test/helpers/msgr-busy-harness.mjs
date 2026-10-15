@@ -66,7 +66,7 @@ function fakeDb({ crews = [crew()], messages = [], dm = [], member = null, chCre
     async updateApproval(id, patch) { rec('updateApproval', id, patch); return approvalRows; },
     async approvalsByIds(ids) { rec('approvalsByIds', ids); return approvals; },
     // H-2: 서버 판정 흉내 — 실제 msgr_can_instruct와 같은 규칙(크루 행 기준). throw 시 브리지는 로컬 판정으로 폴백한다.
-    async instructCheck(crewId, authorId, channelId) { rec('instructCheck', crewId, authorId, channelId); if (canInstructThrows) throw new Error('rpc down'); if (channelPolicy[channelId] && channelPolicy[channelId] !== 'allowed') return 'channel_policy'; const c = crews.find((x) => x.id === crewId) ?? peers?.find((x) => x.id === crewId); return c && M.allowedToInstruct(c, authorId, OWNER) ? 'ok' : 'crew_allow'; },
+    async instructCheck(crewId, authorId, channelId) { rec('instructCheck', crewId, authorId, channelId); return 'ok'; }, // 하네스는 makeServer에서 다시 덮어쓴다 — 지시 권한은 관심 밖
     // App Store 5.1.2 재설계(2026-09-27) — 기본 동의됨(기존 시나리오 회귀 방지). aiConsentMap으로 사람별, aiConsent:false로 전원 미동의를 흉내낸다.
     async orgConsentOk(orgId, userId) { rec('orgConsentOk', orgId, userId); return aiConsentMap ? !!aiConsentMap[userId] : aiConsent; },
     async canDecide(apId) { rec('canDecide', apId); return canDecide; },
