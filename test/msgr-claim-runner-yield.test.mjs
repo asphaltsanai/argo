@@ -385,10 +385,17 @@ test('15. 러너 있는 B가 같은 크루의 긴 턴 중(검수 R2) — A가 �
   srv.msgs.push(inboxMsg(21, clock + 1000)); // 앞 턴 중에 온 후속 지시
   await drainAs(wsA, srv, 'A', enqA, now); // 한가한 A가 먼저 drain
   await drainAs(wsB, srv, 'B', enqB, now);
+  // 바쁜 크루 보류(F2, 2026-10-15): B는 같은 크루가 턴 중이라 21을 바로 적재하지 않고 서버에 남긴다(B가 꺼지면 다른 기기가 집게). 다만 보류 상한(BUSY_HOLD_MAX_MS)이
+  // A의 양보 기한(YIELD_GRACE_MS)보다 짧아, 러너 없는 A가 집기 전에 B가 적재·전진한다 — 이 시험의 원래 목적(A의 실패 답 없음)은 그대로다.
+  assert.equal(enqB.jobs.find((j) => j.msgId === 21), undefined, '상한 전에는 B가 보류한다');
+  assert.ok(M.BUSY_HOLD_MAX_MS + 2 * M.POLL_MS <= YIELD_GRACE_MS, '보류 상한 + 보류 재조회 두 번이 양보 기한 안');
+  clock += M.BUSY_HOLD_MAX_MS + 2000;
+  await drainAs(wsA, srv, 'A', enqA, now); // A는 아직 양보 기한 안 — 적재하지 않는다
+  await drainAs(wsB, srv, 'B', enqB, now);
   const j21 = enqB.jobs.find((j) => j.msgId === 21);
-  assert.ok(j21, 'B의 drain은 앞 턴과 무관하게 21을 적재한다');
+  assert.ok(j21, '보류 상한이 지나면 B가 21을 적재한다(A의 양보 기한 전)');
   assert.equal(await B(j21), DEFER, 'B는 같은 크루가 바빠 선점 전에 미룬다');
-  clock += YIELD_GRACE_MS + 2000; // 앞 턴이 160초를 넘김
+  clock += YIELD_GRACE_MS + 2000 - (M.BUSY_HOLD_MAX_MS + 2000); // 앞 턴이 160초를 넘김(위에서 보류 상한만큼 이미 지났다)
   await drainAs(wsA, srv, 'A', enqA, now);
   for (const j of enqA.jobs) await A(j); // 옛 코드에선 A가 21을 적재해 두었다가 여기서 실패 답을 올렸다
   release(); await first;

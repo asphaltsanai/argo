@@ -103,7 +103,14 @@ let cacheAt = 0;
 /** 로그인 파일의 수정 시각(ISO) | null(없음) — 존재 판정은 exists와 같고, 시각은 터미널에서 다시 로그인했을 때 데크 배너가 옛 만료 기록을 무시하는 기준이다(#980 LOW-2). */
 const authFileAt = (p) => stat(p).then((s) => s.mtime.toISOString(), () => null);
 
-export async function detectRunners(force = false) {
+/** host 마커 러너가 "로그인 안 됨"으로 판정된 동안의 재감지 주기 — 터미널에서 다시 로그인하면 10분 캐시를 기다리지 않고 회복(2026-10-15 작업 C).
+    살아 있는 동안은 DETECT_CACHE_MS 그대로라 턴마다 CLI를 띄우지 않는다. 재감지 비용 = --version 3개 + 파일 확인(DB 0) × 분당 최대 4회. */
+export const HOST_RECHECK_MS = 15_000;
+/** 감지 캐시를 버린다 — 인증 실패를 만난 턴이 부른다(다음 판정이 지금 로그인 상태를 본다). */
+export function invalidateDetectCache() { cache = null; cacheAt = 0; }
+
+export async function detectRunners(force = false, { maxAgeMs = DETECT_CACHE_MS } = {}) {
+  if (cache && Date.now() - cacheAt >= maxAgeMs) force = true; // 짧은 재감지 요청(HOST_RECHECK_MS) — 캐시가 그보다 오래됐으면 새로 본다
   if (!force && cache && Date.now() - cacheAt < DETECT_CACHE_MS) return cache;
   await ensureCliPath(); // GUI 기동 PATH 보강 — homebrew/npm 전역 CLI 오탐 방지
   const home = homedir();

@@ -21,14 +21,14 @@
 import { createClient } from '@supabase/supabase-js';
 import { APP_VERSION } from '../app-version.mjs';
 import { cmpVersion } from '../version-compare.mjs';
-import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { getFreshDeviceSession } from '../devicesession.mjs';
 import { appGateBlockedHere } from '../app-gate.mjs';
 import { interruptTurn } from '../turn-abort.mjs';
 import { createAgentCard } from '../persona.mjs'; // I-5: 회사 노드가 요청 행으로 카드를 쓴다(모델 호출 없음)
 import { paths, loadCompany, updateCompany, getDeviceId } from '../workspace.mjs';
-import { enqueueJob, DEFER } from './queue.mjs';
+import { enqueueJob, DEFER, queueDir } from './queue.mjs';
 import { pick } from './protocol.mjs';
 import { msgrHead, MSGR_NOW, msgrContextHead, msgrReplyLine, MSGR_ATTACH_FAIL, routineNoticeTail } from '../inbound-marks.mjs';
 import { stripLoopVerdict } from '../loop-verdict.mjs'; // 루프 회차 채널 글에서 판정 표지만 뺀다(판정은 replyForChecks 원문) // 머리말 = 1:1 화면 출처 카드(채널 이름·본문 판정)와 같은 함수
@@ -54,7 +54,7 @@ import { createHash } from 'node:crypto';
 import { channelSends } from '../channel-events.mjs';
 import { getTurnStatus } from '../turn-status.mjs';
 import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, isOfficeSource, msgrJournal, ownerSoloTurn, fullAutoAllowed } from './msgr-handoff.mjs';
-import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
+import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat, EXECUTION_HEARTBEAT_MS } from './msgr-execution.mjs';
 import { roomTurnFailureFor, roomTurnInterrupted, roomTurnStopped, roomAttachReason } from './msgr-room-errors.mjs';
 import { ownerNoticeCause, ownerNoticeWanted, sendOwnerNotice } from './msgr-owner-notice.mjs'; // 답 실패 → 주인 1:1 안내(2026-10-15)
 import { withLock } from '../mutex.mjs';
@@ -517,6 +517,11 @@ export function makeDb(client) {
       if (!orgId) return (unwrap(await client.from('msgr_profiles').select('display_name').eq('user_id', uid).maybeSingle()))?.display_name ?? null; // 개인 방 — 조직 이름이 없다
       const r = unwrap(await client.from('msgr_org_members').select('display_name').eq('org_id', orgId).eq('user_id', uid).maybeSingle());
       return r?.display_name ?? null;
+    },
+    /** 이 크루의 실행 중 행 가운데 가장 최근 심박(없으면 null) — 다른 기기가 이 크루 턴을 돌고 있나(바쁜 크루 보류). 부분 색인 msgr_executions_running(crew_id) where state='running'. RLS: 크루 소유자만 읽는다. */
+    async crewRunningBeat(crewId) {
+      const r = unwrap(await client.from('msgr_executions').select('heartbeat_at').eq('crew_id', crewId).eq('state', 'running').order('heartbeat_at', { ascending: false }).limit(1).maybeSingle());
+      return r?.heartbeat_at ?? null;
     },
     /** 중단 요청자 — msgr_request_stop이 채운 stop_requested_by(누가 이 실행을 멈춰 달라고 했나). RLS: 크루 소유자만 읽는다(기존 msgr_executions_select). */
     async executionStopInfo(crewId, sourceId) {
@@ -1289,6 +1294,12 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
     // 뒤 글을 그 글이 풀린 뒤에야 처음 본 것으로 세면, 어느 프로세스에도 러너가 없을 때 글마다 160초씩 밀린다. 판정(ready)은 크루마다 따로다(카드·러너는 크루별).
     let ready = null;
     const candidate = (m) => ccOf(m) || targetsCrew(m, crew, dm, m.author_kind === 'user' && m.reply_to ? crew.id : null);
+    const busyKey = `${wsId}:${crew.slug}`; // busyCrew와 같은 키
+    let crewBusyHere = null; // 이 drain에서 이 크루가 이 프로세스에서 바쁜가(턴 중 또는 시작 전 잡 파일) — 첫 대상 글에서 한 번 판정
+    let crewBusyThere = null; // 다른 기기에서 이 크루가 턴 중인가(서버 실행 중 행의 심박) — 첫 대상 글에서 한 번 조회
+    // 보류를 푸는 중이면(앞 drain이 이 크루 글을 보류했다) 한 drain에 대상 글 하나만 적재한다 — 묶여 있던 글을 한꺼번에 적재하면 큐가 파일 목록 순서로 집어
+    // 답 순서가 뒤섞였다(11,13,12,14). 그 잡이 끝나면 crewFreed가 다시 깨워 다음 글을 적재한다.
+    const releasing = heldCrew.has(busyKey); let released = false; let heldNow = false;
     if (runnerReady) for (const m of msgs ?? []) if (candidate(m)) firstSeenAt(yieldKey(wsId, crew.id, m.id), now());
     const holdFrom = async (m) => {
       if (!runnerReady || !candidate(m) || !withinRunnerYield(yieldKey(wsId, crew.id, m.id), m.created_at, now())) return false;
@@ -1446,9 +1457,21 @@ export async function drain(wsId, { db, uid, lang = 'ko', enqueue = enqueueJob, 
       out.queued++;
     };
     for (const m of msgs) { // holdFrom — 이 글부터 적재·커서 전진을 러너 있는 프로세스에 양보(위 주석)
-      try { if (await holdFrom(m)) { report.held = true; break; } await step(m); } catch (e) { report.held = true; const fk = `${wsId}:${crew.id}`; if (Date.now() - (failWarn.get(fk) ?? 0) > 300_000) { failWarn.set(fk, Date.now()); console.error(`[argo] msgr 메시지 처리 실패(${wsId}/${crew.slug}/${m.id}) — 이 에이전트 커서 보류, 다음 틱 재시도(같은 로그는 5분에 한 번):`, e?.message ?? e); } break; }
+      // 바쁜 크루 보류(F2, 2026-10-15): 이 프로세스에서 이 크루가 턴 중이거나 시작 전 잡이 이미 있으면 다음 대상 글부터 적재도 커서 전진도 하지 않는다.
+      // 서버 커서는 같은 계정의 모든 기기가 나눠 쓴다 — 바쁜 동안 뒤 글을 로컬 큐에 넣고 커서를 넘긴 채 이 기기가 꺼지면 다른 기기는 그 글을 영영 보지 못했다
+      // (가짜 서버 2기기: A 적재 [11,12], B 적재 []). 보류한 글은 서버에 남아 다른 기기가 집을 수 있고, 이 크루의 턴이 끝나면 crewFreed가 브리지를 깨워 바로 이어 집는다.
+      // 보류 중 같은 기기는 같은 글을 held 주기(15초)로 다시 읽기만 한다 — 쓰기 0. 판정은 크루당 drain 한 번(첫 대상 글) — 한꺼번에 받은 글은 종전처럼 함께 적재한다.
+      // 다른 기기가 이 크루 턴을 돌고 있으면(실행 중 행의 심박이 RUNNING_FRESH_MS 안) 그 기기가 이어 집도록 둔다 — 보류가 없으면 한가한 기기가 바로 집어
+      // 같은 에이전트가 두 기기에서 동시에 돌고 앞 턴 결과 없이 답했다. 그 기기가 꺼져 심박이 끊기면 다음 조회에서 이 기기가 집는다(실행권은 메시지마다라 중복 답 없음).
+      try { if (await holdFrom(m)) { report.held = true; break; } if (candidate(m)) {
+        const here = crewBusyHere ??= busyCrew.has(busyKey) || await pendingJobHere(wsId, crew.slug);
+        if ((here || (releasing && released)) && now() - Date.parse(m.created_at) < BUSY_HOLD_MAX_MS) { heldCrew.add(busyKey); heldNow = true; report.held = true; break; }
+        // 서버의 실행 중 행은 어느 기기 것인지 모른다 — 이 기기에서 바쁘면 그 행은 이 기기 것이라 보고 묻지 않는다(상한을 넘긴 글이 자기 턴 때문에 다시 묶이지 않게)
+        if (!here && (crewBusyThere ??= await runningElsewhere(db, crew.id, now()))) { report.held = true; break; }
+      } const q0 = out.queued; await step(m); if (out.queued > q0) released = true; } catch (e) { report.held = true; const fk = `${wsId}:${crew.id}`; if (Date.now() - (failWarn.get(fk) ?? 0) > 300_000) { failWarn.set(fk, Date.now()); console.error(`[argo] msgr 메시지 처리 실패(${wsId}/${crew.slug}/${m.id}) — 이 에이전트 커서 보류, 다음 틱 재시도(같은 로그는 5분에 한 번):`, e?.message ?? e); } break; }
       max = Math.max(max, m.id);
     }
+    if (!heldNow) heldCrew.delete(busyKey); // 이번에 보류한 글이 없다 — 턴 끝 깨우기가 더 필요 없다
     if (max > (crew.cursor_msg_id ?? 0)) await db.setCursor(crew.id, max); // 적재 후에만 전진(at-least-once)
     if (msgs.length >= PAGE) report.held = true; // 한 번에 PAGE개를 꽉 채워 받았다 — 나머지는 다음 틱(15초)에
   }
@@ -1687,6 +1710,7 @@ export async function runMessengerContinuation(wsId, slug, origin, message, _glo
     } finally {
       if (activeCtx.get(key) === ctx) activeCtx.delete(key);
       busyCrew.delete(key);
+      crewFreed(key);
     }
   });
 }
@@ -1698,6 +1722,30 @@ export function msgrEventOrigin(event) {
 }
 
 /* ─── 잡 핸들러 — 워커가 집는다. 턴 실패는 에러 회신으로 내부 종결(정상 반환 = 잡 완료). ─── */
+/** 이 기기 큐에 이 크루의 시작 전 잡(.json — 적재됐거나 DEFER로 돌아온 것)이 있는가. 진행 중(.claimed)은 busyCrew가 본다 — 턴이 끝난 직후에도
+    .claimed 파일은 큐가 지우기 전까지 남아 있어, 그것을 세면 턴 끝 깨우기가 다시 보류했다. 메모리 표지가 아니라 파일이라 큐가 집지 못한 잡이 크루를 영영 막지 않는다
+    (잡이 처리되면 파일이 사라진다). 잡 이름 = `<글 id>-<순번>-<slug>`(drain enqueue). */
+async function pendingJobHere(wsId, slug) {
+  const re = new RegExp(`^\\d+-\\d{2}-${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.json$`);
+  try { return (await readdir(queueDir(wsId, MSGR_KEY))).some((n) => re.test(n)); } catch { return false; } // 큐 폴더 없음 = 잡 없음
+}
+/** 다른 기기의 실행이 살아 있다고 보는 심박 기한 — 실행 심박(30초)을 두 번 놓쳐도 살아 있다고 본다. 꺼진 기기의 글은 이만큼 + 보류 재조회(15초) 뒤 넘어온다. */
+export const RUNNING_FRESH_MS = Math.round(EXECUTION_HEARTBEAT_MS * 2.5);
+/** 바쁜 크루 보류 상한(글 생성 기준) — 이보다 오래된 글은 배포본처럼 바로 적재해 커서를 넘긴다. 러너 없는 옛 앱 사본(보류 경로가 없다)이 양보 기한
+    (YIELD_GRACE_MS, 글 생성 뒤 최소 160초)이 지나 그 글을 집어 실패 답을 올리기 전에(2026-10-07 사고, msgr-claim-runner-yield 15) 이 기기가 가져간다 — 보류 재조회(15초) 두 번의 여유.
+    대가: 앞 턴이 이보다 길면 그 뒤 온 글은 종전처럼 이 기기 큐에 묶인다(F2의 남은 틈). */
+export const BUSY_HOLD_MAX_MS = YIELD_GRACE_MS - 2 * POLL_MS;
+async function runningElsewhere(db, crewId, t) {
+  if (!db.crewRunningBeat) return false; // 옛 db 어댑터(가짜 포함) — 종전 동작
+  const at = await db.crewRunningBeat(crewId).catch((e) => { console.warn('[argo] msgr 실행 중 조회 실패 — 보류하지 않음:', e?.message ?? e); return null; });
+  return !!at && t - Date.parse(at) < RUNNING_FRESH_MS;
+}
+const heldCrew = new Set();   // 바쁨 때문에 받은 글을 보류한 크루 — 턴이 끝나면 그 회사 브리지를 깨운다(crewFreed)
+const msgrWake = new Map();   // wsId → 브리지 깨우기(startMsgrBridge가 등록) — 방송이 온 것과 같은 'wake' 틱
+/** 브리지 깨우기 등록·해제(fn = null) — 턴 끝에 보류한 글을 다음 폴(15초)까지 미루지 않게. (export: 회귀 테스트·게이트 하네스용) */
+export function setMsgrWake(wsId, fn) { if (fn) msgrWake.set(wsId, fn); else msgrWake.delete(wsId); }
+/** 크루 턴이 끝났다 — 이 크루 때문에 보류한 글이 있으면 그 회사 브리지를 한 번 깨운다(쓰기 없음 — 받은 글 조회 1회). */
+function crewFreed(key) { if (heldCrew.has(key)) msgrWake.get(key.slice(0, key.lastIndexOf(':')))?.(); } // 표지는 drain이 보류할 글이 더 없을 때 지운다
 const busyCrew = new Set(); // `${wsId}:${slug}` — 같은 크루는 한 번에 한 턴(상태 파일이 크루당 하나 → 동시 턴이면 다른 채널의 사고·본문이 이 채널 방송에 섞인다). await 이전에 동기 예약해야 TOCTOU가 없다(검수 3R H-1)
 export const _busyCrewForTest = busyCrew;
 const busyWarn = new Map(); // k → 마지막 경고 시각
@@ -2065,7 +2113,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     busyCrew.add(k);
     stageLog(job, 'picked', now());
     const ctl = { early: null };
-    try { return await withLock(`msgr-turn:${k}`, () => run(job, meta, ctl)); } finally { busyCrew.delete(k); ctl.early?.close(); }
+    try { return await withLock(`msgr-turn:${k}`, () => run(job, meta, ctl)); } finally { busyCrew.delete(k); ctl.early?.close(); crewFreed(k); }
   };
 }
 
@@ -2700,9 +2748,12 @@ export function startMsgrBridge(wsId, { session = sessionClient, pollMs = POLL_M
   };
   const iv = setInterval(() => tick('fire').catch(() => {}), pollMs);
   iv.unref?.();
+  const wakeHeld = () => { tick('wake').catch(() => {}); };
+  setMsgrWake(wsId, wakeHeld); // 바쁜 크루 턴이 끝나면 보류한 글을 바로 집는다(crewFreed)
   tick('poll').catch(() => {});
   const stop = () => {
     stopped = true; clearInterval(iv);
+    if (msgrWake.get(wsId) === wakeHeld) msgrWake.delete(wsId);
     for (const ch of rtChannels.values()) ch?.__watchers?.delete(onStatus);
     for (const orgId of subscribedOrgs) { const key = `${wsId}:${orgId}`; try { rtChannels.get(key)?.unsubscribe?.(); } catch { /* 무해 */ } rtChannels.delete(key); }
     subscribedOrgs = new Set();
