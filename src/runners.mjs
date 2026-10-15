@@ -22,7 +22,7 @@ import { geminiCmd, writeGeminiTurnSettings } from './runners/gemini.mjs';
 import { openRoots } from './workroots.mjs'; // 파일 반경 단일 진실(codex·gemini·antigravity 공유)
 
 import { loadSecrets, credType, maskCred } from './runners/creds.mjs';
-import { ensureCliPath, apiError, detectRunners } from './runners/exec.mjs';
+import { ensureCliPath, apiError, detectRunners, HOST_RECHECK_MS } from './runners/exec.mjs';
 /** antigravity 파일 반경 인자(순수) — openRoots를 반복형 --add-dir로. (export: 회귀 테스트용 —
     검수 HIGH-1: 반경 인자 세 줄을 지워도 전 게이트가 초록이었다. 인라인 조립은 단위로 못 잠근다.) */
 export const agyDirArgs = (caps, workRoots = []) => openRoots(caps, workRoots).flatMap((r) => ['--add-dir', r]);
@@ -78,11 +78,11 @@ export { provisionGeminiCli, probeGeminiOAuth, probeGeminiHostOAuth, probeGemini
 export {
   accountScope, loadRunnerCred, saveRunnerCred, clearRunnerCred, seedRunnerCreds,
   maskCred, normalizePastedCred, runnerCredEnv, sdkEnvFor, kimiEnv, glmEnv, verifyRunnerCred,
-  loadClaudeKey, maskClaudeKey, claudeEnvFor, runnerCredType } from './runners/creds.mjs';
+  loadClaudeKey, maskClaudeKey, claudeEnvFor, runnerCredType, reabsorbCodexFromHost } from './runners/creds.mjs';
 export { startRunnerWebAuth, submitRunnerWebAuth, webAuthDone, startRunnerDeviceAuth, pollRunnerDeviceAuth, deviceAuthSupported } from './runners/webauth.mjs';
 export { isGrokCreditError, grokCreditNotice } from './runners/grok.mjs';
 export {
-  apiError, detectRunners, startRunnerLogin, runnerLoginStatus,
+  apiError, detectRunners, invalidateDetectCache, HOST_RECHECK_MS, startRunnerLogin, runnerLoginStatus,
   extractSetupAuthUrl, extractSetupToken, extractSetupTokenCandidates, bundledClaudeCli,
   setupTokenStatus, submitSetupCode, startClaudeSetupToken,
 } from './runners/exec.mjs';
@@ -353,6 +353,9 @@ export async function runnerStatus(wsId, { forPick = false } = {}) {
   let host = forPick ? null : await detectRunners(); // 전체 상태는 종전 순서(감지 먼저)
   const secrets = await loadSecrets(wsId);
   host ??= Object.values(secrets.runners).some((c) => c?.value && credType(c.type) === 'host') ? await detectRunners() : {};
+  // host 마커인데 이 컴퓨터 로그인이 없다고 캐시돼 있으면 짧은 주기로 다시 본다 — 터미널에서 다시 로그인하면 10분 캐시를 기다리지 않고
+  // "재연결 필요"가 걷히고 러너 선택도 그 러너를 다시 쓴다(2026-10-15 작업 C, #984 LOW-2와 같은 원인). 살아 있는 동안은 종전 캐시 그대로.
+  if (Object.entries(secrets.runners).some(([id, c]) => c?.value && credType(c.type) === 'host' && !(host[id]?.installed && host[id]?.authed))) host = await detectRunners(false, { maxAgeMs: HOST_RECHECK_MS });
   // 금액은 단일 판정(rowBilled + billedRunnerMap) — billing.mjs와 같은 함수를 쓴다(중복 금지).
   const usage = forPick ? {} : await monthCostByRunner(wsId, await billedRunnerMap(wsId)).catch(() => ({})); // 표시용 — 실패해도 상태를 막지 않는다
   const out = {};
