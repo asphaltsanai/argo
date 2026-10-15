@@ -56,6 +56,7 @@ import { getTurnStatus } from '../turn-status.mjs';
 import { renderMessengerHandoffs, messengerOrigin, parseMessengerDisposition, messengerRecipientText, isGuestCtx, isOfficeSource, msgrJournal, ownerSoloTurn, fullAutoAllowed } from './msgr-handoff.mjs';
 import { executionDb, beginMessengerExecution, finishMessengerExecution, executionHeartbeat } from './msgr-execution.mjs';
 import { roomTurnFailureFor, roomTurnInterrupted, roomTurnStopped, roomAttachReason } from './msgr-room-errors.mjs';
+import { ownerNoticeCause, ownerNoticeWanted, sendOwnerNotice } from './msgr-owner-notice.mjs'; // 답 실패 → 주인 1:1 안내(2026-10-15)
 import { withLock } from '../mutex.mjs';
 import { workDb, workCanContinue, workPrompt, parseWorkReply, workPeers } from './msgr-work.mjs';
 import { dispatchMessengerAutomations } from './msgr-automations.mjs';
@@ -1961,7 +1962,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     const stopHeartbeat = executionHeartbeat(wsId, db, job, { onStopRequested: () => { interruptTurn(wsId, job.slug, { source: 'messenger', tag: job.msgId }).catch((e) => console.error(`[argo] msgr 심박 중단 처리 실패(${wsId}/${job.slug}/${job.msgId}):`, e.message)); } });
     activeCtx.set(ctxKey, ctx);
     const stopTyping = startTyping(wsId, job.orgId, job.channelId, job.crewId, job.slug, { full: ch.kind === 'public', sourceMsgId: job.msgId, topic: early?.full === (ch.kind === 'public') ? early : null }); if (!early) stageLog(job, 'broadcast', now()); // 받음 방송에 쓴 방 토픽을 그대로 잇는다(방 채널을 두 번 열지 않는다). 공개 채널은 조직 토픽, 비공개 방은 그 방 토픽(조직 토픽은 조직 전원이 듣는다 — 검수 C-1). 방송 내용은 어디서나 채널·크루·시작 시각·원본 메시지 id뿐
-    let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {};
+    let reply; let failed = false; let aborted = false; let replyMentions = []; let replyMeta = {}; let failErr = null;
     try {
       // 주인 혼자 1:1 방 확인(구성원 조회 1건)은 실행권을 잡은 뒤에만 — 다른 프로세스가 실행 중인 잡이 3초마다 DEFER로 다시 집힐 때 조회를 되풀이하지 않게(재검수 LOW 2026-10-08).
       const solo = soloCandidate && await ownerSoloRoom(c.client, { channelKind: ch.kind, channelId: job.channelId }, uid, job.crewId);
@@ -2009,7 +2010,7 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
         } catch (e2) { console.error(`[argo] msgr 중단 요청자 조회 실패(${wsId}/${job.slug}/${job.msgId}):`, e2.message); }
         reply = roomTurnStopped(stopName, lang);
       } else {
-        failed = true;
+        failed = true; failErr = e;
         // 방(손님 포함)에는 일반 문구만 — 원문에 주인 쪽 엔드포인트 주소·경로가 들어 있다(D26, 실측 "…inference gateway (127.0.0.1:5291)").
         // 원문은 chat()이 회사 활동 로그에 이미 남겼다(주인만 본다). 게이트웨이 로컬 콘솔에도 남긴다.
         console.error(`[argo] msgr 턴 실패(${wsId}/${job.slug}/${job.msgId}):`, String(e?.message ?? e).slice(0, 400));
@@ -2043,6 +2044,15 @@ export function makeMsgrHandler(wsId, { session = sessionClient, runChat = chat,
     }
     stageLog(job, 'posted', now());
     } finally { stopTyping(); } // 첨부(별도 글)는 답 뒤에 따로 오른다 — 그 동안 입력 중을 다시 보내면 답 뒤에 표시가 되살아난다
+    // 다른 사람의 요청에 답하지 못했고 원인이 주인이 고칠 수 있는 실행기 쪽이면 주인 1:1에 안내 한 번(msgr-owner-notice.mjs, 6시간 묶음은 서버 유니크).
+    // 이 기기가 실패 글을 실제로 올렸을 때만(row — 다른 기기가 먼저 답했으면 그쪽 몫). 방 답과 따로 — 실패해도 방 답·다음 잡에 영향 없음
+    if (row && failed) {
+      const cause = ownerNoticeCause(failErr);
+      if (ownerNoticeWanted({ cause, authorId: job.authorId, ownerId: uid, ownerSolo: ctx.ownerSolo })) {
+        sendOwnerNotice({ c: { uid, client: c.client, db }, wsId, slug: job.slug, cause, lang })
+          .catch((e) => console.warn(`[argo] msgr 주인 안내 실패(${wsId}/${job.slug}):`, String(e?.code ?? e?.message ?? e).slice(0, 200)));
+      }
+    }
     if (!row || failed || aborted) return; // 중복(다른 기기가 먼저 답함)·실패·중단 — 첨부 없음
     await deliverAttachments(db, job, row, plan, lang);
   };

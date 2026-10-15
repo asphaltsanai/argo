@@ -33,7 +33,8 @@ export async function insertNotice(c, room, ob) {
   const row = {
     channel_id: room.channelId, author_kind: 'crew', crew_id: room.crewId, kind: 'text', reply_to: null, thread_root: null,
     client_msg_id: clientMsgId(room.crewId, ob.basis), body: String(ob.body).slice(0, MSG_MAX), mentions: [],
-    meta: { disposition: 'done', notification: 'assistant', assistant: ob.meta },
+    // 표지 종류 — 기본 'assistant'(하트비트, 옛 글과 같게). 실행기 장애 안내는 'runner'(gateway/msgr-owner-notice.mjs — 끌 수 없음)
+    meta: { disposition: 'done', notification: ob.notification ?? 'assistant', [ob.notification ?? 'assistant']: ob.meta },
   };
   const ins = await c.db.insertMessage(row);
   if (!ins) return 'dup';
