@@ -2481,3 +2481,85 @@ test('T5 handler: 주인이 직접 말한 턴만 맥락에 주인 이름, 손님
   assert.equal((await run({ ...base, msgId: 604, threadRoot: 600, authorId: OWNER, origin: OWNER, fromCrewId: ZED, rootAuthor: OWNER, hop: 1 }, { names })).ownerName, undefined, '에이전트가 넘긴 턴');
   assert.equal((await run({ ...base, msgId: 605, threadRoot: 605, authorId: OWNER }, { noName: true })).ownerName, undefined, "이름 없음 — '멤버' 대체값을 이름으로 싣지 않는다");
 });
+
+// ── 답 실패 → 에이전트 주인 1:1 안내(2026-10-15, src/gateway/msgr-owner-notice.mjs) ──────────────────────────────
+// 다른 사람의 요청에 내 에이전트가 답하지 못했고 원인이 주인이 고칠 수 있는 실행기 쪽(AI 로그인 만료·연결된 AI 없음·AI 프로그램 멈춤)이면
+// 주인의 개인 공간 1:1 방에 안내 한 번. 표지 'runner'(끌 수 없음), 같은 원인은 6시간 구간 기준(서버 유니크)으로 묶는다. 원문·계정·토큰·방·요청자는 싣지 않는다.
+const PERSONAL = 'dddddddd-0000-4000-8000-000000000001';
+const ownerSession = (db) => async () => ({ db, uid: OWNER, client: { rpc: async (name) => (name === 'msgr_dm_personal_crew' ? { data: 'own-dm', error: null } : { data: null, error: null }) } });
+const settle = () => new Promise((r) => setTimeout(r, 30)); // 주인 안내는 방 답과 따로(기다리지 않는다)
+const authErr = () => Object.assign(new Error('Failed to authenticate: OAuth session expired (sk-ant-oat01-SECRET) for owner@example.com'), { authFailedRunner: 'claude', failCode: 'auth_expired', failRunner: 'codex' });
+const failJob = (over = {}) => ({ msgId: 270, orgId: ORG, channelId: CH, crewId: CREW, slug: 'seoyun', text: 'x', authorId: MEMBER, createdAt: new Date().toISOString(), ...over });
+const notices = (db) => db.calls.filter((x) => x[0] === 'insertMessage' && x[1].channel_id === 'own-dm').map((x) => x[1]);
+
+test('주인 안내: 다른 사람 요청이 AI 로그인 만료로 실패 → 방 답은 그대로, 주인 1:1에 원인과 고칠 곳 한 번(원문·계정·토큰 없음)', async () => {
+  const db = fakeDb({ crews: [crew(), crew({ id: PERSONAL, org_id: null })] });
+  await M.makeMsgrHandler(WS, { session: ownerSession(db), runChat: async () => { throw authErr(); } })(failJob());
+  await settle();
+  const room = db.calls.find((x) => x[0] === 'insertMessage' && x[1].channel_id === CH)[1];
+  assert.match(room.body, /Claude 로그인이 만료/, '방 글은 #980 그대로');
+  const [n] = notices(db);
+  assert.ok(n, '주인 1:1 안내가 올라간다');
+  assert.equal(n.crew_id, PERSONAL); assert.equal(n.author_kind, 'crew');
+  assert.equal(n.meta.notification, 'runner');
+  assert.match(n.client_msg_id, new RegExp(`^as:${PERSONAL}:[0-9a-f]{32}$`));
+  assert.match(n.body, /Claude 로그인이 만료/); assert.match(n.body, /설정 → AI 연결/);
+  for (const leak of [/sk-ant/, /SECRET/, /example\.com/, /OAuth session/, new RegExp(MEMBER), new RegExp(CH)]) assert.doesNotMatch(n.body, leak);
+});
+
+test('주인 안내: 요청자가 주인 자신이면 보내지 않는다(방 글로 이미 안다)', async () => {
+  const db = fakeDb({ crews: [crew(), crew({ id: PERSONAL, org_id: null })] });
+  await M.makeMsgrHandler(WS, { session: ownerSession(db), runChat: async () => { throw authErr(); } })(failJob({ msgId: 271, authorId: OWNER }));
+  await settle();
+  assert.deepEqual(notices(db), []);
+});
+
+test('주인 안내: 주인이 고칠 수 없는 실패(벤더 과부하·시간 초과·중단)는 보내지 않는다', async () => {
+  for (const [i, err] of [Object.assign(new Error('529 Overloaded'), { failCode: 'vendor_overloaded' }), Object.assign(new Error('시간 초과'), { timedOut: true, failCode: 'unknown' })].entries()) {
+    const db = fakeDb({ crews: [crew(), crew({ id: PERSONAL, org_id: null })] });
+    await M.makeMsgrHandler(WS, { session: ownerSession(db), runChat: async () => { throw err; } })(failJob({ msgId: 272 + i }));
+    await settle();
+    assert.deepEqual(notices(db), [], err.message);
+  }
+});
+
+test('주인 안내: 개인 공간 행이 없는 주인 — 안내는 건너뛰고(경고만) 방 답은 그대로 올라간다', async () => {
+  const db = fakeDb();
+  const warns = []; const orig = console.warn; console.warn = (...a) => warns.push(a.join(' '));
+  try {
+    await M.makeMsgrHandler(WS, { session: ownerSession(db), runChat: async () => { throw authErr(); } })(failJob({ msgId: 275 }));
+    await settle();
+  } finally { console.warn = orig; }
+  assert.equal(db.calls.filter((x) => x[0] === 'insertMessage' && x[1].channel_id === CH).length, 1);
+  assert.deepEqual(notices(db), []);
+  assert.ok(warns.some((l) => /주인 안내 실패/.test(l) && /personal_room_unavailable/.test(l)), warns.join('\n'));
+});
+
+test('주인 안내: 원인 판정·대상 판정·6시간 묶음·언어(순수 + sendOwnerNotice)', async () => {
+  const N = await import('../src/gateway/msgr-owner-notice.mjs');
+  assert.deepEqual(N.ownerNoticeCause(authErr()), { kind: 'auth', runner: 'claude' });
+  assert.deepEqual(N.ownerNoticeCause({ failCode: 'no_runner' }), { kind: 'no_runner', runner: null });
+  assert.deepEqual(N.ownerNoticeCause({ failCode: 'crash', failRunner: 'codex' }), { kind: 'crash', runner: 'codex' });
+  for (const e of [null, { aborted: true, failCode: 'auth_expired' }, { subscriptionBlocked: true, failCode: 'auth_expired' }, { failCode: 'quota' }, { timedOut: true, failCode: 'unknown' }]) assert.equal(N.ownerNoticeCause(e), null);
+  assert.equal(N.ownerNoticeWanted({ cause: { kind: 'auth' }, authorId: MEMBER, ownerId: OWNER, ownerSolo: true }), false, '주인 혼자 1:1');
+  assert.equal(N.ownerNoticeWanted({ cause: { kind: 'auth' }, authorId: MEMBER, ownerId: OWNER }), true);
+  assert.match(N.ownerNoticeText({ kind: 'no_runner' }, 'en'), /Settings → AI connection/);
+  const sent = [];
+  const deps = { personalRoom: async () => ({ crewId: PERSONAL, channelId: 'own-dm' }), insertNotice: async (_c, room, ob) => { sent.push(ob); return 'sent'; } };
+  const t0 = Date.UTC(2026, 9, 15, 0, 0, 0);
+  for (const now of [t0, t0 + 3600_000 * 5, t0 + 3600_000 * 6]) await N.sendOwnerNotice({ c: {}, wsId: WS, slug: 'seoyun', cause: { kind: 'auth', runner: 'claude' }, now }, deps);
+  assert.equal(sent[0].basis, sent[1].basis, '6시간 안 같은 원인 = 같은 기준(서버 유니크로 한 건)');
+  assert.notEqual(sent[1].basis, sent[2].basis, '다음 6시간 구간이면 다시 보낸다');
+  assert.equal(sent[0].notification, 'runner');
+  assert.equal(await N.sendOwnerNotice({ c: {}, wsId: WS, slug: 'seoyun', cause: null }, deps), 'skip');
+});
+
+test('개인 1:1 알림 표지 — 종류를 넘기지 않으면 종전대로 assistant(목표 하트비트 그대로)', async () => {
+  const { insertNotice } = await import('../src/personal-notice.mjs');
+  const rows = [];
+  const c = { db: { insertMessage: async (row) => { rows.push(row); return { id: 1 }; } } };
+  await insertNotice(c, { channelId: 'own-dm', crewId: PERSONAL }, { basis: 'b', body: 'x', meta: { a: 1 } });
+  await insertNotice(c, { channelId: 'own-dm', crewId: PERSONAL }, { basis: 'c', body: 'y', meta: { kind: 'auth' }, notification: 'runner' });
+  assert.deepEqual(rows[0].meta, { disposition: 'done', notification: 'assistant', assistant: { a: 1 } });
+  assert.deepEqual(rows[1].meta, { disposition: 'done', notification: 'runner', runner: { kind: 'auth' } });
+});

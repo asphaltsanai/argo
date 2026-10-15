@@ -133,3 +133,22 @@ test('④ 데크 배너 판정 — 러너별 최신 턴만, 더 최근 성공이
   assert.deepEqual(runnersAuthLost([{ type: 'runner-health', runner: 'claude', ok: false }]), [], '검진 실패는 이 판정 밖(카드가 따로 본다)');
   assert.deepEqual(runnersAuthLost(null), []);
 });
+
+test('⑤ 메신저 턴(source messenger)이 AI 로그인 만료로 실패 — 데크 배너가 그 러너를 만료로 보고, 같은 오류로 주인 1:1 안내 원인이 나온다(2026-10-15)', async () => {
+  const ws = 'auth-reason-msgr';
+  await company(ws);
+  let n = 0;
+  globalThis.__argoAuthReasonExec = async () => { n += 1; if (n === 1) throw new Error('Failed to authenticate: OAuth session expired. Please run /login'); throw new Error('Failed to authenticate: OAuth session expired.'); };
+  let err = null;
+  await chat(ws, 'g', '다른 분이 보낸 요청', null, { source: 'messenger' }).catch((e) => { err = e; });
+  assert.ok(err, '턴은 실패해야 한다');
+  const events = await readEvents(ws, 150);
+  assert.ok(events.some((e) => e.type === 'turn' && e.source === 'messenger' && e.ok === false), `메신저 턴 실패가 활동 기록에 남는다: ${JSON.stringify(events.filter((e) => e.type === 'turn').map((e) => ({ source: e.source, ok: e.ok, runner: e.runner })))}`);
+  assert.ok(runnersAuthLost(events).includes('gemini'), '데크 배너 판정이 메신저 턴 실패로도 그 러너를 만료로 본다');
+  const { ownerNoticeCause, ownerNoticeText } = await import('../src/gateway/msgr-owner-notice.mjs');
+  const cause = ownerNoticeCause(err);
+  assert.deepEqual(cause, { kind: 'auth', runner: 'gemini' });
+  const text = ownerNoticeText(cause, 'ko');
+  assert.match(text, /Gemini 로그인이 만료/); assert.match(text, /설정 → AI 연결/);
+  assert.doesNotMatch(text, /OAuth session|AIza|sk-proj|\/login/);
+});
