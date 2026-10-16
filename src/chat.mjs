@@ -43,7 +43,7 @@ import { detectRunnerDenial, detectDenialNarration, denialNote, detectForcedRmRe
 import { setTurnStatus, clearTurnStatus, stageForTool, detailForTool } from './turn-status.mjs';
 import { createTrace, recordSdkMessage, recordCodexEvent, maskSecrets, safeDetail } from './turn-trace.mjs';
 import { registerTurn, withTurnControl, turnAbortedError } from './turn-abort.mjs';
-import { invalidateDetectCache, reabsorbCodexFromHost, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
+import { invalidateDetectCache, runnerPickReason, runnerPickReasonLine, reabsorbCodexFromHost, scrubSdkBrand, endpointNotFoundNotice, isEndpointNotFoundMsg, authExcludedNoRunnerMsg, crashHint, excludeWith, externalExec, isProcessCrash, lockupAction, reprovisionRunner, isGrokCreditError, grokCreditNotice, GLM_DEFAULT_MODEL, GROK_DEFAULT_MODEL, KIMI_DEFAULT_MODEL, OPENROUTER_DEFAULT_MODEL, RUNNERS, sdkEnvFor, runnerCredEnv, loadRunnerCred, verifyRunnerCred, runnerStatus, resolveRunner, maskKeyLike, isBilledRunner, isCliRunner, isOpenRouterCreditReply, isOpenRouterLimitReply, isSdkErrorReply, isSwallowedSdkError, runnerAuthNotice, isHiddenRunner, visibleRunnerIds, visibleRunnerNamesLine, onlyHiddenConnectedStatus, unsupportedMethodStatus, unsupportedMethodNotice, isCliTurn, GEMINI_DEFAULT_MODEL, runnerCredType, CODEX_DEFAULT_MODEL, CLI_CHAT_TURN_TIMEOUT_MS } from './runners.mjs';
 import { userAddressNote, turnUserName, userSetAddress } from './user-name.mjs'; // 에이전트가 사용자를 이름으로 부르기(T5) — 이름 출처·남의 이름 차단은 그 파일 한 곳
 import { USER_ABORT_ERROR, LEGACY_RECORD_TERMS_NOTE } from './legacy-terms.mjs'; // 중단 이벤트 문자열 — 읽는 쪽(runner-usable·failure-digest)은 옛 문자열도 본다
 import { delegateHead } from './inbound-marks.mjs'; // 위임 머리말 = 1:1 화면 출처 카드와 같은 함수
@@ -1610,6 +1610,11 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
       : `${noCli.join('/')} 자격은 연결됐지만 이 컴퓨터에 해당 CLI가 설치돼 있지 않습니다 — ${noCli.join('/')} 러너는 벤더 CLI로 실행됩니다. CLI를 설치하거나, 설치가 필요 없는 Claude를 설정 → AI 연결에서 연결해 주세요.`); // CLI 미설치(noCli) — 위 두 갈래가 러너 없음을 먼저 던진다
   } catch (e) { await failBeforeRun(e, { flags: { noRunner: true }, ev: evFrom }); } // 이 갈래가 던지는 것은 위 안내 문구뿐이다 — 활동에 남긴 뒤 그대로 던진다
   const runner = resolved.runner;
+  // 턴 전 판정이 지정 러너를 사용 불가로 보고 대체했으면(자가치유 제외가 아니라) 그 근거를 한 줄 남긴다 — 대체 턴에서만, 값은 참거짓·종류·감지 시각(runners.mjs runnerPickReason)
+  if (resolved.fellBack && wantRunner && !__excludeRunners?.includes(wantRunner)) {
+    const why = await runnerPickReason(wsId, wantRunner).catch(() => null);
+    console.warn(`[argo] 러너 대체(${wsId}/${agentSlug}, pid ${process.pid}): ${runnerPickReasonLine(wantRunner, runner, why)}`);
+  }
   // 이번 턴까지 시도한 러너 목록 — 아래 두 실행 경로(CLI·SDK)의 인증 자가치유가 공유한다.
   const tried = excludeWith(__excludeRunners, runner);
   // 폴백이면 크루에 지정된 model은 원래 러너의 것이라 무효 — 폴백 러너의 기본 모델로 실행한다.
@@ -1662,6 +1667,7 @@ async function runChat(wsId, agentSlug, userMsg, sessionId = null, { __turnContr
   const prefixFallbackError = (e) => {
     if (!resolved.fellBack || !e || typeof e !== 'object') return;
     e.message = fallbackErrorPrefix(true, wantRunner, runner, lang, { excluded: wantExcluded }) + String(e.message || '');
+    if (!e.fellBackFrom) e.fellBackFrom = wantRunner; // 지정 러너 대신 돈 실패 — 메신저 실패 글이 "Codex 대신 Claude → 사용 한도" 순서를 원문 없이 말한다(msgr-owner-notice ownerNoticeCause)
   };
   // 참조(cc)로 공유된 맥락 — 이번 턴 프롬프트에 1회 주입(맥락 공유는 기본, 실행은 지시받은 크루만)
   // 재시도(__seedNotes)면 아우터 시도가 이미 소비한 공유 노트를 이어받는다 — 재시도에서 cc 맥락 소실 방지
@@ -2044,7 +2050,7 @@ ${lang === 'en'
       if (!__seedNotes && sharedNotes.length) await restoreSharedNotes(wsId, agentSlug, sharedNotes).catch(() => {});
       // 턴 전 자격 게이트가 끊은 오류(authExpired)는 우리가 만든 내부 문구라 사용자에겐 재연결 안내로 대체한다 — 이벤트엔 원문(위), SDK 갈래 catch와 같은 계약(검수 K52)
       // authExpired 필드는 유지한다 — 재시도 프레임을 감싼 바깥 프레임의 자가치유 판정(shouldSelfHeal)이 종전과 같은 신호를 보게. authError로 이중 감싸기를 막는다.
-      if (!aborted && e?.authExpired && !e?.authError) e = Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, authExpired: e.authExpired, cause: e, failCode: e.failCode, failOrigin: e.failOrigin, failRunner: e.failRunner, authFailedRunner: e.authFailedRunner });
+      if (!aborted && e?.authExpired && !e?.authError) e = Object.assign(new Error(runnerAuthNotice(lang, e.authExpired)), { authError: true, authExpired: e.authExpired, cause: e, failCode: e.failCode, failOrigin: e.failOrigin, failRunner: e.failRunner, authFailedRunner: e.authFailedRunner, fellBackFrom: e.fellBackFrom });
       throw aborted ? turnAbortedError(e) : e;
     } finally {
       closeTurnLedger(ledgerEntry); // 실패·중단 턴도 장부를 닫는다(멱등) — 열린 채 남으면 뒤 턴이 영원히 "겹침"으로 본다
@@ -2593,6 +2599,7 @@ ${lang === 'en'
     // failCode/failOrigin은 위(이벤트 전)에서 e에 붙었다 — surfaced가 e를 감싼 새 객체면 옮겨 싣는다(재분류·재프로브 없음)
     if (surfaced !== e && e?.failCode) Object.assign(surfaced, { failCode: e.failCode, failOrigin: e.failOrigin, failRunner: e.failRunner });
     if (surfaced !== e && e?.authFailedRunner) surfaced.authFailedRunner = e.authFailedRunner; // 첫 원인(자가치유 전 인증 만료 러너)도 옮긴다
+    if (surfaced !== e && e?.fellBackFrom) surfaced.fellBackFrom = e.fellBackFrom; // 대체 실행의 지정 러너도 옮긴다(prefixFallbackError)
     throw aborted ? turnAbortedError(e) : surfaced;
   } finally {
     closeTurnLedger(ledgerEntry); // 실패·중단 턴도 장부를 닫는다(멱등)
