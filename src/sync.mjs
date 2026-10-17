@@ -557,6 +557,7 @@ export const _leaseUnreadableForTest = (line) => leaseUnreadable(line);
 export async function renewLease(owner, { runnerUsable = true } = {}) {
   // 관찰 전용 프로세스(argo 대화 화면 — 동기화만 하고 게이트웨이·스케줄러는 안 돈다)는 담당을 맡지 않는다. 맡으면 다른 기기가 양보한 채
   // 아무도 메신저·루틴을 돌리지 않는다(2026-09-29 argo CLI). 리스를 읽지도 쓰지도 않는다 — 호출·쓰기 0.
+  leaseState.followAt = 0; // 이 판정이 살아 있는 남의 리스에 양보하고 끝날 때만 다시 찍는다(leaseReadInterval의 30초 근거 — 검수 2)
   if (process.env.ARGO_NO_LEADER === '1') { dropLease(); leaseState.pending = null; leaseState.checkedAt = Date.now(); return; }
   observeAwake(); // 잠들었다 깼으면 여기서 알아챈다 — 아래 되찾기 판정(AWAKE_MIN_MS)보다 먼저
   const me = await getDeviceId();
@@ -621,6 +622,7 @@ export async function renewLease(owner, { runnerUsable = true } = {}) {
     leaseState.pending = null;
     leaseState.checkedAt = Date.now();
     leaseState.yieldSince = 0; // 담당자가 있으니 양보 타이머 리셋
+    leaseState.followAt = leaseState.checkedAt; // 이 판정이 살아 있는 남의 리스에 양보하고 끝났다 — 다음 판정이 없으면(checkedAt 그대로) 엄격 판정의 다음 읽기는 30초
     return;
   }
   // 예비 기기는 일반 기기를 두 대 이상 본 적 있으면 남의 리스가 만료된 뒤 두 주기 더 기다린다 — 남은 맥이 먼저 가져가게(STANDBY_EXPIRED_WAIT_MS 주석).
@@ -2171,11 +2173,23 @@ const BOOT_RETRY_MS = 1_000;
     (export: 회귀 테스트용) */
 const LEASE_SOLO_SLACK_MS = 7_000;
 export const LEASE_SOLO_READ_MS = Math.max(CYCLE_MS, HANDOVER_WAIT_MS - LEASE_SOLO_SLACK_MS);
-/** 다음 리스 판정까지의 간격 — 단일 기기의 확인된 보유자(넘겨받는 중·읽기 실패 중이 아님)만 LEASE_SOLO_READ_MS, 나머지는 CYCLE_MS. (export: 회귀 테스트용) */
+/** 엄격 판정의 담당이 아닌 기기의 리스 읽기 간격(2026-10-17 로그 비용 — 기기 두 대 실측에서 담당·비담당 모두 분당 7.7회). 담당은 그대로 CYCLE_MS다:
+    엄격 판정의 담당은 확인 기한(LEASE_CONFIRM_VALID_MS 18초) 안에 자기 글을 다시 읽어야 담당으로 남고, 그 기한과 넘겨받기 대기(HANDOVER_WAIT_MS)는
+    옛 앱에도 같은 값으로 박혀 있어 늘리면 섞여 쓸 때 두 기기가 함께 담당이 된다(경우 표 V2). 담당 아닌 기기가 늦게 읽어 생기는 대가는 넘김·되찾기 지연뿐이다
+    (만료 감지 최대 +22초 — TTL 120초 + 30초). 운영 30초(CYCLE_MS × 3.75 — 짧은 주기 시험에서도 비율 유지). 상한: 러너 양보의 여유(YIELD_GRACE_MS − TTL = 40초)보다
+    한 주기 짧게 — 양보 기한이 끝나기 전에 판정이 한 번 남아야 자격 있는 기기가 먼저 잡는다. (export: 회귀 테스트용) */
+export const LEASE_IDLE_READ_MS = Math.max(CYCLE_MS, Math.min(Math.round(CYCLE_MS * 3.75), YIELD_GRACE_MS - LEASE_TTL_MS - CYCLE_MS));
+/** 다음 리스 판정까지의 간격 — 단일 기기의 확인된 보유자는 LEASE_SOLO_READ_MS, 엄격 판정에서 마지막 판정이 남의 살아 있는 글에 양보한 기기(followAt === checkedAt)는 LEASE_IDLE_READ_MS,
+    나머지(엄격 판정의 담당, 실행 리스 미보유·세션 없음·회사 0개로 읽지 않은 판정, 러너 없어 양보 중, 예비의 만료 뒤 대기 포함)는 CYCLE_MS.
+    넘겨받는 중·읽기 실패 중은 어느 쪽이든 CYCLE_MS다(넘겨받기 확인과 읽기 회복을 늦추지 않는다). (export: 회귀 테스트용) */
 export function leaseReadInterval() {
-  if (strictLease()) return CYCLE_MS;
-  if (!(leaseState.leader && leaseState.ownedAt > 0) || leaseState.pending || (leaseState.readFailSince || 0) > 0) return CYCLE_MS;
-  return LEASE_SOLO_READ_MS;
+  if (leaseState.pending || (leaseState.readFailSince || 0) > 0) return CYCLE_MS;
+  const held = leaseState.leader && leaseState.ownedAt > 0;
+  // 30초는 마지막 판정이 남의 살아 있는 글에 양보한 판정일 때만(검수 2 R2·Y3) — 그 뒤 다른 판정(실행 리스 미보유·세션 없음·회사 0개·러너 없어 양보·획득)이
+  // checkedAt을 새로 찍으면 followAt과 달라져 8초로 돌아온다. 판정마다 지우는 줄을 따로 두지 않는다(빠뜨릴 자리가 없게).
+  const following = (leaseState.followAt || 0) > 0 && leaseState.followAt === leaseState.checkedAt;
+  if (strictLease()) return held || !following ? CYCLE_MS : LEASE_IDLE_READ_MS;
+  return held ? LEASE_SOLO_READ_MS : CYCLE_MS;
 }
 /** 리스 판정 사이를 기다린다 — 깨어 있음 관찰 간격(2초)으로 나눠 기다리다가 잠들었다 깬 것을 알면 바로 끝낸다. 단일 기기는 깬 뒤 리스를 다시 확인하기 전까지
     담당이 아니므로(isCloudLeader) 간격이 길어진 만큼 깬 뒤 공백이 늘지 않게 한다. (export: 회귀 테스트용) */
