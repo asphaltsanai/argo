@@ -289,8 +289,9 @@ test('S2 CDN 옛 판이 안 걷힘 — 유휴 기기도 8초 주기 10사이클�
 });
 
 test('S2b 실패 대기는 30초부터 두 배·최대 5분 — 한 시간(8초 주기 450번) 동안 보류 사이클 20번 이하, 옛 판이 걷히면 받고 보류 횟수는 처음부터', async () => {
-  const realNow = Date.now; let off = 0;
-  Date.now = () => realNow() + off;
+  const realNow = Date.now; const start = realNow(); let off = 0;
+  // 사이클 안에서는 시간을 고정한다. 실제 시계가 흐르면 retryAt 측정에 1ms 차이가 생긴다.
+  Date.now = () => start + off;
   try {
     const f = storage(); const ws = 'mv-s2b'; const dir = await company(ws, f);
     const old = f.store.get(MKEY(ws));
